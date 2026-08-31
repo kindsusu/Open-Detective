@@ -60,10 +60,10 @@ description: [한국어 문서]  인터넷에 배포된 자사 자료와 서버�
 
 ## Phase 2 — 노출 실측
 
-`tools/probe.sh`. 판정 규칙 전문은 `ops/verify.md`.
+`../tools/probe.sh`. 판정 규칙 전문은 `ops/verify.md`.
 
 ```bash
-bash tools/probe.sh --batch 대상목록.tsv
+bash ../tools/probe.sh --batch 대상목록.tsv
 ```
 
 - **익명은 노출 판정, 인증은 존재 판정.** 둘 다 쓰되 역할을 섞지 않는다.
@@ -125,7 +125,7 @@ bash tools/probe.sh --batch 대상목록.tsv
 | `ops/evidence.md` | 마스킹 형식 · 헤더 위생 · 산출물 수신자 구분 |
 | `ops/remediate.md` | 조치 순서 · 무중단 이전 · 잔존 제거 · 소유자 라우팅 |
 | `surfaces/inventory.md` | 노출면 9축 · 우선순위 · 제외 목록과 사유 |
-| `tools/probe.sh` | 익명 실측 (jq 비의존, 토큰 필터링 내장) |
+| `../tools/probe.sh` | 익명 실측 (jq 비의존, 토큰 필터링 내장) |
 | `assets/ledger-template.md` | 노출 대장 · 잔존 확인표 · 재측정 이력 |
 
 English version: [`../SKILL.md`](../SKILL.md) · [README](../README.md)

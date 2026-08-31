@@ -1,5 +1,7 @@
 # su-detect
 
+![su-detect](assets/hero.png)
+
 **Find your organization's material and servers that are exposed on the public internet — and prove it
 with measurements, not opinions.**
 
@@ -120,7 +122,21 @@ These came out of getting them wrong first.
 | [`ops/remediate.md`](ops/remediate.md) | Remediation order, zero-downtime migration, residue removal |
 | [`surfaces/inventory.md`](surfaces/inventory.md) | 9 exposure axes, priority, exclusions with reasons |
 | [`tools/probe.sh`](tools/probe.sh) | Anonymous measurement (no jq dependency) |
+| [`tools/test_probe.sh`](tools/test_probe.sh) | Regression tests — run before changing probe.sh |
 | [`assets/ledger-template.md`](assets/ledger-template.md) | Ledger, residue checklist, re-measurement history |
+
+## Tests
+
+```bash
+bash tools/test_probe.sh
+```
+
+19 cases, and every one of them exists because the tool actually failed it. An adversarial
+review found four high-severity defects by *running* the script rather than reading it:
+the default label printed the URL's query string verbatim while the final URI was masked;
+`file://` was accepted and reported as `EXPOSED`; a URL containing an identity provider's
+name anywhere in its query was classified `AUTH-GATE`; and a response with no HTTP status
+still produced an exposure verdict. All four are now regression cases.
 
 ## Scope of authorization
 

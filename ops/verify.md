@@ -97,6 +97,56 @@ against one apex domain only will miss them.
 
 Those two lines prove "a login screen is not a security boundary" without any explanation.
 
+## Verdicts the tool emits
+
+| Verdict | Meaning |
+|---|---|
+| `EXPOSED` | The body was served in full to an anonymous request |
+| `AUTH-GATE` | The final host is a **configured** identity provider, and the body was not served |
+| `BLOCKED` | 401/403 |
+| `ABSENT` | 404/410 |
+| `NO-BODY` | 2xx with an empty body |
+| `UNKNOWN` | Could not be classified. **Deliberately not EXPOSED** |
+| `REJECTED` | Out of scope by design: non-http(s) scheme, or a non-public address |
+| `ERR` | DNS failure, TLS mismatch, transfer error |
+
+### Why UNKNOWN exists
+An unproven exposure is not an exposure. The tool returns `UNKNOWN` rather than guessing when
+the request lands off-site on a host it cannot classify, when a 3xx is left unresolved, and
+when there is no HTTP status code at all.
+
+### Auth-gate matching is host-exact, never substring
+Matching an identity provider by substring against the whole final URL is **wrong in both
+directions**, and this was demonstrated: `https://example.com/?redir=okta.com` was classified
+`AUTH-GATE` — an exposed asset reported as controlled, which is the worst error this tool can
+make. Match on the **parsed host** with an exact or dot-boundary suffix comparison.
+
+**Your own identity provider will not be in the default list.** Set `SU_IDP_HOSTS` to the hosts
+your organization actually redirects to, or every controlled asset behind a custom IdP will read
+as `EXPOSED`.
+
+> A same-host `/login` page that returns 200 with a body **is** `EXPOSED`, and that is correct —
+> it is the central claim of this skill. A login screen rendered in the browser is not a boundary.
+> Only a server that refuses to transmit is.
+
+### The measurement tool is itself an attack surface
+Four high-severity defects were found by *running* `probe.sh`, not by reading it:
+
+| Defect | Symptom |
+|---|---|
+| Query string in the default label | The final URI was masked while the label printed `?token=...` verbatim |
+| No scheme restriction | `file:///etc/passwd`-style paths were read and reported `EXPOSED` |
+| Substring auth-gate matching | Any URL containing a provider name anywhere was `AUTH-GATE` |
+| No HTTP status required | A response with status `000` still produced an exposure verdict |
+
+Restrict the scheme to http/https, refuse loopback, private, link-local and reserved addresses
+on both the first and final hop, cap the response body, and clean the temp buffer on
+`EXIT INT TERM`. Run `tools/test_probe.sh` before changing the script.
+
+**Known limit**: curl validates the scheme of every redirect hop, but the script can only resolve
+the **first and final** hosts. A chain that transits a private address in between is not detected.
+Saying so is better than advertising safety that does not exist.
+
 ## When you print headers
 
 **Always filter `Set-Cookie`, `Authorization`, `Proxy-Authorization`, and `X-Api-Key`.**

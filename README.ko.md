@@ -1,5 +1,7 @@
 # su-detect
 
+![su-detect](assets/hero.png)
+
 **인터넷에 노출된 우리 조직의 자료와 서버를 찾아내고, 의견이 아니라 실측으로 증명한다.**
 
 Claude Code 스킬이다. **"뚫을 수 있는가"를 묻지 않는다. "열려 있는가"만 묻는다.**
@@ -112,9 +114,22 @@ target     200   81926  3f9c1a7e5b2d4088  EXPOSED    "..."  Mon, 03 ...    https
 | [`ops/remediate.md`](ops/remediate.md) | 조치 순서 · 무중단 이전 · 잔존 제거 |
 | [`surfaces/inventory.md`](surfaces/inventory.md) | 노출면 9축 · 우선순위 · 제외 목록 |
 | [`tools/probe.sh`](tools/probe.sh) | 익명 실측 (jq 비의존) |
+| [`tools/test_probe.sh`](tools/test_probe.sh) | 회귀 테스트 — probe.sh 수정 전 실행 |
 | [`assets/ledger-template.md`](assets/ledger-template.md) | 대장 · 잔존 확인표 · 재측정 이력 |
 
-한국어 전문은 [`ko/`](ko/) 아래에 같은 구조로 있다.
+한국어 전문은 [`ko/`](ko/) 아래에 있다. **`probe.sh`는 루트 한 곳에만 둔다** — 사본을 두면 갈라진다.
+
+## 테스트
+
+```bash
+bash tools/test_probe.sh
+```
+
+19건이며, **전부 이 도구가 실제로 틀렸던 항목**이다. 적대 리뷰가 스크립트를 읽지 않고
+**돌려봄으로써** 심각도 높은 결함 4건을 찾아냈다 — 최종 URI는 가리면서 기본 라벨에는
+쿼리스트링이 그대로 찍혔고, `file://`을 받아 `EXPOSED`로 판정했으며, 쿼리 아무 데나 IdP
+이름이 들어 있으면 `AUTH-GATE`가 됐고, HTTP 상태코드가 없는 응답에도 노출 판정이 나왔다.
+네 건 모두 회귀 케이스로 고정했다.
 
 ## 사용 범위
 
