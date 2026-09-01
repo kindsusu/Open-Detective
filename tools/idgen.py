@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""su-detect / idgen.py - candidate identifier generator.
+
+The account that hosts a leak is almost never the registered company name. It is a
+coinage an employee invented at signup, under namespace rules (no spaces, lowercase,
+ASCII) and uniqueness pressure. Searching the company name alone does not reach it.
+
+This generates the search space instead: stems x transliterations x joiners x affixes.
+It makes no network requests. It writes candidates; probe.sh measures them.
+
+  python3 tools/idgen.py --ko "<korean name>" --en "<english name>"
+  python3 tools/idgen.py --ko "<name>" --en "<name>" --targets github --limit 120
+  python3 tools/idgen.py --selftest
+
+No company values live in this file - everything distinctive comes in as an argument.
+The lexicons below are generic business vocabulary, deliberately not tied to any firm.
+
+Rules (see ops/identifiers.md)
+  - Generation is for finding the FIRST entry point. After one hit, pivoting
+    (commit authors, org membership, reverse IP, CT) outyields more generation.
+  - A candidate is a guess, never an asset. Confirm ownership before probing
+    (invariant 12) - a generic coinage very often belongs to someone else.
+  - Ranked output exists because anonymous rate limits are real: probe the top of
+    the list, not all of it.
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+
+# --------------------------------------------------------------------- lexicons
+# Generic. Extend at runtime with --function / --industry, not by editing this file.
+
+# Business-function words that get appended to a company stem. The leak in the
+# precedent behind this tool sat on stem+function, where the function word appears
+# nowhere in the company name.
+FUNCTION = [
+    "sales", "partners", "partner", "dev", "admin", "team", "official", "corp",
+    "group", "service", "support", "cs", "hr", "ops", "lab", "labs", "biz",
+    "tech", "data", "api", "web", "app", "mall", "shop", "store", "media",
+    "marketing", "solution", "system", "network", "digital", "global", "korea",
+]
+
+# Legal-form and geography tails to strip before splitting: they carry no identity.
+STRIP_TAILS_KO = ["주식회사", "㈜", "(주)", "유한회사", "그룹", "홀딩스", "코리아", "컴퍼니"]
+STRIP_TAILS_EN = ["inc", "llc", "ltd", "co", "corp", "corporation", "company", "group", "holdings"]
+
+# Common compound tails in Korean names. Stripping one exposes the distinctive stem;
+# the tail itself is also a searchable unit on its own.
+TAILS_KO = [
+    "렌트카", "렌터카", "모빌리티", "시스템즈", "시스템", "테크놀로지", "테크",
+    "솔루션", "네트웍스", "네트워크", "파트너스", "물류", "유통", "산업", "건설",
+    "전자", "화학", "제약", "식품", "미디어", "커머스", "에너지", "바이오",
+]
+
+JOINERS = ["", "-", "_"]
+NUMERIC = ["1", "2", "01", "02", "24", "2024", "2025", "1234"]
+
+# --------------------------------------------------------------- hangul handling
+
+CHO = ["g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj",
+       "ch", "k", "t", "p", "h"]
+JUNG = ["a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe",
+        "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"]
+JONG = ["", "k", "k", "k", "n", "n", "n", "t", "l", "l", "l", "l", "l", "l", "l",
+        "l", "m", "p", "p", "t", "t", "ng", "t", "t", "k", "t", "p", "t"]
+
+SBASE, LCOUNT, VCOUNT, TCOUNT = 0xAC00, 19, 21, 28
+
+
+def _syllables(text: str):
+    """Yield (cho, jung, jong) index triples for each Hangul syllable."""
+    for ch in text:
+        code = ord(ch) - SBASE
+        if 0 <= code < LCOUNT * VCOUNT * TCOUNT:
+            yield (code // (VCOUNT * TCOUNT),
+                   (code % (VCOUNT * TCOUNT)) // TCOUNT,
+                   code % TCOUNT)
+
+
+def romanize(text: str) -> str:
+    """Revised-Romanization-ish transliteration. Good enough for candidate names."""
+    out = []
+    for c, v, t in _syllables(text):
+        out.append(CHO[c] + JUNG[v] + JONG[t])
+    return "".join(out)
+
+
+def initials(text: str) -> str:
+    """Syllable-initial abbreviation - the Korean way of shortening a name.
+
+    This is NOT English vowel-dropping, and tools that only do the latter miss it
+    entirely. A three-syllable stem routinely becomes a three-letter tag.
+
+    One letter per syllable, always. The null initial has no romanization of its
+    own, so a syllable carrying it contributes its vowel instead - otherwise every
+    vowel-initial syllable would vanish and a three-syllable stem could collapse to
+    a single letter, losing the candidate entirely.
+    """
+    out = []
+    for c, v, _ in _syllables(text):
+        out.append(CHO[c] or JUNG[v][0])
+    return "".join(out)
+
+
+# ------------------------------------------------------------------- generation
+
+def _clean(s: str) -> str:
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+
+def stems(ko: str = "", en: str = "", extra: list[str] | None = None) -> list[tuple[str, str]]:
+    """Return [(stem, how-it-was-derived)], deduped, order preserved."""
+    found: list[tuple[str, str]] = []
+
+    def add(value: str, why: str) -> None:
+        v = _clean(value)
+        if v and len(v) >= 2 and not any(v == s for s, _ in found):
+            found.append((v, why))
+
+    for raw in (extra or []):
+        add(raw, "operator-supplied")
+
+    if en:
+        body = en
+        for tail in STRIP_TAILS_EN:
+            for sep in (" ", "-", "_", "."):
+                body = body.replace(f"{sep}{tail}", "").replace(f"{sep}{tail.upper()}", "")
+        add(body, "english-name")
+        for part in body.replace("-", " ").replace("_", " ").replace(".", " ").split():
+            add(part, "english-token")
+
+    if ko:
+        body = ko
+        for tail in STRIP_TAILS_KO:
+            body = body.replace(tail, "")
+        body = body.strip()
+
+        for tail in TAILS_KO:                      # split a compound at a known tail
+            if body.endswith(tail) and len(body) > len(tail):
+                head = body[: -len(tail)]
+                add(romanize(head), "korean-stem-romanized")
+                add(initials(head), "korean-stem-initials")
+                add(romanize(tail), "korean-tail-romanized")
+                break
+        add(romanize(body), "korean-whole-romanized")
+        add(initials(body), "korean-whole-initials")
+
+    # English-side abbreviations of whatever stems we have so far
+    for value, _ in list(found):
+        if value.isascii() and len(value) >= 5:
+            devoweled = value[0] + "".join(c for c in value[1:] if c not in "aeiou")
+            if 2 < len(devoweled) < len(value):
+                add(devoweled, "devowelled")
+            add(value[:4], "truncated")
+
+    return found
+
+
+# How much to trust a stem. A name the company actually writes beats one this script
+# invented by chopping letters off. Stem quality dominates the ranking: it is better to
+# exhaust every affix on a real stem than to try tier 1 of a speculative one.
+STEM_WEIGHT = {
+    "operator-supplied": 0, "english-name": 0, "english-token": 1,
+    "korean-stem-romanized": 1, "korean-stem-initials": 2,
+    "korean-whole-romanized": 2, "korean-tail-romanized": 3,
+    "korean-whole-initials": 3, "devowelled": 4, "truncated": 4,
+}
+
+
+def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
+             functions: list[str] | None = None,
+             industry: list[str] | None = None) -> list[tuple[str, int, str]]:
+    """Return [(candidate, tier, rationale)] ranked by stem quality, then tier.
+
+    Ranking matters because anonymous rate limits cap how many candidates ever get
+    measured. Sorting by length instead of stem quality floats junk abbreviations
+    above the company's actual name - measured, and fixed.
+    """
+    base = stems(ko, en, extra)
+    funcs = list(functions or FUNCTION)
+    inds = [_clean(i) for i in (industry or []) if _clean(i)]
+    seen: set[str] = set()
+    out: list[tuple[str, int, str, int, int]] = []
+
+    def emit(value: str, tier: int, why: str, weight: int, joiner: int) -> None:
+        if value and value not in seen and 2 <= len(value) <= 39:
+            seen.add(value)
+            out.append((value, tier, why, weight, joiner))
+
+    def affixes(stem: str, words: list[str], tier: int, kind: str, weight: int) -> None:
+        for word in words:
+            if word in stem or stem in word:      # 'rent' + 'rent' is not a name
+                continue
+            for ji, j in enumerate(JOINERS):
+                emit(f"{stem}{j}{word}", tier, f"stem+{kind}:{word}", weight, ji)
+
+    for stem, why in base:
+        w = STEM_WEIGHT.get(why, 4)
+        emit(stem, 1, f"stem:{why}", w, 0)                     # tier 1 - bare
+        affixes(stem, inds, 2, "industry", w)                  # tier 2 - + industry
+        affixes(stem, funcs, 3, "function", w)                 # tier 3 - + function
+        for num in NUMERIC:                                    # tier 4 - + digits
+            emit(f"{stem}{num}", 4, f"stem+numeric:{num}", w, 0)
+
+    out.sort(key=lambda r: (r[3], r[1], r[4], len(r[0]), r[0]))
+    return [(v, t, why) for v, t, why, _, _ in out]
+
+
+TARGET_PATTERNS = {
+    "github": "https://api.github.com/users/{c}",
+    "pages": "https://{c}.github.io/",
+    "gitlab": "https://gitlab.com/{c}",
+    "vercel": "https://{c}.vercel.app/",
+    "netlify": "https://{c}.netlify.app/",
+    "pagesdev": "https://{c}.pages.dev/",
+    "s3": "https://{c}.s3.amazonaws.com/",
+    "gcs": "https://storage.googleapis.com/{c}/",
+}
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Generate candidate identifiers for exposure discovery.")
+    p.add_argument("--ko", default="", help="company name in Korean")
+    p.add_argument("--en", default="", help="company name in Latin script, as the company writes it")
+    p.add_argument("--stem", action="append", default=[], help="extra stem (repeatable)")
+    p.add_argument("--industry", action="append", default=[], help="industry word, e.g. a line of business (repeatable)")
+    p.add_argument("--function", action="append", default=[], help="extra business-function word (repeatable)")
+    p.add_argument("--targets", choices=sorted(TARGET_PATTERNS), help="emit probe.sh-ready URL<TAB>label rows")
+    p.add_argument("--limit", type=int, default=200, help="max candidates (default 200)")
+    p.add_argument("--tier", type=int, help="only this tier")
+    p.add_argument("--selftest", action="store_true")
+    args = p.parse_args(argv)
+
+    if args.selftest:
+        return selftest()
+    if not (args.ko or args.en or args.stem):
+        p.error("give at least one of --ko / --en / --stem")
+
+    # Output is documented as feeding `probe.sh --batch`, which reads tab-separated
+    # lines. On Windows, text-mode stdout would emit CRLF and put a stray CR at the
+    # end of the last field. Pin LF so the handoff is identical on every platform.
+    try:
+        sys.stdout.reconfigure(newline="\n")
+    except (AttributeError, ValueError):
+        pass
+
+    rows = generate(args.ko, args.en, args.stem,
+                    functions=(FUNCTION + args.function) if args.function else None,
+                    industry=args.industry)
+    if args.tier:
+        rows = [r for r in rows if r[1] == args.tier]
+    rows = rows[: args.limit]
+
+    if args.targets:
+        pattern = TARGET_PATTERNS[args.targets]
+        for cand, tier, why in rows:
+            print(f"{pattern.format(c=cand)}\tt{tier} {cand} ({why})")
+    else:
+        print("CANDIDATE\tTIER\tRATIONALE")
+        for cand, tier, why in rows:
+            print(f"{cand}\t{tier}\t{why}")
+
+    print(f"\n# {len(rows)} candidates. A candidate is a guess, not an asset -",
+          "confirm ownership before probing (invariant 12).", file=sys.stderr)
+    return 0
+
+
+# ------------------------------------------------------------------- self-check
+
+def selftest() -> int:
+    """The transformations that a name-only search misses. Neutral inputs."""
+    fails = []
+
+    def check(label, got, want):
+        if got != want:
+            fails.append(f"{label}: got {got!r}, want {want!r}")
+
+    # Hangul arithmetic. Neutral, well-known words only - never a real company's name.
+    check("romanize/vowel", romanize("서울"), "seoul")
+    check("romanize/jong", romanize("한국"), "hanguk")
+    check("romanize/4syl", romanize("대한민국"), "daehanminguk")
+    check("initials", initials("대한민국"), "dhmg")
+    # One letter per syllable even when the initial is the null consonant, otherwise a
+    # vowel-initial stem collapses and its candidates are never generated at all.
+    check("initials/null-initial", initials("에이스"), "eis")
+    check("initials/mixed", initials("우리은행"), "ureh")
+    assert all(len(initials(w)) == len(w) for w in ("에이스", "우리은행", "대한민국")), \
+        "initials must emit exactly one letter per syllable"
+
+    # A compound Korean name splits at a known tail, and BOTH halves survive.
+    got = dict((s, w) for s, w in stems(ko="코스모스렌트카"))
+    assert "koseumoseu" in got, got     # 코스모스 romanized
+    assert "ksms" in got, got           # syllable-initial abbreviation, one letter per syllable
+    assert "renteuka" in got, got       # the tail is searchable on its own
+
+    # The decisive case: stem + a business-function word absent from the name.
+    cands = [c for c, _, _ in generate(en="cosmos", industry=["rentcar"])]
+    assert "cosmossales" in cands, "stem+function not generated"
+    assert "cosmos-sales" in cands, "joiner variant not generated"
+    assert "cosmosrentcar" in cands, "stem+industry not generated"
+
+    # Loanword stems: romanization and origin spelling differ, so both must be present
+    # when the operator supplies the origin spelling alongside the Korean name.
+    both = [c for c, _, _ in generate(ko="코스모스렌트카", en="cosmos")]
+    assert "koseumoseu" in both and "cosmos" in both, "romanized and origin must coexist"
+
+    # Ranking: the name the company actually writes must come first, and every affix
+    # on it must be tried before a stem this script invented by chopping letters.
+    rows = generate(ko="코스모스렌트카", en="cosmos", industry=["rentcar"])
+    assert rows[0][0] == "cosmos", f"real name must rank first, got {rows[0][0]!r}"
+    pos = {c: i for i, (c, _, _) in enumerate(rows)}
+    assert pos["cosmossales"] < pos["koseumoseu"], "affixed real stem beats weaker stem"
+    assert pos["cosmossales"] < 60, f"stem+function buried at {pos['cosmossales']}"
+    assert "rentcarrentcar" not in pos and "rentcar-rentcar" not in pos, "self-affix must be skipped"
+
+    # Hygiene
+    assert all(2 <= len(c) <= 39 for c, _, _ in rows), "length bounds"
+    assert len({c for c, _, _ in rows}) == len(rows), "candidates must be unique"
+
+    if fails:
+        print("FAIL\n  " + "\n  ".join(fails))
+        return 1
+    print(f"PASS  idgen selftest ({len(rows)} candidates from one seed pair)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

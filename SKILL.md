@@ -52,6 +52,26 @@ from a local config file. The skill itself must not become a reconnaissance map.
 
 `surfaces/inventory.md` tells you where to look; `ops/discovery.md` tells you how.
 
+**Do not open a channel before generating candidates** — the same rule as not entering Phase 1
+without Phase 0. One company name will not find it: the account holding a leak is a coinage an
+employee invented, not the registered name. Generate the space by segmentation, transliteration,
+abbreviation and **business-function affixes**: `ops/identifiers.md`.
+
+```bash
+python3 tools/idgen.py --ko "<local-script name>" --en "<Latin spelling the company writes>" \
+                       --industry "<line of business>"
+# use python if python3 is absent. Offline - it makes no network requests.
+```
+
+**Actually run it — do not substitute variants you thought of yourself.** A hand-written list drops
+syllable-initial abbreviation and the business-function cross product, and those are the two axes
+that find real accounts. Calibration: replaying a known case, the identifier a human had found by
+hand came out at **rank 28** of the generated list.
+
+**Stop generating at the first hit and pivot.** Affiliates and brands share no morpheme with the
+parent name, so generation never reaches them. The **descriptions and READMEs of repositories you
+find give you new stems** in the company's own words — feed those back in and generate again.
+
 **A negative from one channel is not evidence of absence.** Coverage differs per channel, so run them
 in parallel. Start with the highest-yield order:
 
@@ -82,13 +102,18 @@ bash tools/probe.sh --batch targets.tsv
   not the result.
 - **Do not trust status codes.** Read the "failures that look like negatives" table in `ops/verify.md` first.
 - **Cross-check external intel by connecting directly.** Port-scan data can be stale.
+- **A 403 is not a boundary.** Header allowlists — serve only when `Origin`/`Referer` looks like our own
+  page — answer 403 to a bare request and hand over the full body to the page's own. Where a data
+  endpoint belongs to a page you already found, name that page as `probe.sh`'s third field and the
+  verdict becomes `WEAK-GATE`. Four conditions fence that replay; `ops/verify.md` states them.
 
 **Two passes: the crawler's eye, then the browser's eye.** `probe.sh` is the primary sweep (§5a in
 `ops/discovery.md`) — one request per target, no JavaScript, batched across everything Phase 1 found.
 Then, **only for targets that need it**, add the browser's eye (§5b): load the page anonymously and
 watch what JavaScript actually fetches. Turn it on when 5a returned `NO-BODY` or a tiny shell, when the
 target is an application server, when an `EXPOSED` page still leaves "**what specifically leaked**"
-unanswered, or when a client-side lock screen must be told apart from real encryption. It runs
+unanswered, when a client-side lock screen must be told apart from real encryption, or when a
+`BLOCKED` target is a data endpoint called by a page you already found. It runs
 **after discovery, against a narrowed set — never the full sweep**: it is slow, cannot be batched, and
 exposes the auditor to the data. **Observe only what loads without authentication** — never enter a
 password, brute-force, or bypass. A cosmetic gate whose data was already transmitted is `EXPOSED`;
@@ -142,12 +167,14 @@ The audit must finish even if a tool dies mid-run — **separate tool failure fr
 | Path | Contents |
 |---|---|
 | `ops/scope.md` | 15 invariants, legal boundaries, scope procedure |
+| `ops/identifiers.md` | **What to search for** — segmentation, transliteration, abbreviation, function affixes, and pivoting |
 | `ops/discovery.md` | Execution layer — verified techniques only; failed tools quarantined with reasons |
-| `ops/verify.md` | Exposure verdicts, 8 failures that look like negatives, residue, bucket rules |
+| `ops/verify.md` | Exposure verdicts, 10 failures that look like negatives, residue, bucket rules |
 | `ops/triage.md` | Risk grades, file-internals inspection, confirmed vs unconfirmed |
 | `ops/evidence.md` | Masking format, header hygiene, who receives what |
 | `ops/remediate.md` | Remediation order, zero-downtime migration, residue removal, owner routing |
 | `surfaces/inventory.md` | 9 exposure axes, priority, exclusions with reasons |
+| `tools/idgen.py` | Candidate identifier generation (offline, no company values) |
 | `tools/probe.sh` | Anonymous measurement (no jq dependency, token filtering built in) |
 | `assets/ledger-template.md` | Exposure ledger, residue checklist, re-measurement history |
 

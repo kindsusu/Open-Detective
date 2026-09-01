@@ -97,7 +97,9 @@ target     200   81926  3f9c1a7e5b2d4088  EXPOSED    "..."  Mon, 03 ...    https
 - **모든 음성에 대조군을 붙인다.** 한 번은 대상과 대조군이 함께 0을 반환했는데, 쿼리 형식이 틀린 것이었고
   대조군이 없었으면 못 잡았다.
 - **상태코드를 믿지 않는다.** 폐지된 캐시 엔드포인트가 여전히 `200`을 준다.
-  이런 "음성처럼 보이는 실패" 8종을 [`ops/verify.md`](ops/verify.md)에 정리했다.
+  이런 "음성처럼 보이는 실패" 10종을 [`ops/verify.md`](ops/verify.md)에 정리했다.
+- **403도 경계가 아니다.** 헤더 허용목록(자사 페이지의 `Origin`/`Referer`일 때만 응답)은 맨몸 요청에
+  403을 주고 그 페이지의 요청에는 본문을 전량 넘긴다. 판정값 `WEAK-GATE`가 이 경우를 잡는다.
 - **외부 스캔 데이터는 직접 접속으로 대조한다.** 라이브 `443`이 빠진 포트 목록이 스스로 stale을 증명했다.
 - **"영구 잔존 없음"은 쓸 수 없는 문장이다.** 웹 아카이브 스냅샷이 0건인 호스트를 제3자 CDN이 이미
   바이트 단위로 미러하고 있었다. 쓸 수 있는 건 시점 진술뿐이다.
@@ -110,12 +112,14 @@ target     200   81926  3f9c1a7e5b2d4088  EXPOSED    "..."  Mon, 03 ...    https
 |---|---|
 | [`SKILL.md`](SKILL.md) | 불변 원칙과 Phase 0~6 |
 | [`ops/scope.md`](ops/scope.md) | 불변 원칙 15 · 법적 경계 · 범위 확정 절차 |
+| [`ops/identifiers.md`](ops/identifiers.md) | 무엇으로 찾는가 — 분절·전사·축약·업무기능어 교차, 역추적 |
 | [`ops/discovery.md`](ops/discovery.md) | 실행 레이어 — 검증된 기법만 |
 | [`ops/verify.md`](ops/verify.md) | 판정 · 음성처럼 보이는 실패 · 잔존 · 버킷 규칙 |
 | [`ops/triage.md`](ops/triage.md) | 위험 등급 · 파일 내부 검사 · 확정/미확정 |
 | [`ops/evidence.md`](ops/evidence.md) | 마스킹 · 헤더 위생 · 산출물 수신자 |
 | [`ops/remediate.md`](ops/remediate.md) | 조치 순서 · 무중단 이전 · 잔존 제거 |
 | [`surfaces/inventory.md`](surfaces/inventory.md) | 노출면 9축 · 우선순위 · 제외 목록 |
+| [`tools/idgen.py`](tools/idgen.py) | 후보 식별자 생성 (오프라인, 회사 고유값 없음) |
 | [`tools/probe.sh`](tools/probe.sh) | 익명 실측 (jq 비의존) |
 | [`tools/test_probe.sh`](tools/test_probe.sh) | 회귀 테스트 — probe.sh 수정 전 실행 |
 | [`assets/ledger-template.md`](assets/ledger-template.md) | 대장 · 잔존 확인표 · 재측정 이력 |
@@ -126,9 +130,10 @@ target     200   81926  3f9c1a7e5b2d4088  EXPOSED    "..."  Mon, 03 ...    https
 
 ```bash
 bash tools/test_probe.sh
+python3 tools/idgen.py --selftest
 ```
 
-19건이며, **전부 이 도구가 실제로 틀렸던 항목**이다. 적대 리뷰가 스크립트를 읽지 않고
+24건이며, **전부 이 도구가 실제로 틀렸던 항목**이다. 적대 리뷰가 스크립트를 읽지 않고
 **돌려봄으로써** 심각도 높은 결함 4건을 찾아냈다 — 최종 URI는 가리면서 기본 라벨에는
 쿼리스트링이 그대로 찍혔고, `file://`을 받아 `EXPOSED`로 판정했으며, 쿼리 아무 데나 IdP
 이름이 들어 있으면 `AUTH-GATE`가 됐고, HTTP 상태코드가 없는 응답에도 노출 판정이 나왔다.

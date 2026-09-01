@@ -104,6 +104,33 @@ rm -f "$T"
 [ "$N" -eq 3 ] && ok "batch skips comments and blanks (header + 2 rows)" \
                || no "batch skips comments and blanks" "got $N lines, expected 3"
 
+T="$(mktemp)"
+printf 'https://example.com/\tthree-col\thttps://example.com/page\nhttps://example.com/\ttwo-col\n' > "$T"
+N="$(bash "$PROBE" --batch "$T" 2>/dev/null | wc -l)"
+rm -f "$T"
+[ "$N" -eq 3 ] && ok "batch accepts the optional 3rd column without breaking 2-column rows" \
+               || no "batch 3rd column" "got $N lines, expected 3"
+
+echo
+echo "== 8. weak-gate replay is opt-in, guarded, and leaks nothing =="
+# The replay must never fire on a target that was not BLOCKED, and the calling-page
+# URL must be masked like every other URL this tool touches.
+L="$(run 'https://example.com/' 'with-caller' 'https://example.com/p?token=REFERER_LEAK')"
+want_absent "calling-page query string absent from output" "$L" "REFERER_LEAK"
+want_field  "a 200 target is unaffected by the 3rd arg"    "$L" 5 "EXPOSED"
+
+L="$(run 'https://example.com/' 'bad-caller' 'file:///etc/passwd')"
+want_field  "non-http calling page is ignored, not followed" "$L" 5 "EXPOSED"
+
+# Without a calling page named, a 401/403 must stay BLOCKED - the replay is opt-in.
+L="$(run 'https://httpbin.org/status/403' 'no-caller')"
+V="$(printf '%s' "$L" | awk -F'\t' '{print $5}')"
+case "$V" in
+  BLOCKED|ERR|UNKNOWN) ok "403 without a named calling page stays BLOCKED (opt-in, got $V)" ;;
+  WEAK-GATE)           no "403 without a named calling page" "replay fired without opt-in" ;;
+  *)                   ok "403 case inconclusive offline (got $V)" ;;
+esac
+
 echo
 echo "-----------------------------------------"
 printf 'PASS %d   FAIL %d\n' "$PASS" "$FAIL"

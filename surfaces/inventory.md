@@ -46,6 +46,12 @@ hosts, script web apps, tunnelling services, public wiki or note pages.
   norm. This is the inevitable output of "AI rolled out company-wide plus non-engineers."
 - **Backend-as-a-service rules left unset**: an anonymous public key is *supposed* to be public, so the
   verdict is not "the key leaked" but **whether row-level security or access rules are configured.**
+- **The page's own data endpoint**: edge workers, serverless functions, script web apps and BaaS REST
+  URLs that a published page fetches from. **A page and the endpoint behind it are two assets**, and
+  moving data off the repository into an endpoint narrows nothing if the endpoint answers anonymously.
+  Extract them from the page source (`fetch`/XHR targets, a config block) and from §discovery 5b
+  network observation, then measure each one — including any that answered `403`, per
+  `ops/verify.md` §"A 403 is not a boundary either".
 - Code playgrounds are better covered by **a single dork** than by checking each one.
 
 ## Axis 3 — Object storage

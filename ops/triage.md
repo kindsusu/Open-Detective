@@ -63,6 +63,21 @@ which makes the expected damage high.
 **Never copy originals to local storage** (invariant 10). Inspect minimally, mask, and destroy after
 remediation.
 
+### Structured data — a field existing is not a value existing
+
+In JSON and API responses, **do not call something leaked from the field name alone.** A schema can
+carry an alarming name whose values are all `null`, `0`, or empty — that item is not going out. The
+reverse holds too: a plainly named field can carry the bulk of the records.
+
+**Confirm by tallying per-field fill rates.** That is an aggregate, not a read of individual values, so
+it does not collide with invariants 10 and 11. Only fields that **actually hold values** belong in the
+grading table.
+
+> Precedent for skipping this step: cost, commission-rate and residual-value fields were present in a
+> schema and were reported as "margin structure leaked." The tally showed every one of them empty —
+> what was actually exposed was the published price list.
+> **Overstating breaks a report as thoroughly as understating.**
+
 ## Separate confirmed from unconfirmed
 
 Split the report into two columns. Mixing them makes the whole thing suspect.

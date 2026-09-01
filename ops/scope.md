@@ -109,9 +109,19 @@ Before starting, settle all of the following **and confirm them with the request
    The test: *was this URL put here by someone who meant to publish it?* If not, **it is in scope.**
 2. **Discovery keywords** — company name in every script and abbreviation, domains, brand names,
    affiliates, organization and personal account names, service names.
+   > **That list is a set of categories, not a method.** The account holding a leak is not the
+   > company name but a coinage an employee invented. Reaching it means *generating* the search
+   > space — segmentation, transliteration, abbreviation, business-function affixes. Procedure in
+   > `ops/identifiers.md`, tool in `tools/idgen.py`. What you fix here are the **seeds**: the local
+   > -script name, **the Latin spelling the company actually writes** (not what the romanization
+   > rule produces), the line of business, and any known brands or affiliates.
 3. **Affiliate boundary** — where "ours" ends. Processors and partners are third parties.
 4. **Escalation path** — who the data-protection officer, security, and legal contacts are, and how to
    reach them. **Decide this before you find personal data, not after.**
+   > Where the auditor *is* the owner of the asset and there is no separate data-protection officer,
+   > invariant 15's separation of duties cannot be met by staffing. **Separate it in time instead**:
+   > confirm and record the exposure first, and take remediation and personnel decisions in a
+   > separate session. Do not leave this field blank — **name outside legal or security counsel in it.**
 5. **Items requiring approval** — identify in advance which access needs operator approval (invariant 13)
    and which third-party notifications need sign-off (invariant 14).
 

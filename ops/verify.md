@@ -42,6 +42,8 @@ If you cannot tell zero results from a failed request, **you will report safety 
 | Malformed CDX query | Zero results | Missing `output=json` and the trailing wildcard. **If the control also returns zero, suspect the query** |
 | Reused output file | Previous result | A failed request shows you the **previous response body**. Truncate per request and check the exit code |
 | Search page `200` | Results found | Board and document platforms all return 200. **Judge by content** |
+| `403` on a data endpoint | Blocked, boundary holds | A header allowlist. Replay the calling page's `Origin`/`Referer` with a browser UA and the body is served in full. See **A 403 is not a boundary either** |
+| `403` to a tool user agent | Blocked | Some edge gates blocklist non-browser UAs. **The scanner's own UA manufactured the negative** |
 
 ### 4. Attach a control to every negative
 
@@ -103,7 +105,8 @@ Those two lines prove "a login screen is not a security boundary" without any ex
 |---|---|
 | `EXPOSED` | The body was served in full to an anonymous request |
 | `AUTH-GATE` | The final host is a **configured** identity provider, and the body was not served |
-| `BLOCKED` | 401/403 |
+| `WEAK-GATE` | 401/403 to a bare request, **but the body was served** when the calling page's own headers were replayed. Triage and remediate as `EXPOSED` |
+| `BLOCKED` | 401/403, and it stayed blocked |
 | `ABSENT` | 404/410 |
 | `NO-BODY` | 2xx with an empty body |
 | `UNKNOWN` | Could not be classified. **Deliberately not EXPOSED** |
@@ -128,6 +131,48 @@ as `EXPOSED`.
 > A same-host `/login` page that returns 200 with a body **is** `EXPOSED`, and that is correct —
 > it is the central claim of this skill. A login screen rendered in the browser is not a boundary.
 > Only a server that refuses to transmit is.
+
+### A 403 is not a boundary either
+
+The same claim, one layer down. A login screen is not a boundary because the body already
+travelled. **A header allowlist is not a boundary because the string it checks is written by the
+caller.** Both look like control from the outside; neither refuses to transmit.
+
+The shape to watch for is a public page that fetches its data from a separate endpoint:
+
+| Request | Response |
+|---|---|
+| bare `GET <data-endpoint>` | `403`, a short error body |
+| same `GET` + `Origin`/`Referer` of `<page>` + a browser UA | `200`, **the full dataset** |
+| `Origin` of an unrelated site | `403` — the allowlist is real, and it is still not a boundary |
+
+A first sweep that only sends a bare request records `BLOCKED` and closes the asset as safe.
+That is a **false negative**, and it is the failure this verdict exists to prevent. Worse, some
+gates blocklist non-browser user agents, so the scanner's own UA can manufacture the negative
+on its own.
+
+**The replay is fenced by four conditions. Break one and this becomes the tool the skill forbids.**
+
+| Condition | Why |
+|---|---|
+| **Opt-in** — only when the operator names the calling page | That naming is the ownership assertion (invariant 12). Never inferred, never applied blanket across a batch |
+| **One shot** — a single request | No enumeration, no credential guessing (invariants 1, 4, 9) |
+| **Same page** — headers derived from that page's own URL | Reproduces a request an anonymous browser already makes. Inventing an allowlist value would be circumvention |
+| **No body** — `-o /dev/null` | Measures *whether* the body is served, never *what is in it* (invariants 10, 11). Hence no `sha256` on this verdict |
+
+Within those four, this is reproduction, not circumvention: loading the page in a browser already
+causes exactly this request. Outside them it is not.
+
+**Reading the row**: `CODE` is the bare-request status, `BYTES` is what the replay was served, and
+`SHA256` is `-` because nothing was retained.
+
+```
+<endpoint>   403   <error-body>     <digest>   BLOCKED     # no calling page named - opt-in held
+<endpoint>   403   <full-dataset>   -          WEAK-GATE   # calling page named - the gate opened
+<hard-403>   403   0                -          BLOCKED     # a real refusal stays a refusal
+```
+
+Those three lines are the control set: the verdict fires on the gate that opens, and on nothing else.
 
 ### The measurement tool is itself an attack surface
 Four high-severity defects were found by *running* `probe.sh`, not by reading it:

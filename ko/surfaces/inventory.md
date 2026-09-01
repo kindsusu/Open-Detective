@@ -37,6 +37,11 @@ GitHub Pages, Cloudflare Pages, Vercel, Netlify, Firebase, Azure SWA, Render, Ra
   비개발자가 만든 앱은 **기본 공개 + 키 하드코딩 + 인증 미구현**이 표준이다.
   전사 AI 배포 + 비개발자 조합에서 반드시 산출된다.
 - **Supabase / Firebase 규칙 미설정 ★신규**: anon key는 공개가 정상이므로 **키 노출이 아니라 RLS·보안규칙 설정 여부가 판정 기준**이다.
+- **페이지가 부르는 자체 데이터 엔드포인트 ★신규**: 엣지 워커·serverless function·스크립트 웹앱·BaaS REST 등
+  배포된 페이지가 데이터를 받아오는 주소. **페이지와 그 뒤의 엔드포인트는 별개 자산 2건**이며,
+  데이터를 저장소에서 엔드포인트로 옮기는 것은 그 엔드포인트가 익명에 응답하는 한 공개 범위를 줄이지 못한다.
+  페이지 소스(`fetch`·XHR 대상, 설정 블록)와 §discovery 5b 네트워크 관찰로 추출해 각각 실측하고,
+  **`403`이 나온 것도 포함**해 `ops/verify.md` §"403도 경계가 아니다"로 재측정한다.
 - 코드 놀이터(CodePen·JSFiddle·StackBlitz·CodeSandbox·Observable·Glitch)는 개별 점검 대신 **dork 1회로 통합**.
 
 ## 주축 3 — 오브젝트 스토리지

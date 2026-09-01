@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # su-detect / probe.sh - anonymous exposure measurement
 #
-# Usage: bash probe.sh <URL> [label]
-#        bash probe.sh --batch <list-file>     (one "URL<TAB>label" per line)
+# Usage: bash probe.sh <URL> [label] [calling-page-URL]
+#        bash probe.sh --batch <list-file>
+#          (one "URL<TAB>label<TAB>calling-page-URL" per line; the last two optional)
 #
 # Environment:
 #   SU_TIMEOUT     per-request timeout in seconds        (default 25)
@@ -15,15 +16,22 @@
 #   - Sends no auth tokens and no cookies (anonymous vantage point)
 #   - The reproducibility invariant is sha256, not byte count
 #   - Never prints credential-bearing headers, and never prints a query string:
-#     labels and final URIs are both masked, because either can carry a token
+#     labels, final URIs and calling-page URLs are all masked, because any of them
+#     can carry a token
 #   - http/https only; refuses loopback, private, link-local and reserved targets
 #   - Never reports EXPOSED without a real HTTP status code
 #   - When the verdict cannot be determined, returns UNKNOWN rather than guessing
 #   - Bounded body buffer, removed on EXIT/INT/TERM
 #   - Keeps the request count minimal (no mass scanning)
+#   - A 401/403 is re-tested ONCE, and only when the operator names the page of
+#     theirs that calls the endpoint. See "weak gate" below and ops/verify.md.
 
 set -uo pipefail
 UA="su-detect/1.1 (authorized asset exposure check)"
+# Some edge gates blocklist non-browser user agents. A tool UA can therefore turn an
+# open endpoint into a false BLOCKED. The weak-gate replay uses a browser UA so that
+# the negative it reports is a real one.
+BROWSER_UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 TIMEOUT="${SU_TIMEOUT:-25}"
 MAX_BYTES="${SU_MAX_BYTES:-10485760}"
 MAX_REDIRS="${SU_MAX_REDIRS:-5}"
@@ -115,10 +123,53 @@ emit () {
     "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8"
 }
 
+# ---------------------------------------------------------------- weak gate
+#
+# A 401/403 is not proof of a boundary. Header-allowlist gates - "serve only when
+# Origin/Referer looks like our own page, and only to a browser user agent" - answer
+# 403 to a bare request and hand over the full body to the page's own request. Every
+# one of those headers is a client-supplied string, so the gate is not a boundary.
+#
+# This replays the request an anonymous visitor's browser already makes when it loads
+# a page you have confirmed is yours. It is reproduction, not circumvention, and it is
+# fenced by four conditions - break any one and this becomes the tool the skill forbids:
+#
+#   opt-in     only runs when the operator names the calling page (asserting ownership,
+#              invariant 12) - never inferred, never applied across a batch by default
+#   one shot   a single request, no enumeration, no credential guessing (invariants 1,4,9)
+#   same page  headers are derived from that page's own URL, nothing invented
+#   no body    -o /dev/null - this measures whether the body is served, never what is
+#              in it (invariants 10,11). Hence no sha256 for a weak-gate verdict.
+#
+# Prints: "open<TAB>code<TAB>bytes" | "closed" | "skip" | "err"
+probe_weak_gate () {
+  local url="${1:-}" ref="${2:-}" refscheme refhost out code size rc
+  refscheme="$(scheme_of "$ref")"
+  case "$refscheme" in http|https) ;; *) printf 'skip'; return ;; esac
+  refhost="$(host_of "$ref")"
+  [ -n "$refhost" ] || { printf 'skip'; return ; }
+
+  out="$(curl -s -o /dev/null --max-time "$TIMEOUT" \
+          --proto '=http,https' --proto-redir '=http,https' \
+          --max-redirs "$MAX_REDIRS" --max-filesize "$MAX_BYTES" \
+          --cookie-jar /dev/null --cookie /dev/null \
+          -A "$BROWSER_UA" \
+          -H "Origin: $refscheme://$refhost" -H "Referer: $ref" \
+          -w '%{http_code}\t%{size_download}' \
+          "$url" 2>/dev/null)"
+  rc=$?
+  [ $rc -ne 0 ] && { printf 'err'; return; }
+  IFS=$'\t' read -r code size <<< "$out"
+  case "$code" in
+    2??) [ "${size:-0}" -gt 0 ] && printf 'open\t%s\t%s' "$code" "$size" || printf 'closed' ;;
+    *)   printf 'closed' ;;
+  esac
+}
+
 # ---------------------------------------------------------------- probe
 
 probe_one () {
-  local raw_url="${1:-}" raw_label="${2:-}"
+  local raw_url="${1:-}" raw_label="${2:-}" raw_ref="${3:-}"
   local label
   if [ -n "$raw_label" ]; then label="$(clean_label "$raw_label")"
   else label="$(mask_url "$raw_url")"; fi
@@ -201,6 +252,20 @@ probe_one () {
     esac
   fi
 
+  # 5. BLOCKED is a claim, not a finding, until the calling page's own request is tried.
+  #    CODE stays the bare-request status; BYTES becomes what the replay was served.
+  if [ "$verdict" = "BLOCKED" ] && [ -n "$raw_ref" ]; then
+    local wg
+    wg="$(probe_weak_gate "$raw_url" "$raw_ref")"
+    case "$wg" in
+      open*)
+        verdict="WEAK-GATE"
+        size="$(printf '%s' "$wg" | cut -f3)"
+        sha="-"; etag=""; lastmod=""   # replay body deliberately not retained
+        ;;
+    esac
+  fi
+
   emit "$label" "$code" "${size:-0}" "$sha" "$verdict" "${etag:--}" "${lastmod:--}" "$(mask_url "$final")"
   [ "$note" != "-" ] && return 0
   return 0
@@ -214,21 +279,26 @@ case "${1:-}" in
   --batch)
     [ -f "${2:-}" ] || { echo "a list file is required: $0 --batch <file>" >&2; exit 2; }
     header
-    while IFS=$'\t' read -r u l; do
+    while IFS=$'\t' read -r u l r; do
       [ -z "${u:-}" ] && continue
       case "$u" in \#*) continue ;; esac
-      probe_one "$u" "${l:-}"
+      probe_one "$u" "${l:-}" "${r:-}"
     done < "$2"
     ;;
   ""|-h|--help)
-    sed -n '2,25p' "$0"; exit 0 ;;
+    sed -n '2,29p' "$0"; exit 0 ;;
   *)
-    header; probe_one "$1" "${2:-}" ;;
+    header; probe_one "$1" "${2:-}" "${3:-}" ;;
 esac
 
 # Reading the verdicts (see ops/verify.md)
 #   EXPOSED    the body was served in full to an anonymous request
 #   AUTH-GATE  the final host is a configured identity provider - body not served
+#   WEAK-GATE  401/403 to a bare request, but the body was served when the calling
+#              page's own Origin/Referer/browser-UA were replayed. The gate is a
+#              client-supplied string, so treat this as EXPOSED for triage and
+#              remediation. CODE is the bare status; BYTES is what the replay got;
+#              SHA is "-" because the body was never retained.
 #   BLOCKED    401/403
 #   ABSENT     404/410
 #   NO-BODY    2xx with an empty body

@@ -2,3 +2,6 @@
 .DS_Store
 targets.tsv
 _local/
+__pycache__/
+*.py[cod]
+*.tmp

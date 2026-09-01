@@ -104,8 +104,11 @@ These came out of getting them wrong first.
   search-engine dorks because they were never indexed; account enumeration found them.
 - **Attach a control to every negative.** In one run the target and the control both returned zero — the
   query format was wrong, and only the control caught it.
-- **Do not trust status codes.** A retired cache endpoint still answers `200`. Eight such
+- **Do not trust status codes.** A retired cache endpoint still answers `200`. Ten such
   "failures that look like negatives" are catalogued in [`ops/verify.md`](ops/verify.md).
+- **A 403 is not a boundary either.** A header allowlist — serve only when `Origin`/`Referer` looks
+  like our own page — answers 403 to a bare request and hands the full body to the page's own.
+  The `WEAK-GATE` verdict catches that case.
 - **Cross-check external scan data by connecting directly.** A port list that omitted a live `443` proved
   its own staleness.
 - **"No permanent residue" is not a claim you can make.** A host with zero web-archive snapshots was
@@ -119,12 +122,14 @@ These came out of getting them wrong first.
 |---|---|
 | [`SKILL.md`](SKILL.md) | Invariants and Phase 0-6 |
 | [`ops/scope.md`](ops/scope.md) | 15 invariants, legal boundaries, scope procedure |
+| [`ops/identifiers.md`](ops/identifiers.md) | What to search for — segmentation, transliteration, abbreviation, function affixes, pivoting |
 | [`ops/discovery.md`](ops/discovery.md) | Execution layer — verified techniques only |
 | [`ops/verify.md`](ops/verify.md) | Verdicts, failures that look like negatives, residue, bucket rules |
 | [`ops/triage.md`](ops/triage.md) | Risk grades, file-internals inspection, confirmed vs unconfirmed |
 | [`ops/evidence.md`](ops/evidence.md) | Masking, header hygiene, who receives what |
 | [`ops/remediate.md`](ops/remediate.md) | Remediation order, zero-downtime migration, residue removal |
 | [`surfaces/inventory.md`](surfaces/inventory.md) | 9 exposure axes, priority, exclusions with reasons |
+| [`tools/idgen.py`](tools/idgen.py) | Candidate identifier generation (offline, no company values) |
 | [`tools/probe.sh`](tools/probe.sh) | Anonymous measurement (no jq dependency) |
 | [`tools/test_probe.sh`](tools/test_probe.sh) | Regression tests — run before changing probe.sh |
 | [`assets/ledger-template.md`](assets/ledger-template.md) | Ledger, residue checklist, re-measurement history |
@@ -133,9 +138,10 @@ These came out of getting them wrong first.
 
 ```bash
 bash tools/test_probe.sh
+python3 tools/idgen.py --selftest
 ```
 
-19 cases, and every one of them exists because the tool actually failed it. An adversarial
+24 cases, and every one of them exists because the tool actually failed it. An adversarial
 review found four high-severity defects by *running* the script rather than reading it:
 the default label printed the URL's query string verbatim while the final URI was masked;
 `file://` was accepted and reported as `EXPOSED`; a URL containing an identity provider's
