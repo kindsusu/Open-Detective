@@ -84,7 +84,7 @@ against one apex domain only will miss them.
 ```
 1. Request from the anonymous vantage point (no auth token, no cookies)
 2. Record status code + sha256 + ETag/Last-Modified + final URI
-3. If the final URI is an auth gate (identity provider), the asset is CONTROLLED
+3. If the final URI is an auth gate (identity provider), the verdict is AUTH-GATE
 4. If the body is served in full, the asset is EXPOSED
 5. Measure controls the same day, the same way
 6. Report confirmed and unconfirmed separately
@@ -94,8 +94,8 @@ against one apex domain only will miss them.
 
 | Target | Response | Verdict |
 |---|---|---|
-| `<internal-site>.pages.dev` | 200, redirected to an identity provider, body not served | Controlled |
-| `<user>.github.io/<repo>/` | 200, ~82KB body served in full | **Exposed** |
+| `<internal-site>.pages.dev` | 200, redirected to an identity provider, body not served | AUTH-GATE |
+| `<user>.github.io/<repo>/` | 200, ~82KB body served in full | **EXPOSED** |
 
 Those two lines prove "a login screen is not a security boundary" without any explanation.
 
@@ -112,6 +112,22 @@ Those two lines prove "a login screen is not a security boundary" without any ex
 | `UNKNOWN` | Could not be classified. **Deliberately not EXPOSED** |
 | `REJECTED` | Out of scope by design: non-http(s) scheme, or a non-public address |
 | `ERR` | DNS failure, TLS mismatch, transfer error |
+
+### Runtime-observed verdicts — the browser's eye
+
+These verdicts are recorded **by the auditor** from a §5b browser pass (`ops/discovery.md`). They are
+**not emitted by `probe.sh`** — the tool does not run JavaScript.
+
+| Runtime observation | Recorded verdict |
+|---|---|
+| A cosmetic client-side gate whose data was already transmitted, or a page that loads its real data via JS with no auth | **EXPOSED** — record what the network/DOM revealed |
+| Client-side encryption (an encrypted blob, the password derives the key) | **CLIENT-ENCRYPTED (not decrypted)** — a distinct recorded state, never brute-forced or decrypted; remediation routes to real server-side auth |
+| Anything you cannot classify without acting on the system | **UNKNOWN** |
+
+**A browser-observed fetch is a Confirmed fact.** An anonymous page loading `GET /api/…` → 200 with a
+body is on equal footing with a curl-observed `EXPOSED`, because it reproduces exactly what any
+anonymous visitor's browser receives. This resolves the ambiguity in triage's "Confirmed" definition:
+a browser-observed anonymous fetch counts, not only a curl `GET`.
 
 ### Why UNKNOWN exists
 An unproven exposure is not an exposure. The tool returns `UNKNOWN` rather than guessing when
@@ -184,7 +200,7 @@ Four high-severity defects were found by *running* `probe.sh`, not by reading it
 | Substring auth-gate matching | Any URL containing a provider name anywhere was `AUTH-GATE` |
 | No HTTP status required | A response with status `000` still produced an exposure verdict |
 
-Restrict the scheme to http/https, refuse loopback, private, link-local and reserved addresses
+Restrict the scheme to http/https, refuse loopback, private, link-local and reserved addresses (IPv4 and IPv6 literals alike)
 on both the first and final hop, cap the response body, and clean the temp buffer on
 `EXIT INT TERM`. Run `tools/test_probe.sh` before changing the script.
 

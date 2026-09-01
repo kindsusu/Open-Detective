@@ -165,6 +165,10 @@ browser runs that JavaScript and receives the data. This step reproduces that va
 The crawler's eye goes first and wide; the browser's eye goes second and narrow, because it is slow,
 cannot be batched, and increases the auditor's exposure to the data itself.
 
+**Prerequisite:** 5b requires browser-automation tooling — a Claude browser / in-browser MCP
+(`navigate`, `read_page`, `read_network_requests`). If that tooling is unavailable, **skip 5b and leave
+those targets `UNKNOWN` pending a browser pass** — never call them `EXPOSED` or safe.
+
 ### Trigger — when 5b turns on
 
 Run 5b against a target from 5a **only when** one of these holds:
@@ -209,15 +213,25 @@ A client-side "lock screen" is one of two things, and 5b tells them apart:
 
 ### Hard limits on 5b — the line between an audit and an attack
 
-- **Observe only what loads without authentication.** Never enter a password, never brute-force,
-  never bypass. The browser is here to see what an anonymous visitor sees — nothing more.
-- **`javascript_tool` reads state; it never defeats a gate.** Inspecting `sessionStorage` is
-  observation; scripting a decrypt or a login is exploitation.
+These are **mandatory**, not advice.
+
+- **You MUST load in a fresh, isolated browser context** — a new tab with no stored session and no cookies, sharing no logged-in state with any other tab,
+  nothing logged in. The browser is here to see what an anonymous visitor sees, nothing more.
+- **You MUST NOT type into any field, submit any form, click a login control, enter or guess a
+  password, or script a decrypt or login.** The browser only observes what loads unauthenticated.
+  `javascript_tool` reads state; it never defeats a gate — inspecting `sessionStorage` is observation,
+  scripting a decrypt or a login is exploitation.
+- **If a target only reveals its data after interaction, STOP and record it `UNKNOWN`** — do not
+  interact to force it. If you cannot observe a behaviour without acting on the system, it stays
+  unconfirmed, and that is not a reason to push.
 - **The auditor now sees the data.** curl only hashed it; the browser renders it. So invariants 10
   and 11 bite harder here — do not copy, and **stop the moment personal data appears on screen**,
   escalating to the data-protection officer. Grade from structure and field shapes, not by reading rows.
-- **Confirmed vs unconfirmed still applies.** If you cannot observe a behaviour without acting on the
-  system, it stays **unconfirmed** — it does not become a reason to push.
+
+> **How this is enforced — honestly.** The current toolset has **no request-interception primitive**
+> that can hard-block an authentication attempt. These constraints are enforced **procedurally, by the
+> auditor following them — not mechanically.** Saying so is better than advertising a safety that does
+> not exist.
 
 ## 6. Storage buckets
 

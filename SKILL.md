@@ -118,6 +118,9 @@ unanswered, when a client-side lock screen must be told apart from real encrypti
 exposes the auditor to the data. **Observe only what loads without authentication** — never enter a
 password, brute-force, or bypass. A cosmetic gate whose data was already transmitted is `EXPOSED`;
 client-side encryption is recorded, not decrypted.
+**§5b needs browser-automation tooling** (a Claude browser / in-browser MCP such as `navigate`,
+`read_page`, `read_network_requests`); if it is unavailable, **skip 5b and leave those targets
+`UNKNOWN` pending a browser pass** — do not call them `EXPOSED` or safe.
 
 ## Phase 3 — Triage
 
@@ -176,6 +179,7 @@ The audit must finish even if a tool dies mid-run — **separate tool failure fr
 | `surfaces/inventory.md` | 9 exposure axes, priority, exclusions with reasons |
 | `tools/idgen.py` | Candidate identifier generation (offline, no company values) |
 | `tools/probe.sh` | Anonymous measurement (no jq dependency, token filtering built in) |
+| `tools/test_probe.sh` | Regression tests — run before changing probe.sh |
 | `assets/ledger-template.md` | Exposure ledger, residue checklist, re-measurement history |
 
 Korean version: [`ko/SKILL.md`](ko/SKILL.md)

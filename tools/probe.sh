@@ -69,9 +69,16 @@ clean_label () {
 scheme_of () { printf '%s' "${1:-}" | sed -nE 's#^([a-zA-Z][a-zA-Z0-9+.-]*)://.*#\1#p' | tr 'A-Z' 'a-z'; }
 
 host_of () {
-  printf '%s' "${1:-}" \
-    | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/@]*@##; s#[/?#].*$##; s#^\[([^]]*)\]:?[0-9]*$#\1#; s#:[0-9]+$##' \
-    | tr 'A-Z' 'a-z'
+  local s="${1:-}"
+  s="${s#*://}"            # strip scheme
+  s="${s%%[/?#]*}"         # strip path / query / fragment
+  s="${s##*@}"             # strip userinfo
+  case "$s" in
+    \[*\]*)  s="${s#\[}"; s="${s%%\]*}" ;;   # bracketed IPv6 (port, if any, sits after ] and is dropped)
+    *:*:*)   : ;;                            # bare IPv6 literal: no port possible, leave intact
+    *)       s="${s%%:*}" ;;                 # hostname / IPv4: drop :port
+  esac
+  printf '%s' "$s" | tr 'A-Z' 'a-z'
 }
 
 # Registrable-ish domain: last two labels, or three when the second-to-last is a
@@ -91,8 +98,13 @@ site_of () {
 
 resolve_ip () {
   python -c "
-import socket,sys
-try: print(socket.gethostbyname(sys.argv[1]))
+import socket,sys,ipaddress
+h=sys.argv[1]
+try:
+    ipaddress.ip_address(h); print(h); raise SystemExit   # already a literal IP (v4 or v6): pass through so is_blocked_ip can judge it
+except ValueError:
+    pass
+try: print(socket.gethostbyname(h))                       # hostname -> IPv4. IPv6-only names fail closed to ERR (never EXPOSED)
 except Exception: print('')
 " "${1:-}" 2>/dev/null
 }

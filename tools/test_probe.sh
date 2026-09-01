@@ -45,6 +45,12 @@ want_absent "userinfo password absent from label"    "$L" "pw@"
 L="$(run 'https://example.com/' 'label?token=LEAKY')"
 want_absent "token in a user-supplied label is masked" "$L" "LEAKY"
 
+L="$(run 'https://example.com/' 'note#frag=SECRETFRAG')"
+want_absent "fragment in a user-supplied label is masked" "$L" "SECRETFRAG"
+
+L="$(run 'https://example.com/#access_token=HASHTOK')"
+want_absent "fragment token absent from default label" "$L" "HASHTOK"
+
 echo
 echo "== 2. scheme gate =="
 L="$(run "file://$HERE/probe.sh" 'file-scheme')"
@@ -57,8 +63,8 @@ L="$(run 'example.com' 'no-scheme')"
 want_field "missing scheme is REJECTED"       "$L" 5 "REJECTED"
 
 echo
-echo "== 3. non-public targets =="
-for u in "http://127.0.0.1/" "http://localhost/" "http://169.254.169.254/latest/meta-data/" "http://10.0.0.1/" "http://192.168.1.1/"; do
+echo "== 3. non-public targets (IPv4) =="
+for u in "http://127.0.0.1/" "http://localhost/" "http://169.254.169.254/latest/meta-data/" "http://10.0.0.1/" "http://192.168.1.1/" "http://172.16.0.1/" "http://100.64.0.1/"; do
   L="$(run "$u" "$(printf '%s' "$u" | sed 's#http://##;s#/.*##')")"
   V="$(printf '%s' "$L" | awk -F'\t' '{print $5}')"
   case "$V" in
@@ -66,6 +72,23 @@ for u in "http://127.0.0.1/" "http://localhost/" "http://169.254.169.254/latest/
     *) no "non-public target refused: $u" "verdict was '$V'" ;;
   esac
 done
+
+echo
+echo "== 3b. non-public targets (IPv6, literal-bracket host) =="
+# is_blocked_ip MUST catch these by range — so require REJECTED exactly, not ERR.
+# An ERR here would mean host parsing broke and the block rule never ran (the old bug).
+for u in "http://[::1]/" "http://[fe80::1]/" "http://[fd00::1]/"; do
+  L="$(run "$u" "ipv6")"
+  want_field "non-public IPv6 is REJECTED (block rule ran): $u" "$L" 5 "REJECTED"
+done
+# Control: a public IPv6 literal must NOT be REJECTED — proves the rule discriminates
+# by range rather than blanket-rejecting every IPv6 literal. (No route -> ERR is fine.)
+L="$(run 'http://[2606:4700:4700::1111]/' 'public-v6')"
+V="$(printf '%s' "$L" | awk -F'\t' '{print $5}')"
+case "$V" in
+  REJECTED) no "public IPv6 literal wrongly REJECTED" "block rule is blanket, not range-based" ;;
+  *) ok "public IPv6 literal is not blanket-rejected ($V)" ;;
+esac
 
 echo
 echo "== 4. auth-gate detection must be host-exact, never substring =="

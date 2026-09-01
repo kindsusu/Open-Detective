@@ -102,6 +102,9 @@ bash ../tools/probe.sh --batch 대상목록.tsv
 스윕이 아니다**: 느리고 배치가 안 되며 점검자를 데이터에 노출시킨다. **비인증으로 로드되는 것만 관찰한다** —
 비밀번호 입력·무차별 대입·우회 금지. 이미 전송된 데이터를 가린 겉치레 게이트는 `EXPOSED`이고,
 클라이언트측 암호화는 복호화하지 않고 기록만 한다.
+**§5b는 브라우저 자동화 도구가 있어야 한다**(Claude 브라우저 / 인브라우저 MCP — `navigate`,
+`read_page`, `read_network_requests`). 없으면 **5b를 건너뛰고 해당 표적을 `UNKNOWN`(브라우저 패스
+대기)으로 둔다** — `EXPOSED`나 안전으로 부르지 않는다.
 
 ## Phase 3 — 위험 분류
 
@@ -158,6 +161,7 @@ bash ../tools/probe.sh --batch 대상목록.tsv
 | `surfaces/inventory.md` | 노출면 9축 · 우선순위 · 제외 목록과 사유 |
 | `../tools/idgen.py` | 후보 식별자 생성 (오프라인, 회사 고유값 없음) |
 | `../tools/probe.sh` | 익명 실측 (jq 비의존, 토큰 필터링 내장) |
+| `../tools/test_probe.sh` | 회귀 테스트 — probe.sh 변경 전에 돌린다 |
 | `assets/ledger-template.md` | 노출 대장 · 잔존 확인표 · 재측정 이력 |
 
 English version: [`../SKILL.md`](../SKILL.md) · [README](../README.md)

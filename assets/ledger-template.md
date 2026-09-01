@@ -13,9 +13,9 @@ seeing the verdict change.
 | D branding | | |
 
 ## Items
-| # | Asset (URL) | Found via | Owner | Grade | Verdict | sha256 | Found | Owner contact | Deadline | Re-measure | Status |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | | | ours / personal / third-party | | EXPOSED / AUTH-GATE / BLOCKED | | | | | | open / in progress / partially closed / closed |
+| # | Asset (URL) | Found via | Owner | Grade | Verdict | Pass | sha256 | Found | Owner contact | Deadline | Re-measure | Status |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | | | ours / personal / third-party | | EXPOSED / AUTH-GATE / BLOCKED / CLIENT-ENCRYPTED / UNKNOWN | crawler / browser | | | | | | open / pending-browser / in progress / partially closed / closed |
 
 - If the owner is a **third party**, the remediation column says **notify** only. Do not probe.
 - **Partially closed**: blocked, but residue checks are not finished.

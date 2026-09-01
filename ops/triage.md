@@ -25,10 +25,11 @@ handled routinely, so this comes up often.
 
 ```
 1. Is the asset open to anonymous visitors?          -> ops/verify.md
-2. If so, what is inside it?                         -> steps 3-5, minimizing reading
+2. If so, what is inside it?                         -> steps 3-6, minimizing reading
 3. First pass on file listings (metadata only)       -> git/trees, directory listings
 4. Flag dangerous extensions and filename patterns   -> table below
-5. If personal data is indicated, stop immediately   -> invariant 11, hand to the DPO
+5. If a page renders its data only at runtime, record what the browser's eye observed -> ops/verify.md runtime-observed verdicts
+6. If personal data is indicated, stop immediately   -> invariant 11, hand to the DPO
 ```
 
 **Stop at step 3 whenever you can.** You can rank priorities without ever fetching a file body.
@@ -82,7 +83,9 @@ grading table.
 
 Split the report into two columns. Mixing them makes the whole thing suspect.
 
-**Confirmed** — only facts that reproduce under anonymous measurement.
+**Confirmed** — only facts that reproduce under anonymous measurement. This includes a
+**browser-observed anonymous fetch** (the browser's eye), not only a curl `GET` — both reproduce what
+an anonymous visitor receives. See the runtime-observed verdicts in `ops/verify.md`.
 > Example: "anonymous GET returns 200, ~82KB, sha256 `a1b2c3...`, body served in full"
 
 **Unconfirmed** — anything you cannot assert for lack of evidence.

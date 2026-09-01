@@ -141,7 +141,7 @@ bash tools/test_probe.sh
 python3 tools/idgen.py --selftest
 ```
 
-24 cases, and every one of them exists because the tool actually failed it. An adversarial
+32 cases, and every one of them exists because the tool actually failed it. An adversarial
 review found four high-severity defects by *running* the script rather than reading it:
 the default label printed the URL's query string verbatim while the final URI was masked;
 `file://` was accepted and reported as `EXPOSED`; a URL containing an identity provider's
