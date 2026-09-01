@@ -83,6 +83,17 @@ bash tools/probe.sh --batch targets.tsv
 - **Do not trust status codes.** Read the "failures that look like negatives" table in `ops/verify.md` first.
 - **Cross-check external intel by connecting directly.** Port-scan data can be stale.
 
+**Two passes: the crawler's eye, then the browser's eye.** `probe.sh` is the primary sweep (§5a in
+`ops/discovery.md`) — one request per target, no JavaScript, batched across everything Phase 1 found.
+Then, **only for targets that need it**, add the browser's eye (§5b): load the page anonymously and
+watch what JavaScript actually fetches. Turn it on when 5a returned `NO-BODY` or a tiny shell, when the
+target is an application server, when an `EXPOSED` page still leaves "**what specifically leaked**"
+unanswered, or when a client-side lock screen must be told apart from real encryption. It runs
+**after discovery, against a narrowed set — never the full sweep**: it is slow, cannot be batched, and
+exposes the auditor to the data. **Observe only what loads without authentication** — never enter a
+password, brute-force, or bypass. A cosmetic gate whose data was already transmitted is `EXPOSED`;
+client-side encryption is recorded, not decrypted.
+
 ## Phase 3 — Triage
 
 `ops/triage.md`. **"The asset is open" and "the data leaked" are different facts.**

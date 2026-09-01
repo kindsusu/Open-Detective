@@ -29,6 +29,10 @@ Scope -> Discover -> Measure -> Triage -> Remediate -> Re-measure
 ```
 
 - **Anonymous measurement decides exposure.** Status code, `sha256`, `ETag`, final URI. Not opinions.
+- **Two vantage points.** A curl pass (the crawler's eye) sweeps every asset; a browser pass (the
+  browser's eye) runs only on targets that need it — client-rendered shells, app servers, and pages
+  where *what specifically leaked* is still open — watching what JavaScript actually fetches. It
+  observes only what loads without a password; it never cracks a client-side gate.
 - **Nine exposure surfaces**, including the ones most inventories miss: AI output (conversation share
   links, meeting-note transcripts, agent config files), third-party supply chain, and file internals.
 - **15 invariants** that no request overrides, with the legal boundary mapped for each action.

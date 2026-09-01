@@ -122,9 +122,10 @@ Use a web-search tool or each engine directly. **Always add the dominant local-l
 > all** because they were never indexed. Account enumeration found them.
 > **Coverage differs per channel — run them in parallel.**
 
-## 5. Exposure measurement
+## 5a. Exposure measurement — the crawler's eye
 
-See `tools/probe.sh`. Full verdict rules in `ops/verify.md`.
+See `tools/probe.sh`. Full verdict rules in `ops/verify.md`. This is the **primary sweep**: one
+request per target, no JavaScript, cheap enough to batch across every asset Phase 1 surfaced.
 
 ```bash
 bash tools/probe.sh "https://<target>/" "<label>"
@@ -133,6 +134,68 @@ bash tools/probe.sh --batch targets.tsv
 
 Record: status code, **sha256**, ETag, Last-Modified, final URI, body size.
 **Size is a secondary indicator.** The invariant for reproducibility is the digest.
+
+## 5b. Runtime observation — the browser's eye
+
+`probe.sh` fetches the HTML the way a crawler does. But a growing share of sites send an almost
+empty shell and let **JavaScript fetch the real data afterward**. A curl-only pass reports those as
+`NO-BODY` or a small body and moves on, missing the exposure entirely. A real anonymous visitor's
+browser runs that JavaScript and receives the data. This step reproduces that vantage point.
+
+**It runs only after discovery, and only against a narrowed set of targets — never the full sweep.**
+The crawler's eye goes first and wide; the browser's eye goes second and narrow, because it is slow,
+cannot be batched, and increases the auditor's exposure to the data itself.
+
+### Trigger — when 5b turns on
+
+Run 5b against a target from 5a **only when** one of these holds:
+
+- 5a returned `NO-BODY`, or a body far smaller than a real page (a client-rendered shell)
+- the target is an **application server** (framework cookies, `X-Powered-By`, an SPA mount point
+  like `<div id="root">`) rather than static HTML
+- 5a returned `EXPOSED` and the question "**what specifically leaked**" is not yet answered — the
+  page loads data, calls an API, or carries a client-side gate
+- a **client-side lock screen** is present and you must tell a cosmetic gate from real encryption
+
+If none holds — a plain static page whose body 5a already served in full — **do not run 5b.**
+There is nothing a browser would add, and every run has a cost.
+
+### What each step does
+
+| Step | Tool | What it establishes |
+|---|---|---|
+| Load anonymously | `navigate` | Reproduces an anonymous visitor. **No login, no password, no stored session.** |
+| Watch the network | `read_network_requests` | The **actual data fetches** the page made — `GET /api/customers -> 200, 2MB` is the real exposure, observed rather than guessed |
+| Read the rendered DOM | `read_page` / `get_page_text` | What is on screen **after** JS runs. If content appears with no password, the gate was cosmetic |
+| Read the console | `read_console_messages` | Endpoints, keys, or errors the app logged |
+| Inspect state (read-only) | `javascript_tool` | Whether an admin token persists in storage, what globals hold — **inspection only, never to defeat a gate** |
+
+### The lock-screen distinction (this is where 5b earns its place)
+
+A client-side "lock screen" is one of two things, and 5b tells them apart:
+
+- **Cosmetic gate** — JS toggles `display`, or checks `password === "x"` then reveals a div. The
+  data was **already transmitted** in the anonymous response. Reading it is not bypassing anything;
+  it is reading a body the server already sent. Verdict: **EXPOSED**, and report *what* the DOM/network
+  revealed.
+- **Client-side encryption** — the content is an encrypted blob and the password derives the key
+  (StatiCrypt and the like). Getting in means brute-forcing or cracking. **Do not.** Record it as
+  "client-side encryption — not decrypted," and route remediation to real server-side authentication.
+
+> The difference is decided by reading, not by trying passwords. If the body carries plaintext data
+> behind a cosmetic toggle, it is exposed. If it carries ciphertext, you stop and report.
+
+### Hard limits on 5b — the line between an audit and an attack
+
+- **Observe only what loads without authentication.** Never enter a password, never brute-force,
+  never bypass. The browser is here to see what an anonymous visitor sees — nothing more.
+- **`javascript_tool` reads state; it never defeats a gate.** Inspecting `sessionStorage` is
+  observation; scripting a decrypt or a login is exploitation.
+- **The auditor now sees the data.** curl only hashed it; the browser renders it. So invariants 10
+  and 11 bite harder here — do not copy, and **stop the moment personal data appears on screen**,
+  escalating to the data-protection officer. Grade from structure and field shapes, not by reading rows.
+- **Confirmed vs unconfirmed still applies.** If you cannot observe a behaviour without acting on the
+  system, it stays **unconfirmed** — it does not become a reason to push.
 
 ## 6. Storage buckets
 
