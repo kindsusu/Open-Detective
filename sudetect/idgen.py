@@ -148,6 +148,18 @@ def _english_compound_stems(parts: list[str]) -> list[str]:
             for split in range(1, len(parts))]
 
 
+def _english_initialism(parts: list[str]) -> str:
+    """Return the explicit first-letter abbreviation of a multiword input."""
+    return "".join(part[0] for part in parts) if len(parts) >= 2 else ""
+
+
+def _english_brand_compound(parts: list[str], industry: list[str]) -> str:
+    """Preserve a hyphenated multiword brand only before a supplied industry tail."""
+    if len(parts) >= 3 and parts[-1] in industry:
+        return "-".join(parts[:-1])
+    return ""
+
+
 def _strip_korean_legal_boundary(value: str) -> str:
     """Remove a legal/geographic form once, only at a name boundary."""
     compact = re.sub(r"\s+", "", unicodedata.normalize("NFKC", value).strip())
@@ -164,7 +176,8 @@ def _strip_korean_legal_boundary(value: str) -> str:
     return compact
 
 
-def stems(ko: str = "", en: str = "", extra: list[str] | None = None) -> list[tuple[str, str]]:
+def stems(ko: str = "", en: str = "", extra: list[str] | None = None,
+          industry: list[str] | None = None) -> list[tuple[str, str]]:
     """Return [(stem, how-it-was-derived)], deduped, order preserved."""
     found: list[tuple[str, str]] = []
 
@@ -173,17 +186,38 @@ def stems(ko: str = "", en: str = "", extra: list[str] | None = None) -> list[tu
         # retain their one intentional boundary while ordinary operator terms
         # remain in the strict ASCII-alphanumeric stem alphabet.
         v = value if preserve_hyphen else _clean(value)
-        if v and len(v) >= 2 and not any(v == s for s, _ in found):
+        if not v or len(v) < 2:
+            return
+        existing = next((index for index, (stem, _) in enumerate(found) if stem == v), None)
+        if existing is None:
             found.append((v, why))
+        elif found[existing][1].endswith("initialism") and why in {"operator-supplied", "english-name"}:
+            # A later literal seed has stronger provenance than a shorthand we
+            # derived from earlier words.  Replace it in place to preserve the
+            # source order without carrying the bare-only initialism restriction.
+            found[existing] = (v, why)
 
+    industry = industry or []
     for raw in (extra or []):
+        # An operator may intentionally supply a legal-looking or otherwise
+        # compact account spelling.  Preserve that literal normalized seed before
+        # using tokenization only for additional, lower-confidence derivatives.
         add(raw, "operator-supplied")
+        parts = _english_name_parts(raw)
+        for compound in _english_compound_stems(parts):
+            add(compound, "operator-supplied-compound", preserve_hyphen=True)
+        add(_english_initialism(parts), "operator-supplied-initialism")
+        add(_english_brand_compound(parts, industry), "operator-supplied-brand-compound",
+            preserve_hyphen=True)
 
     if en:
         parts = _english_name_parts(en)
         add("".join(parts), "english-name")
         for compound in _english_compound_stems(parts):
             add(compound, "english-compound-joined", preserve_hyphen=True)
+        add(_english_brand_compound(parts, industry), "english-brand-compound",
+            preserve_hyphen=True)
+        add(_english_initialism(parts), "english-initialism")
         for index, part in enumerate(parts):
             # The first word of a multiword official spelling is often the
             # distinctive brand.  Treat it as an operator-supplied-quality stem;
@@ -210,7 +244,9 @@ def stems(ko: str = "", en: str = "", extra: list[str] | None = None) -> list[tu
         add(initials(body), "korean-whole-initials")
 
     # English-side abbreviations of whatever stems we have so far
-    for value, _ in list(found):
+    for value, why in list(found):
+        if why.endswith("initialism"):
+            continue
         if value.isascii() and len(value) >= 5:
             devoweled = value[0] + "".join(c for c in value[1:] if c not in "aeiou")
             if 2 < len(devoweled) < len(value):
@@ -225,8 +261,11 @@ def stems(ko: str = "", en: str = "", extra: list[str] | None = None) -> list[tu
 # interleaved: a finite probe budget needs one name, one business combination, and one
 # numeric variation from each spelling before it needs every suffix on one long stem.
 STEM_WEIGHT = {
-    "operator-supplied": 0, "english-name": 0, "english-compound-joined": 0,
+    "operator-supplied": 0, "operator-supplied-compound": 0,
+    "operator-supplied-brand-compound": 0, "english-name": 0,
+    "english-compound-joined": 0, "english-brand-compound": 0,
     "english-leading-token": 0, "english-token": 1,
+    "operator-supplied-initialism": 1, "english-initialism": 1,
     "korean-original-romanized": 1, "korean-original-initials": 2,
     "korean-stem-romanized": 1, "korean-stem-initials": 2,
     "korean-whole-romanized": 2, "korean-tail-romanized": 3,
@@ -243,11 +282,11 @@ def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
     measured. Sorting by length instead of stem quality floats junk abbreviations
     above the company's actual name - measured, and fixed.
     """
-    base = stems(ko, en, extra)
     funcs = [normalize_term(f) for f in (functions or FUNCTION)]
     funcs = [f for f in funcs if f]
     inds = [normalize_term(i) for i in (industry or [])]
     inds = [i for i in inds if i]
+    base = stems(ko, en, extra, inds)
     seen: set[str] = set()
     out: list[tuple[str, int, str, int, int, int, int, int]] = []
 
@@ -272,6 +311,10 @@ def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
     for stem_order, (stem, why) in enumerate(base):
         w = STEM_WEIGHT.get(why, 4)
         emit(stem, 1, f"stem:{why}", w, 0, 0, stem_order, 0)  # bare name
+        if why.endswith("initialism"):
+            # Acronyms are a bounded, source-derived shorthand.  Do not multiply
+            # this weaker guess by roles, separators, or numeric suffixes.
+            continue
         affixes(stem, inds, 2, "industry", w, 1, stem_order)
         affixes(stem, funcs, 3, "function", w, 2, stem_order)
         for number_order, num in enumerate(NUMERIC):           # uniqueness suffix

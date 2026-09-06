@@ -12,6 +12,8 @@ python tools/idgen.py --selftest
 
 Tier 1 contains direct stems, tier 2 industry affixes, tier 3 generic function affixes, and tier 4 numeric suffixes. For a multiword official Latin spelling, the generator also keeps bounded source-word compound boundaries (for example, `brand-industryword`) and tests their numeric variants. Ranking is a deterministic search order, not a probability or confidence score. Within a stem-quality group, direct names come first, then industry, function, and numeric variants are interleaved across spellings. This prevents the suffixes of one long name from consuming a finite `--limit`. Tier describes derivation rather than queue position.
 
+For a multiword English input, it also emits one first-letter initialism as a lower-priority, bare-only candidate. It does not append roles, digits, or separators to that abbreviation. A hyphenated multiword brand that excludes the final industry word is emitted only when that industry tail was explicitly supplied with `--industry`; multiword operator aliases likewise preserve their source-word hyphen boundaries. The generator never creates arbitrary substrings or inferred brand spellings.
+
 Every output remains a candidate. Confirm it through an owner API, verified DNS/control-plane relation, repository deployment metadata, or another accountable owner record. Similarity, a 403/404, an existing account, or a public page is insufficient. After a confirmed entry point, prefer exact relation edges such as team/project/deployment/alias over more guessing.
 
 Do not place real company seeds in this repository, probe every generated value, infer employee personal accounts, or persist secret-bearing target URLs. The generator has no network dependency; unit tests must stay offline.

@@ -137,6 +137,50 @@ class IdgenTests(unittest.TestCase):
         self.assertLess(rows.index(next(row for row in rows if row["query"] == "Galaxy dashboard")),
                         rows.index(next(row for row in rows if row["query"] == "Nova")))
 
+    def test_explicit_english_initialism_and_industry_bounded_brand_hyphen(self):
+        rows = idgen.generate(en="Blue Harbor Logistics", extra=["Blue Harbor"],
+                              industry=["logistics"], functions=["sales"])
+        rank = {candidate: index for index, (candidate, _, _) in enumerate(rows)}
+        self.assertIn("bhl", rank)
+        self.assertIn("blue-harbor", rank)
+        self.assertLess(rank["blueharborlogistics"], rank["bhl"])
+        self.assertNotIn("bhlsales", rank)
+        self.assertNotIn("bhl1", rank)
+        self.assertIn("blue-harbor", dict(idgen.stems(extra=["Blue Harbor"])))
+        self.assertNotIn("blue-harbor", dict(idgen.stems(en="Blue Harbor Logistics")))
+
+    def test_initialism_is_source_derived_and_does_not_expand_candidate_volume(self):
+        rows = idgen.generate(en="Maple Data Studio", functions=["sales"], industry=["data"])
+        candidates = {candidate for candidate, _, _ in rows}
+        self.assertIn("mds", candidates)
+        self.assertNotIn("mdssales", candidates)
+        self.assertNotIn("mds1", candidates)
+        self.assertLess(len(rows), 230)
+
+    def test_operator_alias_keeps_literal_compact_form_before_derived_parts(self):
+        values = dict(idgen.stems(extra=["INC", "Blue Harbor Inc"]))
+        self.assertEqual("operator-supplied", values["inc"])
+        self.assertEqual("operator-supplied", values["blueharborinc"])
+        self.assertIn("blue-harbor", values)
+
+    def test_long_initialism_is_not_truncated_or_devowelled_into_affix_stems(self):
+        rows = idgen.generate(en="Amber Birch Cedar Delta Elm", functions=["sales"])
+        candidates = {candidate for candidate, _, _ in rows}
+        self.assertIn("abcde", candidates)
+        for candidate in ("abcd", "abcdsales", "abcd1", "abcdesales", "abcde1"):
+            self.assertNotIn(candidate, candidates)
+
+    def test_explicit_short_alias_replaces_earlier_derived_initialism(self):
+        for kwargs in ({"extra": ["Blue Harbor"], "en": "BH"},
+                       {"extra": ["Blue Harbor", "BH"]},):
+            with self.subTest(kwargs=kwargs):
+                rows = idgen.generate(**kwargs, functions=["sales"])
+                by_candidate = {candidate: rationale for candidate, _, rationale in rows}
+                self.assertEqual("stem:english-name" if kwargs.get("en") else "stem:operator-supplied",
+                                 by_candidate["bh"])
+                self.assertIn("bhsales", by_candidate)
+                self.assertIn("bh1", by_candidate)
+
 
 if __name__ == "__main__":
     unittest.main()
