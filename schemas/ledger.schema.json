@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/su-detect/ledger.schema.json",
+  "title": "su-detect ledger event",
+  "type": "object",
+  "required": ["event_id", "event_type", "entity_id", "occurred_at", "payload"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 1},
+    "event_type": {"enum": ["ASSET_REGISTERED", "OBSERVATION_ADDED", "FINDING_OPENED", "REMEDIATION_RECORDED", "FINDING_CLOSED", "FINDING_REOPENED", "JOB_ENQUEUED", "JOB_CLAIMED", "JOB_COMPLETED", "JOB_RETRY_SCHEDULED"]},
+    "entity_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "properties": {
+        "access": {"enum": ["BODY_SERVED", "ACCESS_DENIED_OBSERVED", "AUTH_REDIRECT_OBSERVED", "NOT_FOUND_OBSERVED", "INDETERMINATE"]},
+        "content": {"enum": ["PUBLIC_UI", "SENSITIVE_CONTENT_CONFIRMED", "SENSITIVE_CANDIDATE", "CLIENT_ENCRYPTED_OBSERVED", "NOT_INSPECTED"]},
+        "target_id": {"type": ["string", "null"], "minLength": 1},
+        "policy_id": {"type": ["string", "null"], "minLength": 1},
+        "alias_bindings": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "capture_complete": {"type": "boolean"},
+        "evidence_ref": {"type": "string", "pattern": "^[A-Za-z0-9_-]+:[^\\s]+$"},
+        "policy_evidence_ref": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]+:[^\\s]+$"},
+        "control_evidence_ref": {"type": ["string", "null"], "pattern": "^[A-Za-z0-9_-]+:[^\\s]+$"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

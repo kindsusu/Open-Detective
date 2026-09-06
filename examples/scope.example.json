@@ -1,0 +1,17 @@
+{
+  "policy_id": "replace-with-approved-scope-id",
+  "expires_at": "2020-01-01T00:00:00Z",
+  "targets": [
+    {
+      "origin": "https://app.example",
+      "owner": "replace-with-owner-record-id",
+      "ownership_evidence": "replace-with-verified-asset-record-id",
+      "path_prefixes": ["/"]
+    }
+  ],
+  "exclude_urls": ["https://app.example/public-announcement"],
+  "max_bytes": 262144,
+  "max_requests": 20,
+  "timeout": 10,
+  "max_redirects": 5
+}

@@ -1,251 +1,54 @@
-# 실측 판정 — 무엇을 근거로 "노출됐다"고 말하는가
+# 익명 실측과 판정 규칙
 
-결론을 말로 설명하면 안 믿는다. **응답값을 보여주면 끝난다.**
-다만 응답값을 잘못 읽으면 더 나쁘다 — 없는 안전을 보고하게 된다.
+실측은 **어떤 접근 동작을 관측했는가**와 **최소 내용 증거가 무엇을 확정했는가**를 분리해 답한다. URL 하나로 사이트 전체 보호를 추론하지 않는다.
 
-## 핵심 원칙 6
+## 접근
 
-### 1. 익명과 인증은 역할이 다르다 — 둘 다 쓰되 섞지 않는다
-| 시점 | 답하는 질문 | 정본 도구 |
-|---|---|---|
-| **익명** | "외부인에게 보이는가" = **노출 판정** | REST 리스팅·직접 URL (검색 API 아님) |
-| **인증** | "무엇이 존재하는가" = **인벤토리 확보** | `gh api`, 조직 저장소 리스팅 |
-
-> 익명 판정에 **검색 API를 쓰지 않는다.** 검색은 인덱스 지연·토큰화 영향을 받아
-> "안 나온다"가 "없다"를 뜻하지 않는다. 노출 판정의 정본은 REST 리스팅과 직접 URL이다.
->
-> 실측: 익명 `orgs/<org>` → `public_repos: 0`, 인증 리스팅 → 6개 전부 private.
-> 결론은 같았으나 **비교 도구가 비대칭**이었다. 같은 종류로 비교해야 한다.
-
-### 2. 재현성의 불변량은 크기가 아니라 다이제스트다
-바이트 수가 같다는 것은 **콘텐츠가 안 바뀌었다**는 뜻이지 기법이 재현된다는 뜻이 아니다.
-콘텐츠가 바뀌었어도 기법은 똑같이 작동하고 크기만 달랐을 것이다.
-
-기록할 것: **`sha256` + `ETag` + `Last-Modified`** + 상태코드 + 최종 URI.
-크기는 보조 지표로만 쓴다.
-
-### 3. 상태코드를 믿지 않는다 — "음성처럼 보이는 실패" 카탈로그
-0건과 실패를 구분하지 못하면 **없는 안전을 보고하게 된다.**
-
-| 현상 | 겉보기 | 실제 |
-|---|---|---|
-| Google 캐시 `200` | 캐시 있음 | 본문이 `<title>Google Search</title>` — 엔드포인트 폐지 |
-| archive.today `302` | 레이트리밋 | **신호 0.** `archive.ph→archive.md` 도메인 로테이션일 뿐. `-L`로 따라가야 404(없음)와 스냅샷이 갈림 |
-| crt.sh `404` | 인증서 0건 | Apache 에러 페이지 |
-| Common Crawl `504` / `"No index found"` | 0건 | 게이트웨이 타임아웃 / 잘못된 컬렉션 ID |
-| Azure Blob `000`(curl exit 6) | 없음 | DNS NXDOMAIN. 존재 계정 루트는 `400`이라 403/404 규칙이 무너짐 |
-| CDX 쿼리 형식 오류 | 0건 | `output=json` 누락 등. **대조군이 함께 0이면 쿼리를 의심한다** |
-| 출력 파일 미초기화 | 직전 결과 | 실패한 요청이 **이전 응답 본문을 그대로 보여준다.** 매 요청 파일 초기화 + exit code 확인 |
-| 검색 페이지 `200` | 결과 있음 | Trello·Notion·Slideshare 모두 200. **내용으로 판정한다** |
-| 데이터 엔드포인트 `403` | 차단됨·경계 있음 | 헤더 허용목록. 호출 페이지의 `Origin`/`Referer` + 브라우저 UA를 실으면 본문 전량. §**403도 경계가 아니다** |
-| 도구 UA에 `403` | 차단됨 | 일부 게이트가 비브라우저 UA를 블록한다. **점검 도구의 UA가 음성을 만들어낸 것** |
-
-### 4. 모든 음성 결과에 대조군을 붙인다
-양성 대조군(반드시 잡혀야 하는 것)과 음성 대조군을 같은 도구·같은 형식으로 함께 돌린다.
-대조군이 함께 실패하면 **결과가 아니라 측정이 잘못된 것**이다.
-
-> 실측 실패 사례: 웨이백 재확인 중 대상과 대조군이 동시에 0건 → 쿼리 형식 오류였다.
-> 대조군이 없었으면 "잔존 없음"으로 잘못 확정했을 것이다.
-
-### 5. 외부 인텔은 반드시 직접 접속으로 대조한다
-**Shodan InternetDB의 포트 목록은 stale일 수 있다.**
-
-> 실측 반증: InternetDB `ports: [80, 3000, 5601, 9200]`인데
-> **443이 라이브로 124,580바이트를 서빙 중**이다. 응답에 포트별 관측 시각 필드가 없다.
-> 열린 포트를 누락하는 데이터는 **닫힌 포트를 남겨둘 수도 있다.**
-
-- `vulns` 필드는 **리포트에서 배제한다.** 버전 없는 CPE(`cpe:/a:apache:tomcat`)에
-  해당 제품 CVE 전체가 매칭돼 17년 전 항목까지 섞인다. 참고 신호가 아니라 노이즈다.
-- **"포트가 확정 신호"라는 규칙도 틀렸다** — 443 누락이 반증이다.
-
-### 6. IP를 자산에 귀속시키기 전에 테넌시를 확인한다
-역방향 조회 없이 "회사 IP"라고 부르면 안 된다.
-
-> 실측: `<공유 IP>`에 `<회사도메인>`·`dev.<회사도메인>`·
-> `<도메인B>`(+www·+dev)·`<도메인C>`·`<도메인D>`가 함께 있다.
-> `:80`의 기본 vhost는 `www.<도메인B>`로 301 — 점검 대상 도메인은 이 박스의 주 사이트도 아니었다.
-> **포트를 특정 서비스 소유로 귀속시킬 근거가 없다.**
-
-역방향 IP 조회는 **원 감사가 못 찾은 자산을 한 번에 드러낸다.** CT를 apex 한 개에만 돌리면 놓친다.
-
----
-
-## 노출 판정 절차
-
-```
-① 익명 시점으로 요청한다 (인증 토큰·쿠키 없이)
-② 상태코드 + sha256 + ETag/Last-Modified + 최종 URI를 기록한다
-③ 최종 URI가 인증 게이트(cloudflareaccess/login.microsoftonline/accounts.google)면 → AUTH-GATE
-④ 본문이 그대로 오면 → 노출
-⑤ 같은 날·같은 방식으로 대조군을 함께 측정한다
-⑥ 확정과 미확정을 분리해 보고한다
-```
-
-**대조군 예시(실측)**
-
-| 대상 | 응답 | 판정 |
-|---|---|---|
-| `<사내사이트>.pages.dev` | 200 → `cloudflareaccess.com` 리다이렉트, 본문 미전달 | AUTH-GATE |
-| `<user>.github.io/<repo>/` | 200 / 약 82KB 본문 전량 | **EXPOSED** |
-
-이 두 줄이 "로그인 화면은 보안 경계가 아니다"를 설명 없이 증명한다.
-
-## 도구가 내는 판정값
-
-| 판정 | 의미 |
+| 값 | 증거 |
 |---|---|
-| `EXPOSED` | 익명 요청에 본문이 전량 전달됨 |
-| `AUTH-GATE` | 최종 호스트가 **설정된** IdP이고 본문이 전달되지 않음 |
-| `WEAK-GATE` | 맨몸 요청엔 401/403이나, 호출 페이지의 헤더를 실었더니 **본문이 전달됨.** 분류·조치는 `EXPOSED`와 동급 |
-| `BLOCKED` | 401/403이고, 그대로 막혀 있음 |
-| `ABSENT` | 404/410 |
-| `NO-BODY` | 2xx인데 본문이 비어 있음 |
-| `UNKNOWN` | 분류 불가. **의도적으로 EXPOSED로 두지 않는다** |
-| `REJECTED` | 설계상 범위 밖 — http(s)가 아닌 스킴, 또는 비공개 주소 |
-| `ERR` | DNS 실패·TLS 불일치·전송 오류 |
+| `BODY_SERVED` | transport가 2xx 응답을 관측했다(제한된 부분 캡처 206 포함). 실제 바이트가 없거나 public UI, error document, sensitive content일 수 있다. |
+| `ACCESS_DENIED_OBSERVED` | transport가 이 요청에서 HTTP 401 또는 403을 관측했다. 상태 관측이며 실제 authorization boundary 확인이 아니다. |
+| `AUTH_REDIRECT_OBSERVED` | 별도 classifier 또는 사람의 evidence review가 관측된 redirect를 authentication flow로 식별한다. 현재 probe는 IdP 비슷한 이름으로 이 값을 추론하지 않는다. 비승인 cross-origin redirect는 `INDETERMINATE`다. |
+| `NOT_FOUND_OBSERVED` | transport가 이 요청에서 HTTP 404 또는 410을 관측했다. 상태 관측이며 resource 부재 확인이 아니다. |
+| `INDETERMINATE` | timeout, DNS/TLS/policy/budget 실패, 부분적 미지원 동작, 모호한 challenge, 증거 부족이다. |
 
-### 런타임 관측 판정 — 브라우저의 눈
+현재 probe JSON은 observation/time/policy ID, masked target reference, HTTP status, 승인된 redirect reference, access/content, 가능한 경우 captured bytes, completeness, full/prefix digest, 제한된 reason code를 기록한다. response content type과 resolved connection address는 일시적인 enforcement input이며 직렬화하지 않는다. downstream ledger는 evidence policy가 허용할 때 tool/rule version과 보호된 network metadata를 추가할 수 있다. 완전한 SHA-256은 전체 캡처에만 적용하고 일부 캡처는 `prefix_sha256`을 쓴다.
 
-이 판정들은 §5b 브라우저 패스(`ops/discovery.md`)에서 **점검자가 직접 기록**한다. `probe.sh`가
-내는 값이 **아니다** — 이 도구는 JS를 돌리지 않는다.
+challenge/error-page indicator와 soft-404 의미 판단은 provisional classifier 또는 사람의 evidence review가 맡는다. content 해석을 바꾸거나 workflow를 pending으로 유지할 수 있지만 probe의 `ACCESS_DENIED_OBSERVED`와 `NOT_FOUND_OBSERVED`는 문자 그대로 상태 관측이다. 어느 값도 안전, authorization 정확성, resource 부재를 증명하지 않는다.
 
-| 런타임 관측 | 기록 판정 |
+## 내용
+
+| 값 | 증거 |
 |---|---|
-| 데이터가 이미 전송된 겉치레 클라이언트측 게이트, 또는 인증 없이 JS로 실제 데이터를 로드하는 페이지 | **EXPOSED** — 네트워크/DOM이 드러낸 것을 기록 |
-| 클라이언트측 암호화(암호문 블롭, 비밀번호가 키를 만듦) | **CLIENT-ENCRYPTED (복호화 안 함)** — 별도 기록 상태. 무차별 대입·복호화하지 않으며, 조치는 진짜 서버측 인증으로 보낸다 |
-| 시스템에 작용하지 않고는 분류할 수 없는 것 | **UNKNOWN** |
+| `PUBLIC_UI` | 로그인 양식이나 공개 안내처럼 게시 의도가 있는 UI/내용임을 증거가 뒷받침한다. |
+| `SENSITIVE_CONTENT_CONFIRMED` | 익명 응답의 보호 개인정보·기밀을 실제 최소 증거로 확인했다. observation과 ownership evidence가 필요하다. |
+| `SENSITIVE_CANDIDATE` | parser, 이름, 필드, 문맥이 민감성을 시사하지만 실제 보호 값이나 소유가 확정되지 않았다. |
+| `CLIENT_ENCRYPTED_OBSERVED` | 암호문만 관측했다. 평문/키 노출과 보호 효과는 별도 질문이다. |
+| `NOT_INSPECTED` | 내용을 검사하지 않았거나 접근 결과만으로 판정할 수 없다. |
 
-**브라우저로 관측한 fetch는 확정 사실이다.** 익명 페이지가 `GET /api/…` → 200과 본문을 로드하는
-것은 curl로 관측한 `EXPOSED`와 **동등**하다 — 어떤 익명 방문자의 브라우저가 받는 것을 그대로
-재현하기 때문이다. 이는 triage의 "확정" 정의의 모호함을 해소한다: curl `GET`뿐 아니라 브라우저로
-관측한 익명 fetch도 확정으로 친다.
+내용 확실성은 `confirmed`, `probable`, `unknown`이고 workflow 상태는 별도다. AI 설명은 evidence ID를 인용해야 하며 후보를 confirmed로 올릴 수 없다.
 
-### UNKNOWN이 있는 이유
-**증명되지 않은 노출은 노출이 아니다.** 분류할 수 없는 호스트로 이탈했을 때, 3xx가 해소되지
-않았을 때, HTTP 상태코드가 아예 없을 때는 추측하지 않고 `UNKNOWN`을 낸다.
+## 측정 순서
 
-### 인증 게이트 판정은 호스트 정확 일치다 — 부분 문자열이 아니다
-최종 URL 전체를 부분 문자열로 맞추면 **양방향으로 틀린다.** 실증됐다 —
-`https://example.com/?redir=okta.com`이 `AUTH-GATE`로 판정됐다. 노출된 자산이 통제됨으로
-보고된 것이고, 이 도구가 낼 수 있는 **가장 나쁜 오류**다. **파싱한 호스트**를 정확 일치 또는
-점 경계 접미사로 비교한다.
+1. 만료되지 않은 정책을 로드·검증한다(`SUD-R05`~`SUD-R07`).
+2. 연결 전에 exact origin, path boundary, owner, ownership evidence를 맞춘다. 측정 transport는 GET만 보낸다.
+3. A/AAAA를 확인하고 비공개 주소를 거부하며 검증한 주소에 요청을 고정한다. 따라가는 redirect마다 반복한다.
+4. 주변 자격증명/config, cookie, 별도 broker가 없는 proxy 상속, Referer, 자동 auth를 끈다(`SUD-R08`, `SUD-R09`).
+5. redirect/request/time/captured-byte 예산을 적용한다(`SUD-R12`). transport는 identity encoding을 요청하고 non-identity content encoding은 unsupported로 표시한다. decompression budget을 주장하지 않는다.
+6. 캡처 시점에 증거를 정화하고 적절한 대조군 뒤 음성을 해석한다(`SUD-R10`, `SUD-R13`).
 
-**자사 IdP는 기본 목록에 없다.** `SU_IDP_HOSTS`에 실제로 리다이렉트되는 호스트를 넣지 않으면,
-자체 IdP 뒤에 있는 통제된 자산이 전부 `EXPOSED`로 읽힌다.
+예전 “weak gate” 재시도는 자동 실행하지 않는다. 401/403 뒤 다른 헤더로 2xx가 나와도 routing, 공개 UI, 데이터 중 무엇인지 알 수 없다. 실제 최소 민감 내용 증거만 노출을 확정한다.
 
-> 같은 호스트의 `/login`이 200과 본문을 주면 그것은 `EXPOSED`가 **맞다.** 이 스킬의 핵심 주장이
-> 바로 그것이다 — 브라우저에서 그려지는 로그인 화면은 경계가 아니다. 서버가 전달을 거부하는
-> 구조만 경계다.
+## 브라우저 승격
 
-### 403도 경계가 아니다
+정적 HTML이 shell이거나, JavaScript가 익명 데이터 요청을 시작하거나, hidden DOM/hydration data에 내용이 이미 있을 수 있거나, content type이 모호하면 승격한다. 새 context에는 저장 cookie, extension, cache, Service Worker state가 없다. navigation 전에 routing을 설치하고 지원되는 HTTP request를 정책으로 검사하며 미지원 동작은 측정하지 않는다.
 
-같은 주장을 한 겹 아래에서. 로그인 화면이 경계가 아닌 이유는 본문이 이미 갔기 때문이고,
-**헤더 허용목록이 경계가 아닌 이유는 그 문자열을 호출자가 쓰기 때문이다.**
-둘 다 바깥에서는 통제처럼 보이지만, 둘 다 전달을 거부하지 않는다.
+`brokered_anonymous_browser`는 raw browser header, cookie, auth, referrer 없이 승인된 GET document/script/stylesheet/XHR/fetch를 pinned policy transport로 보낸다. Service Worker를 끄고 WebSocket server 연결을 막으며 message는 local sink에서 버린다. popup을 닫고 download를 거부하며 dead proxy와 blocked host resolving으로 Chromium을 실행해 지원되는 page request가 broker를 거치게 한다. WebSocket 시도는 `websocket_not_observed`로 기록되고 browser result를 incomplete로 만든다. DOM 검토에 candidate가 없을 때 제한된 live `input`, `textarea`, `select` 값도 검사한다. canvas pixel, serialized snapshot 밖 shadow DOM, JavaScript heap, interaction 이후 상태는 측정하지 않는다. password input은 `LOGIN_FORM_INDICATOR`만 만들며 `PUBLIC_UI`, 보호, 민감을 확정하지 않는다. 외부 protocol과 그 밖의 미지원 browser 동작은 측정하지 않고 `INDETERMINATE`로 둔다. 이는 observer 통제이며 OS firewall 보장이나 전체 egress 증거가 아니다.
 
-경계할 형태는 **공개 페이지가 데이터를 별도 엔드포인트에서 받아오는 구조**다.
+브라우저는 response byte와 제한된 DOM snapshot을 일시적으로 분석한 뒤 raw DOM 없이 정화된 observation/classifier summary만 출력한다. screenshot, HAR, trace를 생성하지 않는다.
 
-| 요청 | 응답 |
-|---|---|
-| 맨몸 `GET <데이터엔드포인트>` | `403`, 짧은 에러 본문 |
-| 같은 요청 + `<페이지>`의 `Origin`/`Referer` + 브라우저 UA | `200`, **데이터 전량** |
-| 무관한 사이트의 `Origin` | `403` — 허용목록은 실재한다. 그래도 경계는 아니다 |
+## 대조군과 재측정
 
-맨몸 요청만 보내는 1차 스윕은 `BLOCKED`로 적고 그 자산을 안전으로 닫는다.
-그것이 **거짓 음성**이고, 이 판정값은 그 실패를 막으려고 존재한다. 더 나쁜 것은,
-일부 게이트가 비브라우저 UA를 블록하므로 **점검 도구의 UA가 스스로 음성을 만들어낸다**는 점이다.
+타인의 데이터에 접근하지 않으면서 같은 채널을 시험하는 대조군을 고른다. 알려진 공개 endpoint, 설정된 missing path, 소유자 제공 보호 fixture가 예다. target과 control이 함께 실패하면 채널 실패로 기록한다. 변동 서비스는 제한된 반복 관측이 필요하며 무응답이나 변화 없음은 이벤트 미수신의 증거가 아니다.
 
-**재요청은 네 조건으로 울타리를 친다. 하나라도 풀면 이 스킬이 금지한 도구가 된다.**
-
-| 조건 | 이유 |
-|---|---|
-| **opt-in** — 수행자가 호출 페이지를 지정할 때만 | 그 지정이 소유 확증이다(원칙 12). 추론하지 않고, 배치 전체에 기본 적용하지 않는다 |
-| **1회** — 단일 요청 | 열거 없음, 자격증명 추측 없음(원칙 1·4·9) |
-| **같은 페이지** — 헤더를 그 페이지 URL에서 유도 | 익명 브라우저가 이미 보내는 요청의 재현이다. 허용목록 값을 **지어내면** 우회가 된다 |
-| **본문 미수신** — `-o /dev/null` | 본문이 *전달되는지*만 재고, *무엇인지*는 보지 않는다(원칙 10·11). 그래서 이 판정엔 `sha256`이 없다 |
-
-이 넷 안에서는 재현이지 우회가 아니다 — 브라우저로 페이지를 열면 정확히 이 요청이 이미 발생한다.
-넷을 벗어나면 아니다.
-
-**행 읽는 법**: `CODE`는 맨몸 요청의 상태, `BYTES`는 재요청이 받은 크기,
-`SHA256`은 아무것도 남기지 않았으므로 `-`다.
-
-```
-<엔드포인트>   403   <에러본문>     <digest>   BLOCKED     # 호출 페이지 미지정 — opt-in 지켜짐
-<엔드포인트>   403   <데이터전량>   -          WEAK-GATE   # 호출 페이지 지정 — 게이트가 열렸다
-<진짜403>      403   0              -          BLOCKED     # 진짜 거부는 거부로 남는다
-```
-
-이 세 줄이 대조군이다 — 열리는 게이트에서만 판정이 켜지고, 그 밖에서는 켜지지 않는다.
-
-### 측정 도구 자체가 공격면이다
-`probe.sh`를 **읽어서가 아니라 돌려서** 심각도 높은 결함 4건이 나왔다.
-
-| 결함 | 증상 |
-|---|---|
-| 기본 라벨의 쿼리스트링 | 최종 URI는 가려놓고 라벨에는 `?token=...`이 그대로 |
-| 스킴 미제한 | `file://` 경로를 읽어 `EXPOSED`로 판정 |
-| 부분 문자열 IdP 판정 | URL 아무 데나 공급자 이름이 있으면 `AUTH-GATE` |
-| HTTP 상태 미요구 | 상태코드 `000`인데도 노출 판정 |
-
-스킴을 http/https로 제한하고, 최초·최종 홉 양쪽에서 loopback·사설·link-local·예약 대역을
-거부하고, 본문 크기에 상한을 두고, 임시 버퍼를 `EXIT INT TERM`에 정리한다.
-스크립트를 고치기 전에 `tools/test_probe.sh`를 돌린다.
-
-**알려진 한계**: curl은 모든 리다이렉트 홉의 스킴을 검증하지만, 이 스크립트는 **최초와 최종**
-호스트만 해석할 수 있다. 중간에 사설 주소를 경유하는 체인은 탐지되지 않는다.
-없는 안전을 광고하는 것보다 이렇게 밝히는 편이 낫다.
-
-## 헤더를 찍을 때
-`Set-Cookie`·`Authorization`·`Proxy-Authorization`·`X-Api-Key`를 **반드시 필터링한다.**
-
-> 실측 사고: `curl -D`로 헤더를 덤프했더니 Laravel 세션 토큰이 출력에 그대로 찍혔다.
-> 점검 기록 자체가 유출원이 된다.
-
-## 잔존(residue) 판정 — "지웠다"를 검증하는 법
-
-**단일 채널의 음성은 부재의 증거가 아니다.** 아래를 전부 확인하기 전에는
-"잔존 없음"이라고 쓰지 않는다. 쓸 수 있는 것은 **시점 진술**뿐이다.
-
-| 벡터 | 확인 방법 | 비고 |
-|---|---|---|
-| Wayback | CDX API (`url=<대상>*&output=json`) | 형식 틀리면 거짓 음성 |
-| Common Crawl | **여러 컬렉션**을 확인 | 1개만 보면 부족. 504·"No index found" 주의 |
-| archive.today | `-L`로 리다이렉트 추적 후 404 확인 | 302는 신호 0 |
-| Software Heritage | origin search | GitHub 상시 크롤 — **오늘 없음이 내일 없음을 보장하지 않음** |
-| **제3자 CDN 미러** | jsDelivr `cdn.jsdelivr.net/gh/<계정>/<저장소>@<ref>/<경로>` | **커밋 고정 경로는 사실상 영구** |
-| GitHub 커밋 SHA | SHA 직접 조회 | 브랜치에서 제거돼도 GC 전까지 200 |
-| GH Archive 이벤트 | 저장소명 이벤트 검색 | 삭제해도 이벤트는 남음 |
-| 포크 네트워크 | forks 확인 | 현재 0이어도 가변 |
-| 검색엔진 인덱스 | Google·Bing·네이버 | **폐쇄 전에** 확인해야 한다 |
-
-> **실증된 반례**: `<user>.github.io`는 Wayback 0건이지만
-> **jsDelivr가 `<repo>@main/index.html`을 200 / 약 82KB로 이미 서빙 중**이다.
-> "Wayback에 없다 = 잔존 없다"는 성립하지 않는다.
->
-> 또한 같은 조직의 다른 개발 서버는 **과거 Wayback 스냅샷**이 남아 있다.
-> 이 조직 자산은 아카이빙된 전례가 있으므로 "안 잡힐 것"이라는 가정도 근거가 없다.
-
-**폐쇄가 잔존을 만들 수도 있다** — 폐쇄 후 SWH·CC를 재확인한다.
-
-## 버킷 판정 — S3/GCS 한정 규칙
-| 응답 | S3/GCS 의미 |
-|---|---|
-| `404` NoSuchBucket | 없음 |
-| `403` AccessDenied | 존재·리스팅 차단 |
-| `200` 리스팅 | **공개(위험)** |
-
-**이 규칙을 그대로 확장하지 않는다.**
-- **Azure는 무너진다**: 없는 계정 = DNS NXDOMAIN(`000`), 존재 계정 루트 = `400`.
-  `?restype=container&comp=list`를 붙여야 판정된다.
-- **403이 안전을 뜻하지 않는다**: 리스팅만 막고 **개별 객체는 공개**인 구성이 실제 유출의 다수다.
-  200 리스팅만 위험으로 분류하면 이 케이스를 통째로 놓친다.
-- **403은 소유를 증명하지 않는다**: `brandword` 같은 일반 명칭 버킷은 타사일 확률이 압도적이다.
-  원칙 12(소유 확증)를 버킷에도 적용한다.
-
-## CT 로그 — 대체가 아니라 병행
-- `crt.sh`는 **죽은 게 아니라 불안정**하다(8회 시도에서 200 1회·404 2회·502 5회·타임아웃 1회).
-  재시도 로직으로 병행한다. **404는 Apache 에러 페이지**이지 인증서 0건이 아니다.
-- **CertSpotter 무료는 유효 인증서만 반환한다.** 폐기된 과거 서브도메인(구 스테이징 등)은
-  영원히 안 잡힌다. **대체재가 아니라 보완재**다.
-- CT는 **apex 하나에만 돌리지 않는다.** 역방향 IP로 나온 다른 도메인에도 각각 돌린다.
+새 익명 context로 정확한 원 locator, 알려진 모든 alias/deployment, 관련 cache, 승인된 archive channel을 확인한다. 동적 digest 변화만으로 조치 성공이나 재발을 증명하지 않는다. access/content 증거를 비교하고 잔존 unknown은 `partially_closed`로 둔다.

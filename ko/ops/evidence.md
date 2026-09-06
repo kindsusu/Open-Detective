@@ -1,59 +1,17 @@
-# 증거 취급 — 점검 기록이 유출원이 되지 않게
+# 증거 처리
 
-점검은 노출을 줄이려는 작업이다. **그 과정에서 사본을 만들면 노출을 늘린다.**
+증거는 두 번째 노출을 만들지 않으면서 판단을 입증해야 한다. source에서 metadata를 캡처하고 log, model input, report, screenshot, export 전에 정화한다.
 
-## 절대 규칙
+각 observation은 opaque ID, UTC time, policy/rule/tool version, anonymous mode, masked canonical locator, redirect observation, access/content/confidence, inspected bytes, completeness, digest type/value, stop reason, control result, evidence reference를 기록한다. raw artifact는 retention과 audit log가 있는 소유자 승인 encrypted/access-controlled system에만 둔다.
 
-1. **발견한 실제 키·값·개인정보를 원문으로 기록하지 않는다.** 종류·위치·마스킹값만 남긴다.
-2. **원본을 복제·다운로드해 로컬에 보관하지 않는다.** 사본을 만드는 순간 점검자 PC가 새 유출점이 된다.
-3. **개인정보가 식별되면 즉시 열람을 중단한다.** 화면에 뜨면 거기서 멈추고 CPO로 넘긴다.
-4. **볼트·노트·채팅에 원문을 옮기지 않는다.** 존재 사실만 기록한다.
+probe의 `target_id`는 기본적으로 무작위 `opaque:` 식별자다. 수행자가 `SUDETECT_LOCATOR_HMAC_KEY`를 명시적으로 설정하면 승인된 cross-run matching을 위한 안정적인 keyed `hmac-sha256:` 참조가 된다. locator의 plain hash는 쓰지 않는다. path, document ID, share token의 entropy가 낮을 수 있다. HMAC key는 report와 source control 밖에서 보호·회전한다. 같은 key가 없으면 무작위 opaque ID는 의도적으로 실행 간 상관할 수 없다.
 
-## 마스킹 형식
+로컬 locator handoff에서는 opaque store ref 자체가 측정 `target_id`다. recheck를 ledger에 넣기 전에 정확한 `policy_id`와 함께 바인딩한다. 변경·누락·불일치한 target/policy binding은 종결 증거가 아니다.
 
-| 대상 | 기록 방식 |
-|---|---|
-| API 키·토큰 | `AKIA****…****` — **앞 4자만**. 종류·발급처·위치·발견일 |
-| 비밀번호 | `(존재)` — 값은 어떤 형태로도 남기지 않음 |
-| 개인정보 | `성명 1건`·`연락처 약 40건` — **유형과 대략 건수만** |
-| 파일 | 경로·크기·sha256. **내용 인용 금지** |
-| URL | 그대로 기록 가능. 단 **쿼리스트링에 식별자가 있으면 마스킹** (`?p_idx=****`) |
+URL userinfo, path segment, query, fragment, header, cookie, redirect, console output, DOM text, filename, screenshot, HAR, trace를 정화한다. `<email>`, `<token>`, `<record-id>` 같은 placeholder로 구조를 보존한다. 안정적인 비밀 비교에는 접근통제된 keyed HMAC을 쓴다. entropy가 낮은 비밀의 plain hash는 값을 노출할 수 있다.
 
-**유효성을 검증하지 않는다.** 그 키로 로그인하지 않는다(원칙 3).
-"살아 있는 키인가"는 **발급처에서 회전할 때** 자연히 확인된다.
+개인정보는 명단 대신 유형과 제한된 대략 건수를 기록한다. 비밀은 provider/type, 안전한 경우에만 masked prefix/suffix, location class, `live_validity=unknown`을 기록한다. audit process에서 로그인, data API 호출, secret 회전을 하지 않는다. 소유자 측 validity/rotation 증거는 별도 event다.
 
-## 헤더·로그 위생
+`0`과 `false`는 typed value로 남긴다. null, absent, empty string, redacted, truncated, not inspected를 구분한다. 모든 집계에 source, selection boundary, 조기 중단 여부를 적는다.
 
-**헤더 덤프가 토큰을 흘린다.** 실제로 발생한 사고다 — `curl -D`로 헤더를 찍었더니
-세션 토큰이 출력에 그대로 남았다.
-
-```bash
-curl -sI "$URL" | grep -ivE '^(set-cookie|authorization|proxy-authorization|x-api-key|cookie)'
-```
-
-- 스크립트 출력·터미널 스크롤백·세션 로그 전부가 기록 대상이다.
-- 응답 본문을 파일로 받을 때는 **매 요청 파일을 초기화**한다.
-  초기화하지 않으면 실패한 요청이 직전 응답 본문을 그대로 보여준다(측정 오류이자 위생 문제).
-
-## 부득이하게 원본을 확보해야 할 때
-
-조치·법적 대응에 원본이 꼭 필요한 경우에만, 아래를 전부 충족해서.
-
-1. **최소 범위** — 노출을 증명할 최소 분량만
-2. **마스킹본 우선** — 원문이 아니라 마스킹본을 산출물로 삼는다
-3. **암호화·접근통제** — 지정 경로에만, 접근자 기록
-4. **조치 완료 후 파기** — 보관 기한을 처음부터 정한다
-5. **경로만 기록** — 볼트·보고서에는 **파일 경로와 존재 사실만**
-
-## 산출물에 무엇이 들어가는가
-
-점검 수행자가 보는 것과 CPO가 보는 것을 나눈다.
-
-| 산출물 | 수신자 | 내용 |
-|---|---|---|
-| 노출 대장 | 수행자·경영진 | 자산·판정·등급·소유자·기한·재측정일. **"노출 있음/없음/규모"까지** |
-| 에스컬레이션 보고 | CPO·법무 | 위와 동일 + 개인정보 **유형과 대략 건수**. 원문 없음 |
-| 원본 증거 | CPO 지정 취급자 | 필요 시에만. 위 §부득이하게 절차 적용 |
-
-**수행자가 고객 개인정보 원문을 상세 열람하지 않는다.**
-지정 취급자가 아닌 사람의 열람은 목적외 이용·무권한 접근 소지가 있다(원칙 11).
+보고서는 confirmed fact, candidate, unknown, failure를 분리한다. 역할과 목적에 따라 접근을 제한하며 privacy, security, legal, HR, third-party recipient는 자기 작업에 필요한 최소 필드만 받는다.

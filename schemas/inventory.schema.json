@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/su-detect/inventory.schema.json",
+  "title": "su-detect sanitized owner inventory",
+  "type": "object",
+  "required": ["schema_version", "inventory_id", "provider", "scope_id", "status", "observed_at", "assets", "edges", "coverage", "errors"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "inventory_id": {"type": "string", "pattern": "^inv_[0-9a-f]{32}$"},
+    "provider": {"enum": ["vercel", "github", "import"]},
+    "scope_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "status": {"enum": ["COMPLETE", "PARTIAL", "FAILED"]},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["asset_id", "kind", "url", "locator_ref", "handoff_state", "owner_evidence", "project_id", "deployment_id", "environment"],
+        "properties": {
+          "asset_id": {"type": "string", "pattern": "^ast_[0-9a-f]{32}$"},
+          "kind": {"type": "string"},
+          "url": {"type": ["string", "null"]},
+          "locator_ref": {"type": "string", "pattern": "^(hmac-sha256:[0-9a-f]{64}|opaque:[0-9a-f]{32})$"},
+          "handoff_state": {"enum": ["ready", "blocked", "not_applicable"]},
+          "owner_evidence": {"type": "string", "minLength": 1},
+          "project_id": {"type": ["string", "null"]},
+          "deployment_id": {"type": ["string", "null"]},
+          "environment": {"type": ["string", "null"]}
+        },
+        "additionalProperties": true
+      }
+    },
+    "edges": {"type": "array", "items": {"type": "object"}},
+    "coverage": {"type": "object"},
+    "errors": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+  },
+  "additionalProperties": false
+}

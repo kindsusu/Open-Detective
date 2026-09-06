@@ -1,49 +1,47 @@
-# 노출 대장 — <회사명> / 최초 작성 <YYYY-MM-DD>
+# 노출 대장 내보내기
 
-**"고쳤다"로 끝나는 보고는 실패다.** 같은 실측을 다시 돌려 판정이 바뀐 것을 확인해야 종결이다.
+이 Markdown은 검토/내보내기 view다. SQLite 대장이 운영 source of truth이고 observation과 event는 append-only다.
 
-## 요약
-| 등급 | 건수 | 미조치 |
-|---|---|---|
-| S 자격증명 | | |
-| A 개인정보 | | |
-| B 기밀 사업정보 | | |
-| C 내부 구조 | | |
-| D 브랜드·구성 | | |
+## Finding
 
-## 건별
-| # | 자산(URL) | 발견채널 | 소유주체 | 등급 | 판정 | 측정패스 | sha256 | 발견일 | 소유자 | 조치기한 | 재측정일 | 상태 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | | | 자사/개인/제3자 | | EXPOSED(노출)/AUTH-GATE(인증게이트)/BLOCKED(차단)/CLIENT-ENCRYPTED(암호화)/UNKNOWN | crawler/browser | | | | | | 미조치/브라우저대기/조치중/부분종결/종결 |
+| 필드 | 값 |
+|---|---|
+| finding_id | |
+| asset_id / endpoint_id | |
+| owner / ownership_evidence | |
+| masked_locator / protected_locator_ref | |
+| severity | S / A / B / C / D / unassigned |
+| workflow | candidate / ownership_pending / verification_pending / open / containment_pending / recheck_pending / partially_closed / closed / reopened |
+| assignee / escalation_route | |
+| action_due_at / recheck_due_at | |
+| created_at / updated_at | |
 
-- **소유주체**가 제3자면 조치란은 "통지"만 쓴다. 프로빙하지 않는다.
-- **부분종결**: 차단은 됐으나 잔존 확인이 안 끝난 상태.
+## 최신 observation
 
-## 잔존 확인 (건별로 전부 채운다 — 하나라도 미확인이면 "잔존 없음"이라 쓰지 않는다)
-| # | Wayback | archive.today | Common Crawl | Software Heritage | jsDelivr 등 CDN | 커밋 SHA | 포크 | 검색인덱스 |
-|---|---|---|---|---|---|---|---|---|
-| 1 | | | | | | | | |
+| observation_id | observed_at | anonymous_mode | access | content | confidence | capture_complete | digest_kind/value | evidence_ref | control_id | stop_reason |
+|---|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | | |
 
-> 쓸 수 있는 것은 **시점 진술**뿐이다: "YYYY-MM-DD 기준 ○○에 스냅샷 없음".
-> "영구 잔존 없음"은 성립하지 않는다.
+access 값: `BODY_SERVED`, `ACCESS_DENIED_OBSERVED`, `AUTH_REDIRECT_OBSERVED`, `NOT_FOUND_OBSERVED`, `INDETERMINATE`.
 
-## 대조군 (매 측정 시 함께 돌린다)
-| 대조군 | 기대 판정 | 실제 |
-|---|---|---|
-| (인증 게이트가 걸린 사내 표준 배포처) | AUTH-GATE(인증게이트) | |
-| (존재하지 않는 경로) | ABSENT(없음) | |
+content 값: `PUBLIC_UI`, `SENSITIVE_CONTENT_CONFIRMED`, `SENSITIVE_CANDIDATE`, `CLIENT_ENCRYPTED_OBSERVED`, `NOT_INSPECTED`.
 
-## 미확정 항목
-| 항목 | 현재 근거 | 확정에 필요한 것 | 담당 |
-|---|---|---|---|
-| | | | |
+## Alias와 deployment
 
-## 에스컬레이션
-| 일시 | 건 | 등급 | 수신(CPO/법무/경영진) | 결과 |
-|---|---|---|---|---|
-| | | | | |
+| alias_id | masked_locator | deployment_id | relationship_source | ownership_evidence | first_seen | last_checked | status |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
 
-## 재측정 이력
-| 측정일 | 대상 건수 | 노출 | 종결 | 신규 | 비고 |
-|---|---|---|---|---|---|
-| | | | | | |
+## Control과 proof
+
+| control_id | purpose | expected | observed | observed_at | channel_status | evidence_ref |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+
+## Event와 recheck history
+
+| event_id | occurred_at | type | from_state | to_state | actor | reason/evidence_ref | next_due_at |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
+
+종결에는 알려진 모든 live locator의 새 익명 observation과 선언한 residue scope 완료가 필요하다. archive/cache/alias coverage가 unknown이면 `partially_closed`다. raw 개인정보, secret, header, token 포함 URL을 여기에 붙이지 않는다.

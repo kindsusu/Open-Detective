@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "source": "owner-export:fixture-2026-09-06",
+  "retrieved_at": "2026-09-06T00:00:00Z",
+  "owner_scope": "fixture-team",
+  "completeness": "COMPLETE",
+  "assets": [
+    {
+      "kind": "custom_share",
+      "url": "https://sharing.example.invalid/private-path?token=never-export-this",
+      "external_id": "approved-share-record-42",
+      "source_record_id": "approved-share-record-42",
+      "completeness": "COMPLETE",
+      "owner_evidence": "control-plane:approved-record-42",
+      "scope_decision": "approved",
+      "environment": "production"
+    }
+  ]
+}

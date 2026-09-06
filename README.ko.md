@@ -1,159 +1,115 @@
 # su-detect
 
-![su-detect](assets/hero.png)
+`su-detect`는 조직 소유 공개 자산을 인벤토리로 모으고, 익명 접근을 관측하고, 증거가 뒷받침하는 내용만 분류하고, 재측정을 예약한다. 취약점 스캐너가 아니다. 발견한 비밀로 로그인하거나 통제를 우회하거나 인접 레코드를 열거하지 않으며 인터넷 전체를 확인했다고 주장하지 않는다.
 
-**인터넷에 노출된 우리 조직의 자료와 서버를 찾아내고, 의견이 아니라 실측으로 증명한다.**
+영문: [README.md](README.md)
 
-Claude Code 스킬이다. **"뚫을 수 있는가"를 묻지 않는다. "열려 있는가"만 묻는다.**
-둘은 다른 질문이고 방법도 다르다. 열려 있는지는 문 앞에서 확인되고, 뚫리는지는 밀어봐야 안다.
-**이 스킬은 밀지 않는다.**
+수정본의 설치·적용 절차와 구현 범위: [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
 
-English: [README.md](README.md) · 한국어 지침 전문: [`ko/`](ko/)
+## 판정 모델
 
----
+서로 독립적인 필드를 보존한다. HTTP 상태만으로 민감정보 노출이나 안전을 확정하지 않는다.
 
-## 왜 만들었나
-
-"감사받았다"는 지적은 대개 같은 방식으로 죽는다. 누군가 노출을 확인하고 문서로 남기지만 아무 일도 일어나지
-않는다 — 보고서에 소유자도, 기한도, 재측정일도 없었기 때문이다. 이 스킬의 바탕이 된 사례에서는 노출 지적이
-**19일간** 방치됐고, 그 사이 노출 자산이 **1건에서 8건으로** 늘었다.
-
-그래서 절차가 "고쳤다"가 아니라 **재측정**에서 끝난다.
-
-## 무엇을 하나
-
-```
-범위 → 발견 → 실측 → 분류 → 조치 → 재측정
+```text
+access: BODY_SERVED | ACCESS_DENIED_OBSERVED | AUTH_REDIRECT_OBSERVED |
+        NOT_FOUND_OBSERVED | INDETERMINATE
+content: PUBLIC_UI | SENSITIVE_CONTENT_CONFIRMED | SENSITIVE_CANDIDATE |
+         CLIENT_ENCRYPTED_OBSERVED | NOT_INSPECTED
+confidence: confirmed | probable | unknown
+workflow: candidate | ownership_pending | verification_pending | open |
+          containment_pending | recheck_pending | partially_closed | closed | reopened
 ```
 
-- **익명 실측이 노출을 판정한다.** 상태코드·`sha256`·`ETag`·최종 URI. 의견이 아니다.
-- **두 개의 시점.** curl 패스(크롤러의 눈)가 전 자산을 훑고, 브라우저 패스(브라우저의 눈)는 필요한
-  표적에만 — 클라이언트 렌더 껍데기, 앱 서버, *무엇이 샜는지*가 아직 안 풀린 페이지 — 돌며 JS가 실제로
-  무엇을 가져오는지 관찰한다. 비밀번호 없이 로드되는 것만 보며, 클라이언트측 게이트를 크랙하지 않는다.
-- **노출면 9축.** 대부분의 목록이 놓치는 것들을 포함한다 — AI 산출물(대화 공유링크·회의록·에이전트 설정파일),
-  제3자 공급망, 파일 내부 검사.
-- **어떤 요청도 넘지 못하는 불변 원칙 15개.** 행위별로 법적 경계를 함께 정리했다.
-- **실제로 돌려서 작동을 확인한 기법만 넣었다.** 차단·폐지·유료로 밝혀진 도구는 사유와 함께 격리했다.
-  죽은 도구를 목록에 두면 거짓 음성을 만들기 때문이다.
+`BODY_SERVED + PUBLIC_UI`는 정상 로그인 페이지일 수 있다. `SENSITIVE_CONTENT_CONFIRMED`에는 실제 보호 값이나 필드의 최소 증거 참조, 익명 관측, 소유 증거가 필요하다. 이름 일치, 상태코드, 바이트 수, AI 점수, 도구 간 동의만으로는 부족하다.
 
-## 설치
+## 설치와 실행
+
+Python 3.11 이상이 필요하다. 브라우저 캡처는 선택 기능이다.
 
 ```bash
-git clone https://github.com/kindsusu/su-detect ~/.claude/skills/su-detect
+python -m pip install -e .
+python -m pip install -e ".[browser]"
+python -m playwright install chromium
+python -m sudetect --help
 ```
 
-Codex는 `~/.codex/skills/su-detect`로 클론하고 재시작한다. 패키지를 받는 데스크톱 앱이라면 압축 파일 루트가
-`su-detect/SKILL.md` 구조가 되도록 zip으로 묶어 업로드한다.
-
-## 사용
-
-말로 요청한다.
-
-```
-우리 회사 자료가 인터넷에 노출됐는지 확인해줘
-사내 파일이 공개 코드 호스트에 올라갔는지 찾아줘
-우리 도메인들 노출 점검 돌려줘
-```
-
-실측만 직접 돌릴 수도 있다.
+루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 ```bash
-bash tools/probe.sh "https://example.com/" "라벨"
-bash tools/probe.sh --batch targets.tsv
+python -m sudetect probe --scope scope.json https://app.example.test/
+python -m sudetect browser https://app.example.test/ --scope scope.json --duration 3
+python -m sudetect inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
+python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
+python -m sudetect discover --input candidates.json --scope-id TEAM
+python -m sudetect github-discover --scope-id TEAM --account approved-account
+python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<수행자 입력>"
+python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite
+python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
+python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
+python -m sudetect ledger --db audit.sqlite due
+python -m sudetect doctor --reference .
 ```
 
+`tools/probe.sh`는 Python probe의 호환 래퍼다.
+
+`doctor`는 읽기 전용이다. 명령이 실제로 불러온 runtime을 확인하고 검수한 source tree와 비교할 수 있다. 이 저장소를 수정하거나 push해도 이미 설치된 스킬/runtime은 갱신되지 않는다. 설치본이 갱신됐다고 판단하기 전에는 보고된 runtime root와 parity 결과를 확인한다.
+
+## 범위 계약
+
+정책은 실행 입력이다. 각 target에 소유자, 정확한 HTTPS origin, 허용 경로 접두사, 소유 증거를 적고 정책 만료 시각을 둔다. 와일드카드 origin, URL userinfo, HTTPS 이외 스킴, 만료된 정책은 거부한다. redirect와 broker가 처리하는 브라우저 요청을 전송 전에 검사한다. 소유자 API 인벤토리와 익명 표적 측정은 자격증명과 실행 환경을 분리한다.
+
+```json
+{"policy_id":"replace-with-approved-scope-id","expires_at":"2020-01-01T00:00:00Z","targets":[{"owner":"replace-with-owner-record-id","ownership_evidence":"replace-with-verified-asset-record-id","origin":"https://app.example","path_prefixes":["/"]}],"max_bytes":262144,"max_requests":20,"timeout":10,"max_redirects":5}
 ```
-LABEL      CODE  BYTES  SHA256(16)        VERDICT    ETAG  LAST-MODIFIED  FINAL-URI
-control    200   33156  b1e07d4c9a6f2351  AUTH-GATE  -     -              https://<idp>/...?<query-omitted>
-target     200   81926  3f9c1a7e5b2d4088  EXPOSED    "..."  Mon, 03 ...    https://<host>/<path>/
-```
 
-이 두 줄이 "로그인 화면은 보안 경계가 아니다"를 설명 없이 증명한다. 같은 날 같은 방식인데 결과가 정반대다.
+이 예시는 의도적으로 만료되어 있다. [examples/scope.example.json](examples/scope.example.json)을 ignored `_local/`로 복사하고 placeholder를 바꾼 뒤 승인된 미래 UTC expiry를 설정한다. 네트워크 명령 전에 [ko/ops/scope.md](ko/ops/scope.md)를 읽는다. 회사명, 도메인, 계정, 토큰은 로컬 입력에만 둔다.
 
-## 하지 않는 것
+## 작업 흐름
 
-여기가 핵심이다. 이 스킬은 의도적으로 제약돼 있다.
+1. 제외 URL, 검색 씨앗, 관계사 경계, 에스컬레이션 경로, 별도 승인 행위를 기록한다.
+2. 소유자 인벤토리와 공개 후보를 provenance와 페이지 처리·완전성 상태와 함께 가져온다.
+3. 측정 전에 소유를 확증한다. 비공개 저장소의 공개 배포는 계속 남을 수 있다.
+4. 제한된 익명 probe를 실행한다. 실패와 부분 캡처는 `INDETERMINATE`다.
+5. 정적 HTML로 내용 질문에 답할 수 없을 때만 브라우저를 쓴다. `brokered_anonymous_browser`는 새 context와 정책 제한 transport broker로 승인된 GET document/script/stylesheet/XHR/fetch를 처리한다. browser credential, cookie, auth, referrer를 제거하고 Service Worker를 끈다. WebSocket server 연결을 막고 message는 local sink에서 버리며 popup을 닫고 download를 거부한다. 앞선 DOM 검토에서 candidate가 없을 때만 제한된 live `input`, `textarea`, `select` 값을 검사한다. canvas pixel, serialized snapshot 밖의 shadow DOM, JavaScript heap, interaction 이후 상태와 미지원 동작은 측정하지 않는다. password input은 `LOGIN_FORM_INDICATOR`일 뿐 `PUBLIC_UI`, 보호, 민감으로 자동 판정하지 않는다. dead proxy와 blocked host resolving으로 Chromium을 실행해 지원되는 page request가 broker를 거치게 한다. 이 통제는 observer 경계이며 OS firewall이나 전체 egress 보장이 아니다.
+6. 최소 증거로만 내용을 확정한다. 개인정보나 사용 가능한 비밀이 보이면 중단한다. 승인된 소유자 측 확인 전까지 비밀의 실제 유효성은 unknown이다.
+7. 긴급 격리, 로그 보존, 비밀 회전, 서비스 연속성을 함께 판단한다. SSO 뒤에서도 애플리케이션 권한 검사를 유지한다.
+8. 원 URL과 알려진 모든 alias의 새 익명 observation, 대조군, 선언한 잔존 범위의 증거가 완료 조건을 충족할 때 종결한다. ledger asset과 alias를 opaque locator `target_id`, `policy_id`에 바인딩하고 불일치를 거부한다. 잔존을 확인하지 못했으면 `partially_closed`다. 종결 뒤 현재 `BODY_SERVED`, unknown/incomplete 결과, 같은 시각의 충돌 관측은 finding을 재개하거나 재검토 상태로 돌린다.
 
-- 인증 우회·무차별 대입·익스플로잇 금지
-- **발견한 자격증명으로 로그인하지 않는다** — 살아 있는 키인지 확인할 목적이라도
-- **순차 ID를 열거하지 않는다.** `?id=1001`이 열렸으면 그 사실만 기록하고 `1002`를 시도하지 않는다.
-  각 요청은 "비인증·소량"이지만 이어 붙이면 개인정보 수집이 된다
-- **원본을 로컬에 복제하지 않는다.** 사본을 만드는 순간 점검자 PC가 새 유출점이 된다
-- **개인정보를 읽지 않는다.** 보이면 중단하고 에스컬레이션한다. 산출물은 "노출 있음/없음/규모"까지다
-- **소유가 확증되지 않은 자산을 프로빙하지 않는다.** 이름이 비슷하다고 우리 자산이 아니다
-- **운영 중 시스템의 내용을 반환시키는 요청을 하지 않는다.** 존재 여부가 외부에서 확인되면 직접 타격하지 않는다
+소유자 API는 모든 cursor를 끝까지 처리하고 권한·rate limit·truncation·시간 범위 공백을 기록한다. 정규화 JSON 가져오기는 source, retrieval time, owner scope, completeness를 보존한다. 채널 실패로 0행이 나온 것은 자산 0건이 아니다.
 
-전문과 법적 경계표: [`ops/scope.md`](ops/scope.md) (영어) · [`ko/ops/scope.md`](ko/ops/scope.md) (한국어)
+원본 사본 대신 마스킹된 증거 참조를 저장한다. query, fragment, userinfo, path, header, redirect, console, screenshot, trace 모두 토큰을 담을 수 있다. `0`과 `false`는 빈 값이 아니라 실제 값이다. 집계도 개인정보에서 파생되므로 범위, provenance, 접근통제가 필요하다.
 
-## 스킬을 안 쓰더라도 가져갈 만한 측정 규칙
+SQLite 대장은 append-only observation/event, alias, control, proof reference, recheck, due queue를 기록한다. 변화 없는 관측은 조용히 보존하고 종결·재발·실패·사용자 조치 필요를 의미 있는 이벤트로 다룬다.
 
-전부 먼저 틀려보고 얻은 것들이다.
+## 비공개 locator handoff와 발견 계획
 
-- **재현성의 불변량은 크기가 아니라 다이제스트다.** 바이트가 같다는 건 콘텐츠가 안 바뀌었다는 뜻이지
-  기법이 재현된다는 뜻이 아니다.
-- **익명은 노출 판정, 인증은 존재 판정.** 인증된 검색은 점검자 본인의 private 저장소를 결과에 섞는다.
-- **단일 채널의 음성은 부재의 증거가 아니다.** 노출된 8개 사이트가 검색엔진 dork에는 전혀 안 잡혔다
-  (색인이 안 됐기 때문). 계정 열거로만 발견됐다.
-- **모든 음성에 대조군을 붙인다.** 한 번은 대상과 대조군이 함께 0을 반환했는데, 쿼리 형식이 틀린 것이었고
-  대조군이 없었으면 못 잡았다.
-- **상태코드를 믿지 않는다.** 폐지된 캐시 엔드포인트가 여전히 `200`을 준다.
-  이런 "음성처럼 보이는 실패" 10종을 [`ops/verify.md`](ops/verify.md)에 정리했다.
-- **403도 경계가 아니다.** 헤더 허용목록(자사 페이지의 `Origin`/`Referer`일 때만 응답)은 맨몸 요청에
-  403을 주고 그 페이지의 요청에는 본문을 전량 넘긴다. 판정값 `WEAK-GATE`가 이 경우를 잡는다.
-- **외부 스캔 데이터는 직접 접속으로 대조한다.** 라이브 `443`이 빠진 포트 목록이 스스로 stale을 증명했다.
-- **"영구 잔존 없음"은 쓸 수 없는 문장이다.** 웹 아카이브 스냅샷이 0건인 호스트를 제3자 CDN이 이미
-  바이트 단위로 미러하고 있었다. 쓸 수 있는 건 시점 진술뿐이다.
-- **헤더 덤프가 토큰을 흘린다.** 이 도구는 `Set-Cookie`를 필터링하고 리다이렉트 URI의 쿼리스트링을
-  잘라낸다. 개발 중에 둘 다 실제로 유출됐기 때문이다.
+정확한 URL은 소유자가 통제하는 로컬 locator store에 둔다. 공유 discovery 결과에는 `locator_ref`와 handoff state만 둔다. `ready`는 정확한 locator가 로컬 store에 있다는 뜻이고 `blocked`는 측정 target이 없다는 뜻이다. `probe`나 `browser`가 요청을 보내기 전에는 scope가 해석된 URL을 다시 허가해야 한다. recheck를 import하기 전에 승인된 ref를 asset에 바인딩해 ledger가 `target_id`, `policy_id`를 비교하게 한다.
 
-## 구성
+`search-plan`은 제한된 재개 가능 manifest를 만든다. 수행자가 입력한 alias와 생성된 이름 변형을 구분하고, 실행하지 않은 작업은 `deferred`로 표시하며, 모든 필수 channel이 완료되거나 사유와 함께 `not_applicable`이 될 때까지 `PARTIAL`을 보고한다. `COMPLETE`는 선언한 plan과 channel coverage만 뜻하며 발견이 완전하다는 증거가 아니다. `discover`와 search-plan은 locator store로 정확한 후보 URL을 공유 plan/output 밖에 둘 수 있다. owner inventory의 locator-store handoff도 `--locator-store`로 같은 비공개-store 방식을 따르며 provider inventory metadata를 측정 승인으로 취급하지 않는다.
 
-| 경로 | 내용 |
+## 저장소 구성
+
+| 경로 | 용도 |
 |---|---|
-| [`SKILL.md`](SKILL.md) | 불변 원칙과 Phase 0~6 |
-| [`ops/scope.md`](ops/scope.md) | 불변 원칙 15 · 법적 경계 · 범위 확정 절차 |
-| [`ops/identifiers.md`](ops/identifiers.md) | 무엇으로 찾는가 — 분절·전사·축약·업무기능어 교차, 역추적 |
-| [`ops/discovery.md`](ops/discovery.md) | 실행 레이어 — 검증된 기법만 |
-| [`ops/verify.md`](ops/verify.md) | 판정 · 음성처럼 보이는 실패 · 잔존 · 버킷 규칙 |
-| [`ops/triage.md`](ops/triage.md) | 위험 등급 · 파일 내부 검사 · 확정/미확정 |
-| [`ops/evidence.md`](ops/evidence.md) | 마스킹 · 헤더 위생 · 산출물 수신자 |
-| [`ops/remediate.md`](ops/remediate.md) | 조치 순서 · 무중단 이전 · 잔존 제거 |
-| [`surfaces/inventory.md`](surfaces/inventory.md) | 노출면 9축 · 우선순위 · 제외 목록 |
-| [`tools/idgen.py`](tools/idgen.py) | 후보 식별자 생성 (오프라인, 회사 고유값 없음) |
-| [`tools/probe.sh`](tools/probe.sh) | 익명 실측 (jq 비의존) |
-| [`tools/test_probe.sh`](tools/test_probe.sh) | 회귀 테스트 — probe.sh 수정 전 실행 |
-| [`assets/ledger-template.md`](assets/ledger-template.md) | 대장 · 잔존 확인표 · 재측정 이력 |
+| [SKILL.md](SKILL.md) | 설치되는 단일 스킬 진입점 |
+| [ko/ops/scope.md](ko/ops/scope.md) | 안정 정책 규칙과 범위 스키마 |
+| [ko/ops/discovery.md](ko/ops/discovery.md) | 소유자 인벤토리와 공개 발견 |
+| [ko/ops/verify.md](ko/ops/verify.md) | 접근·내용 판정 |
+| [ko/ops/triage.md](ko/ops/triage.md) | 심각도와 최소화 |
+| [ko/ops/evidence.md](ko/ops/evidence.md) | 증거 위생과 provenance |
+| [ko/ops/remediate.md](ko/ops/remediate.md) | 격리와 재측정 |
+| [ko/surfaces/inventory.md](ko/surfaces/inventory.md) | 커버리지 체크리스트 |
+| [ko/assets/ledger-template.md](ko/assets/ledger-template.md) | 사람이 읽는 내보내기 |
+| [tools/idgen.py](tools/idgen.py) | 오프라인 후보 생성기 |
 
-한국어 전문은 [`ko/`](ko/) 아래에 있다. **`probe.sh`는 루트 한 곳에만 둔다** — 사본을 두면 갈라진다.
+영문 정책이 canonical이고 `ko/`는 동기화된 한국어 번역이다. `ko/SKILL.md`에는 frontmatter가 없어 중복 스킬로 등록되지 않는다.
 
-## 테스트
+## 검증과 라이선스
 
 ```bash
-bash tools/test_probe.sh
-python3 tools/idgen.py --selftest
+python -m unittest discover -s tests -v
 ```
 
-32건이며, **전부 이 도구가 실제로 틀렸던 항목**이다. 적대 리뷰가 스크립트를 읽지 않고
-**돌려봄으로써** 심각도 높은 결함 4건을 찾아냈다 — 최종 URI는 가리면서 기본 라벨에는
-쿼리스트링이 그대로 찍혔고, `file://`을 받아 `EXPOSED`로 판정했으며, 쿼리 아무 데나 IdP
-이름이 들어 있으면 `AUTH-GATE`가 됐고, HTTP 상태코드가 없는 응답에도 노출 판정이 나왔다.
-네 건 모두 회귀 케이스로 고정했다.
+테스트는 합성 입력을 쓰며 오프라인으로 실행한다. 통과는 배포나 실제 조직을 점검했다는 뜻이 아니다. 저장소의 [PolyForm Noncommercial License 1.0.0](LICENSE)를 유지한다. 허용 목적은 원문으로 판단한다. 그 범위를 벗어난 사용에는 licensor의 허가가 필요하며 제3자나 조직에 맞는 라이선스는 권리자와 법률 판단의 영역이다.
 
-## 사용 범위
-
-**점검 권한이 있는 자산**을 대상으로 한다 — 자기 조직의 자산이거나, 서면 동의를 받은 고객사의 자산.
-무단 대상을 위해 설계된 부분은 없으며, 제약을 둔 이유는 점검이 점검으로 남게 하기 위해서다.
-
-법적 경계는 관할마다 다르다. `ops/scope.md`의 표는 법률자문이 아니라 실무 판단 기준이며,
-중요한 사안은 **법률 검토 필요**로 표시했다.
-
-## 기여
-
-- **kindsusu** — 설계·방법론·방향
-- **Claude** — 집필·스크립트·전 기법 실증 검증
-- 3방향 적대 검수 (채널 누락 / 실측 오류 / 가드레일·법적 경계)
-
-## 라이선스
-
-[PolyForm Noncommercial License 1.0.0](LICENSE) — 개인·비영리·교육·연구 목적 무료.
-**기업·상업적 사용은 이 라이선스로 허용되지 않는다.** 별도 사용은 저자에게 문의.
+선택적인 locator store는 평문 SQLite다. 소유자가 접근을 제한하고 암호화한 저장 볼륨에 보관한다. opaque 참조가 원 URL을 암호화하지는 않는다. 로컬 검색 manifest에는 입력 회사명, 검색어, 공개 저장소 메타데이터가 들어 있으므로 마스킹 보고서로 간주해 공개하지 않는다.
