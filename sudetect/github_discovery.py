@@ -141,10 +141,11 @@ class GitHubBroker:
         try:
             parsed = urllib.parse.urlsplit(url)
             query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            port = parsed.port
         except (TypeError, ValueError):
             raise DiscoveryError("INPUT_INVALID") from None
         if (parsed.scheme != "https" or parsed.hostname != "api.github.com"
-                or parsed.port not in (None, 443) or parsed.username or parsed.password
+                or port not in (None, 443) or parsed.username or parsed.password
                 or parsed.fragment):
             raise DiscoveryError("INPUT_INVALID")
         singleton = all(len(values) == 1 for values in query.values())

@@ -271,6 +271,40 @@ class GitHubDiscoveryTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaisesRegex(DiscoveryError, "INPUT_INVALID"):
                 broker.get(url)
 
+    def test_malformed_authority_and_encoded_separators_fail_before_fetch(self):
+        calls = []
+        broker = GitHubBroker(fetch=lambda *args: calls.append(args))
+        invalid = (
+            "https://api.github.com:bad/search/users?q=x&per_page=100&page=1",
+            "https://api.github.com:999999/search/users?q=x&per_page=100&page=1",
+            "https://api.github.com%3A443/search/users?q=x&per_page=100&page=1",
+            "https://api.github.com/search%2Fusers?q=x&per_page=100&page=1",
+            "https://api.github.com/search/users?q=x&q=y&per_page=100&page=1",
+            "https://api.github.com/users/good%2Frepos/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1",
+        )
+        for url in invalid:
+            with self.subTest(url=url), self.assertRaisesRegex(DiscoveryError, "^INPUT_INVALID$"):
+                broker.get(url)
+        self.assertEqual([], calls)
+
+    def test_malformed_port_in_next_link_is_pagination_error_without_followup_fetch(self):
+        for authority in ("api.github.com:bad", "api.github.com:999999"):
+            calls = []
+
+            def fetch(url, _headers):
+                calls.append(url)
+                return 200, [repo("adatum-lab", "site")], {
+                    "Link": (f'<https://{authority}/users/adatum-lab/repos?type=owner&sort=full_name'
+                             '&direction=asc&per_page=100&page=2>; rel="next"')
+                }
+
+            with self.subTest(authority=authority):
+                result = discover("malformed-port", accounts=["adatum-lab"], fetch=fetch)
+                self.assertEqual("PARTIAL", result["status"])
+                self.assertEqual(["PAGINATION_INVALID"], result["errors"])
+                self.assertEqual(1, len(calls))
+                self.assertNotIn(authority, json.dumps(result))
+
     def test_malicious_or_skipping_next_link_is_partial_and_not_followed(self):
         calls = []
 
