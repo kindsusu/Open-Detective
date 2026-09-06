@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlsplit
 MAX_ANALYSIS_BYTES = 262144
 MAX_SIGNALS = 32
 MAX_LINKS = 64
+MAX_JSON_DEPTH = 128
 SENSITIVE_FIELDS = frozenset({
     "email", "phone", "telephone", "mobile", "address", "birthdate", "dob",
     "ssn", "passport", "license_number", "account_number", "resident_number",
@@ -39,6 +40,29 @@ CLIENT_PASSWORD_COMPARISON = re.compile(
 def is_filled(value):
     """Zero and false are real values, not missing data."""
     return value is not None and value != "" and value != [] and value != {}
+
+
+def _bounded_json(text):
+    """Use an explicit depth limit independent of interpreter recursion limits."""
+    depth = 0
+    quoted = escaped = False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise ValueError("JSON depth limit exceeded")
+        elif char in "]}":
+            depth -= 1
+    return json.loads(text)
 
 
 def summarize_fields(value, *, node_limit=2048):
@@ -156,7 +180,7 @@ def analyze(body: bytes, content_type="", base_url="", *, synthetic_markers=()) 
     stripped = text.lstrip()
     if "json" in content_type.lower() or stripped.startswith(("{", "[")):
         try:
-            json_values.append(json.loads(text))
+            json_values.append(_bounded_json(text))
         except (ValueError, RecursionError):
             signal("JSON_PARSE_INCOMPLETE")
             truncated = True
@@ -173,7 +197,7 @@ def analyze(body: bytes, content_type="", base_url="", *, synthetic_markers=()) 
             script_texts.extend(parser.script_chunks)
             for chunk in parser.json_chunks:
                 try:
-                    json_values.append(json.loads(chunk))
+                    json_values.append(_bounded_json(chunk))
                 except (ValueError, RecursionError):
                     signal("JSON_PARSE_INCOMPLETE")
                     truncated = True

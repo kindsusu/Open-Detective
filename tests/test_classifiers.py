@@ -87,6 +87,17 @@ class ClassifierTests(unittest.TestCase):
             self.assertFalse(result.report['analysis_complete'])
             self.assertIn('HTML_PARSE_INCOMPLETE', {s['code'] for s in result.report['signals']})
 
+    def test_json_depth_budget_is_explicit_and_ignores_quoted_brackets(self):
+        from sudetect.classifiers import MAX_JSON_DEPTH
+        within = '[' * MAX_JSON_DEPTH + '0' + ']' * MAX_JSON_DEPTH
+        self.assertTrue(analyze(within.encode(), 'application/json').report['analysis_complete'])
+        self.assertFalse(analyze(('[' + within + ']').encode(), 'application/json').report['analysis_complete'])
+        text = json.dumps({'text': '["\\' * 500})
+        self.assertTrue(analyze(text.encode(), 'application/json').report['analysis_complete'])
+        embedded = '<script type="application/json">[' + within + ']</script>'
+        self.assertIn('JSON_PARSE_INCOMPLETE', {
+            s['code'] for s in analyze(embedded.encode(), 'text/html').report['signals']})
+
     def test_valueless_html_attributes_do_not_crash(self):
         result = analyze(b'<input type><div style><script type>{}</script>', 'text/html')
         self.assertEqual(result.report['content'], 'NOT_INSPECTED')
