@@ -57,3 +57,23 @@ The collector validates pagination and enforces request, time, response-size, ac
 An unresolved account hypothesis, failed API call, truncated search, or missing browser measurement must remain a coverage gap. Record known-example recall separately from sensitivity classification precision. Re-run anonymous observation only for exact authorized URLs; never automatically probe every generated deployment candidate.
 
 The optional locator store is plaintext SQLite. Keep it on an owner-controlled encrypted volume with restricted permissions; its opaque references do not encrypt the underlying URLs. Local search manifests contain input names, queries, and public repository metadata and must not be published as masked reports.
+
+## Pagination and negative observations
+
+GitHub may return a numeric user-ID collection in its next-page Link. The anonymous collector accepts that transition only when every current repository row identifies the requested login with the same positive owner ID and the next URL matches that ID. Host, query filters, and the exactly increasing page number remain fixed. An account-expansion cap does not discard already returned repository candidates; deferred account work remains recorded.
+
+An initial exact account/repository 404 is `not_found_observed`, a completed bounded metadata observation. It does not prove that the resource does not exist or that an organization has no other account. A search-endpoint 404 or a 404 on a later page remains incomplete. A 403 with explicit rate-limit headers and a 429 are `RATE_LIMITED`; other 403 responses are `ACCESS_DENIED`. Neither is a completed zero-result search.
+
+Protocol references: [GitHub pagination](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api), [GitHub REST troubleshooting](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
+
+## Resuming discovery with explicit budgets
+
+A normal `search-plan run` processes planned work under a total request budget (default 20) and a per-job cap (default 6). Exact supplied URLs run first; name/context queries and identity-account candidates alternate, with broad terms and search-discovered account expansion later. A query that reaches its cap remains incomplete. Increase `--per-job-request-budget` for a deliberate deeper retry, up to 30.
+
+```bash
+python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --per-job-request-budget 6 --max-batches 30
+python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --retry-failed --request-budget 20 --per-job-request-budget 10
+python -m sudetect search-plan status --plan _local/plan.json
+```
+
+`run-until-budget` requires an explicit total budget and also considers deferred GitHub jobs; ordinary `run` only promotes extra deferred work when `--resume-query-budget` or `--resume-account-budget` is supplied. `--retry-failed` selects failed work separately. Each selected job runs at most once in one invocation. A rate-limit response stops further provider requests and ends the execution; this command does not sleep until reset or retry indefinitely. Every batch is checkpointed atomically. Per-job attempts and raw batch metadata remain in the private plan; aggregate totals must match them. Status describes current job evidence and retained unresolved expansions, with a separate next-work reason. Past failures stay in history. Older partial/failed plans without per-job evidence retain a legacy coverage gap. Preserve them as history and create a fresh version-2 plan from the same identity inputs; a partial retry or arbitrary import cannot erase that gap. A completed declared plan still cannot prove exhaustive Internet discovery.

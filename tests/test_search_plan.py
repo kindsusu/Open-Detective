@@ -69,7 +69,8 @@ class SearchPlanTests(unittest.TestCase):
             if path.startswith("/users/"): return 200,[],{}
             self.fail(url)
         with tempfile.TemporaryDirectory() as td, LocatorStore(Path(td)/"locators.db") as store:
-            result=run_plan(plan,fetch=fetch,locator_store=store); candidate=result["runs"][0]["result"]["candidates"][0]
+            result=run_plan(plan,fetch=fetch,locator_store=store)
+            candidate=next(c for run in result["runs"] for c in run["result"]["candidates"] if c["slug"]=="starlight-ops/private-path")
             self.assertEqual("ready",candidate["handoff_state"]); self.assertEqual("https://starlight-ops.github.io",candidate["pages_url_candidate"])
             self.assertEqual("https://starlight-ops.github.io/private-path/",store.get("locator-fixture",candidate["locator_ref"]))
 
@@ -83,9 +84,9 @@ class SearchPlanTests(unittest.TestCase):
             if path.startswith("/users/"): return 200,[],{}
             self.fail(url)
         result=run_plan(plan,fetch=fetch)
-        github=result["runs"][0]["result"]
-        self.assertIn("starlight-ops/hidden-docs",[c["slug"] for c in github["candidates"]])
-        self.assertIn("https://starlight-ops.github.io/hidden-docs/",[c["pages_url_candidate"] for c in github["candidates"]])
+        candidates=[c for run in result["runs"] for c in run["result"]["candidates"]]
+        self.assertIn("starlight-ops/hidden-docs",[c["slug"] for c in candidates])
+        self.assertIn("https://starlight-ops.github.io/hidden-docs/",[c["pages_url_candidate"] for c in candidates])
         self.assertEqual("PARTIAL",result["status"])
 
     def test_account_failure_does_not_poison_successful_query_jobs(self):
@@ -99,14 +100,199 @@ class SearchPlanTests(unittest.TestCase):
         query=next(j for j in result["jobs"] if j["channel"]=="github" and j["kind"]=="search_query" and j["state"]!="deferred")
         account=next(j for j in result["jobs"] if j["channel"]=="github" and j["kind"]=="account_candidate" and j["state"]!="deferred")
         self.assertEqual("completed",query["state"]); self.assertIsNone(query["error_code"])
-        self.assertEqual("failed",account["state"]); self.assertEqual("RATE_LIMITED",account["error_code"])
+        self.assertEqual("failed",account["state"]); self.assertEqual("ACCESS_DENIED",account["error_code"])
 
-    def test_partial_github_run_prevents_complete_even_if_jobs_later_imported(self):
+    def test_historical_partial_recovers_only_with_current_job_provenance(self):
         plan=create_plan(scope_id="run-status",company_en="Starlight Lab",query_budget=1,account_budget=1)
         plan["runs"]=[{"run_id":"run-1","channel":"github","status":"PARTIAL"}]
         for job in plan["jobs"]:
             job["state"]="not_applicable"; job["not_applicable_reason"]="fixture"
+            job["attempts"]=[{"attempted_at":"2026-01-01T00:00:00Z","state":"not_applicable","method":"import"}]
+        plan["coverage_version"]=2; plan["legacy_coverage_gap"]=False
+        self.assertEqual("COMPLETE",plan_status(plan)["status"])
+        plan["jobs"][0].pop("not_applicable_reason")
         self.assertEqual("PARTIAL",plan_status(plan)["status"])
+
+    def test_legacy_partial_run_with_unmigrated_completed_job_stays_partial(self):
+        plan=create_plan(scope_id="legacy-partial",company_en="Starlight",query_budget=1,account_budget=1)
+        plan.pop("coverage_version"); plan.pop("legacy_coverage_gap")
+        plan["runs"]=[{"run_id":"old","status":"PARTIAL"}]
+        for job in plan["jobs"]:
+            job["state"]="not_applicable"; job["not_applicable_reason"]="fixture"
+        plan["jobs"][0].update(state="completed",result_count=0,pages=1,end_condition="provider_empty",
+                               observed_at="2026-01-01T00:00:00Z",source_ref="legacy")
+        self.assertEqual("PARTIAL",plan_status(plan)["status"])
+
+    def test_failed_job_retries_and_preserves_attempt_history(self):
+        plan=create_plan(scope_id="retry-history",company_en="Starlight",query_budget=1,account_budget=1)
+        account=next(j for j in plan["jobs"] if j["channel"]=="github" and j["kind"]=="account_candidate" and j["state"]=="planned")
+        for job in plan["jobs"]:
+            if job["channel"]=="github" and job["kind"]=="search_query" and job["state"]=="planned":
+                job["state"]="completed"; job.update(result_count=0,pages=2,end_condition="page_exhausted",
+                    observed_at="2026-01-01T00:00:00Z",source_ref="fixture")
+        calls=0
+        def fetch(url,_headers):
+            nonlocal calls
+            calls+=1
+            if calls==1: return 429,{"message":"limited"},{}
+            return 200,[],{}
+        failed=run_plan(plan,fetch=fetch,max_batches=1)
+        first=next(j for j in failed["jobs"] if j["work_id"]==account["work_id"])
+        self.assertEqual("failed",first["state"]); self.assertEqual(1,len(first["attempts"]))
+        recovered=run_plan(failed,fetch=fetch,retry_failed=True,max_batches=1)
+        current=next(j for j in recovered["jobs"] if j["work_id"]==account["work_id"])
+        self.assertEqual("completed",current["state"]); self.assertEqual(2,len(current["attempts"]))
+        self.assertEqual("RATE_LIMITED",current["attempts"][0]["error_code"])
+
+    def test_rate_limit_stops_following_batches(self):
+        plan=create_plan(scope_id="rate-stop",company_en="Starlight Research",query_budget=2,account_budget=2)
+        calls=[]
+        def fetch(url,_headers):
+            calls.append(url); return 429,{"message":"limited"},{}
+        result=run_plan(plan,fetch=fetch,request_budget=20,max_batches=10)
+        self.assertEqual(1,len(calls))
+        self.assertEqual("provider_rate_limited",result["last_execution"]["stop_reason"])
+        self.assertEqual(1,result["last_execution"]["batches"])
+
+    def test_request_budget_is_strict_and_next_work_is_explained(self):
+        plan=create_plan(scope_id="strict-budget",company_en="Starlight Research",query_budget=2,account_budget=2)
+        calls=[]
+        def fetch(url,_headers):
+            calls.append(url); return 200,[],{}
+        result=run_plan(plan,fetch=fetch,request_budget=2,max_batches=10)
+        self.assertEqual(2,len(calls)); self.assertEqual(2,result["last_execution"]["requests_used"])
+        self.assertEqual("request_budget_exhausted",result["last_execution"]["stop_reason"])
+        self.assertGreater(result["last_execution"]["next_work"]["remaining"],0)
+
+    def test_search_discovered_unexpanded_account_becomes_durable_job(self):
+        plan=create_plan(scope_id="durable-expansion",company_en="Starlight",query_budget=1,account_budget=1)
+        # Mark initial account out of the way so this batch exercises the query.
+        for job in plan["jobs"]:
+            if job["channel"]=="github" and job["kind"]=="account_candidate" and job["state"]=="planned":
+                job["state"]="completed"; job.update(result_count=0,pages=1,end_condition="provider_empty",
+                    observed_at="2026-01-01T00:00:00Z",source_ref="fixture")
+        def fetch(url,_headers):
+            path=urllib.parse.urlsplit(url).path
+            if path=="/search/repositories": return 200,{"items":[],"total_count":0,"incomplete_results":False},{}
+            if path=="/search/users": return 200,{"items":[{"login":"new-account"}],"total_count":1,"incomplete_results":False},{}
+            if path=="/users/new-account/repos": return 403,{"message":"limited"},{}
+            self.fail(url)
+        result=run_plan(plan,fetch=fetch,request_budget=2,max_batches=1)
+        expansion=next(j for j in result["jobs"] if j["kind"]=="account_candidate" and j["value"]=="new-account")
+        self.assertEqual("failed",expansion["state"])
+        self.assertEqual("REQUEST_LIMIT_EXCEEDED",expansion["error_code"])
+
+    def test_cli_run_until_budget_requires_total_budget(self):
+        with self.assertRaises(SystemExit):
+            main(["run-until-budget","--plan","unused.json"])
+
+    def test_run_until_budget_promotes_multiple_deferred_batches(self):
+        plan=create_plan(scope_id="auto-resume",company_en="Starlight Research",query_budget=1,account_budget=1)
+        checkpoints=[]
+        def fetch(_url,_headers): return 200,[],{}
+        result=run_plan(plan,fetch=fetch,request_budget=3,max_batches=3,resume_all_deferred=True,
+                        persist=lambda value:checkpoints.append(json.loads(json.dumps(value))))
+        completed=[j for j in result["jobs"] if j["channel"]=="github" and j["state"]=="completed"]
+        self.assertEqual(3,result["last_execution"]["requests_used"])
+        self.assertGreaterEqual(len(completed),2)
+        self.assertGreaterEqual(len(checkpoints),3)
+        self.assertTrue(all("last_execution" in snapshot for snapshot in checkpoints))
+
+    def test_not_found_end_condition_is_preserved(self):
+        plan=create_plan(scope_id="not-found",company_en="Starlight",query_budget=1,account_budget=1)
+        for job in plan["jobs"]:
+            if job["channel"]=="github" and job["kind"]=="search_query" and job["state"]=="planned":
+                job["state"]="completed"; job.update(result_count=0,pages=2,end_condition="page_exhausted",
+                    observed_at="2026-01-01T00:00:00Z",source_ref="fixture")
+        def fetch(_url,_headers): return 404,{"message":"missing"},{}
+        result=run_plan(plan,fetch=fetch,max_batches=1)
+        account=next(j for j in result["jobs"] if j["channel"]=="github" and j["kind"]=="account_candidate" and j["state"]=="completed")
+        self.assertEqual("not_found_observed",account["end_condition"])
+
+    def test_per_job_cap_preserves_budget_for_identity_account(self):
+        plan=create_plan(scope_id="fair-budget",company_en="Starlight Research",query_budget=1,account_budget=1)
+        paths=[]
+        def fetch(url,_headers):
+            parsed=urllib.parse.urlsplit(url); paths.append(parsed.path)
+            if parsed.path.startswith("/search/"):
+                page=int(urllib.parse.parse_qs(parsed.query)["page"][0])
+                rows=[] if page==4 else [repo("unrelated","repo"+str(page))]*100
+                headers={} if page==4 else {"link":url.replace("page="+str(page),"page="+str(page+1))+"; rel=\"next\""}
+                return 200,{"items":rows,"total_count":300,"incomplete_results":False},headers
+            if parsed.path.startswith("/users/"): return 200,[],{}
+            self.fail(url)
+        result=run_plan(plan,fetch=fetch,request_budget=8,per_job_request_budget=6,max_batches=2)
+        self.assertIn("/users/starlightresearch/repos",[path.lower() for path in paths])
+        self.assertLessEqual(result["last_execution"]["requests_used"],8)
+
+    def test_aggregate_matches_raw_batches_and_qualified_coverage(self):
+        plan=create_plan(scope_id="aggregate",company_en="Starlight",query_budget=1,account_budget=1)
+        def fetch(url,_headers):
+            path=urllib.parse.urlsplit(url).path
+            if path.startswith("/search/"): return 200,{"items":[],"total_count":0,"incomplete_results":False},{}
+            if path.startswith("/users/"): return 200,[],{}
+            self.fail(url)
+        result=run_plan(plan,fetch=fetch,request_budget=3,max_batches=2)
+        run=result["runs"][0]; aggregate=run["result"]
+        self.assertEqual(2,len(run["batches"])); self.assertTrue(all("result" in row for row in run["batches"]))
+        self.assertEqual(sum(row["requests_used"] for row in run["batches"]),aggregate["totals"]["requests"])
+        self.assertTrue(all(key.startswith(tuple(run["work_ids"])) for key in aggregate["coverage"]))
+
+    def test_legacy_all_not_applicable_does_not_erase_partial_run(self):
+        plan=create_plan(scope_id="legacy-na",company_en="Starlight",query_budget=1,account_budget=1)
+        plan.pop("coverage_version"); plan.pop("legacy_coverage_gap")
+        plan["runs"]=[{"run_id":"old","status":"PARTIAL"}]
+        for job in plan["jobs"]:
+            job["state"]="not_applicable"; job["not_applicable_reason"]="fixture"
+        self.assertEqual("PARTIAL",plan_status(plan)["status"])
+
+    def test_noop_run_and_empty_import_preserve_legacy_partial_gap(self):
+        plan=create_plan(scope_id="legacy-noop",company_en="Starlight",query_budget=1,account_budget=1)
+        plan.pop("coverage_version"); plan.pop("legacy_coverage_gap")
+        plan["runs"]=[{"run_id":"old","status":"PARTIAL"}]
+        for job in plan["jobs"]:
+            job["state"]="not_applicable"; job["not_applicable_reason"]="fixture"
+        after_run=run_plan(plan,fetch=lambda *_:self.fail("no request expected"),max_batches=1)
+        self.assertEqual("PARTIAL",plan_status(after_run)["status"])
+        self.assertNotEqual(False,after_run.get("legacy_coverage_gap"))
+        after_import=import_results(plan,{"jobs":[]})
+        self.assertEqual("PARTIAL",plan_status(after_import)["status"])
+        self.assertNotEqual(False,after_import.get("legacy_coverage_gap"))
+
+    def test_unrelated_run_and_import_cannot_clear_legacy_gap(self):
+        plan=create_plan(scope_id="legacy-unrelated",company_en="Starlight",query_budget=1,account_budget=1)
+        plan.pop("coverage_version"); plan.pop("legacy_coverage_gap")
+        plan["runs"]=[{"run_id":"old","status":"PARTIAL"}]
+        after_run=run_plan(plan,fetch=lambda *_:(200,[],{}),max_batches=1)
+        self.assertTrue(after_run["legacy_coverage_gap"]); self.assertEqual("PARTIAL",plan_status(after_run)["status"])
+        imported_job=next(j for j in plan["jobs"] if j["channel"]=="web")
+        after_import=import_results(plan,{"jobs":[{"work_id":imported_job["work_id"],"state":"not_applicable",
+            "not_applicable_reason":"unrelated fixture"}]})
+        self.assertTrue(after_import["legacy_coverage_gap"]); self.assertEqual("PARTIAL",plan_status(after_import)["status"])
+
+    def test_new_v2_plan_can_recover_failed_job_without_legacy_gap(self):
+        plan=create_plan(scope_id="v2-recovery",company_en="Starlight",query_budget=1,account_budget=1)
+        self.assertEqual(2,plan["coverage_version"]); self.assertFalse(plan["legacy_coverage_gap"])
+        account=next(j for j in plan["jobs"] if j["channel"]=="github" and j["kind"]=="account_candidate" and j["state"]=="planned")
+        for job in plan["jobs"]:
+            if job is not account:
+                job["state"]="not_applicable"; job["not_applicable_reason"]="fixture"
+        failed=run_plan(plan,fetch=lambda *_:(429,{"message":"limited"},{}),max_batches=1)
+        recovered=run_plan(failed,fetch=lambda *_:(200,[],{}),retry_failed=True,max_batches=1)
+        self.assertEqual("COMPLETE",plan_status(recovered)["status"])
+        self.assertEqual(2,len(account_attempts:=next(j for j in recovered["jobs"] if j["work_id"]==account["work_id"])["attempts"]))
+
+    def test_discovered_account_case_does_not_duplicate_existing_job(self):
+        plan=create_plan(scope_id="casefold-account",company_en="Starlight",query_budget=1,account_budget=1)
+        existing=next(j for j in plan["jobs"] if j["channel"]=="github" and j["kind"]=="account_candidate")
+        existing["value"]="starlight"
+        before=len([j for j in plan["jobs"] if j["kind"]=="account_candidate"])
+        from sudetect.search_plan import _record_discovered_accounts
+        _record_discovered_accounts(plan,{"observed_at":"2026-01-01T00:00:00Z",
+            "accounts":[{"login":"StarLight"}],"coverage":{"list_public_repositories:STARLIGHT":{
+            "state":"COMPLETE","pages":1,"items":0,"end_condition":"page_exhausted","error_code":None}}})
+        accounts=[j for j in plan["jobs"] if j["kind"]=="account_candidate"]
+        self.assertEqual(before,len(accounts)); self.assertEqual("completed",existing["state"])
 
     def test_known_url_is_selected_before_broad_jobs_at_run_cap(self):
         plan=create_plan(scope_id="strong-first",company_en="Starlight Research Lab",

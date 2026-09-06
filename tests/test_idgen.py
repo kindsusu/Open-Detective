@@ -82,6 +82,61 @@ class IdgenTests(unittest.TestCase):
         for candidate in ("melodyrentcar1", "melody-rentcar1", "melodysales"):
             self.assertIn(f"/users/{candidate}\t", emitted)
 
+    def test_top_forty_interleaves_brand_context_and_numeric_variants(self):
+        # These synthetic names exercise different word counts and industries.  A
+        # bounded batch must not be consumed by separator forms of one long stem.
+        fixtures = [
+            ("Aurora Fleet Systems", "fleet"),
+            ("Northwind Cloud Analytics", "cloud"),
+            ("Cedar Commerce Platform", "commerce"),
+        ]
+        for name, industry in fixtures:
+            with self.subTest(name=name):
+                rows = idgen.generate(en=name, industry=[industry],
+                                      functions=["sales", "partners", "dashboard"])
+                top = {candidate for candidate, _, _ in rows[:40]}
+                brand = name.casefold().split()[0]
+                self.assertIn(brand + industry, top)
+                self.assertIn(brand + "sales", top)
+                self.assertIn(brand + "1", top)
+                self.assertLess(len(rows), 400)  # bounded vocabulary, not a 1000s-wide expansion
+
+    def test_query_classes_keep_full_narrow_short_and_broad_work_distinct(self):
+        from sudetect.identifiers import generate_search_queries
+        rows = generate_search_queries(ko="은하 렌터카", en="Galaxy Rent Car",
+                                       industry=["rental"], functions=["dashboard"])
+        by_query = {row["query"]: row["rationale"] for row in rows}
+        self.assertEqual("full-name:korean-original", by_query["은하 렌터카"])
+        self.assertEqual("full-name:official-english", by_query["Galaxy Rent Car"])
+        self.assertEqual("full-name:official-english-joined", by_query["GalaxyRentCar"])
+        self.assertEqual("narrow:brand+industry", by_query["Galaxy rental"])
+        self.assertEqual("narrow:brand+function", by_query["Galaxy dashboard"])
+        self.assertEqual("short-name:official-english-brand-token", by_query["Galaxy"])
+        self.assertEqual("broad:english-industry-spaced", by_query["Rent Car"])
+        self.assertLess(rows.index(next(row for row in rows if row["query"] == "Galaxy dashboard")),
+                        rows.index(next(row for row in rows if row["query"] == "Galaxy")))
+
+    def test_korean_rentcar_spellings_and_platform_safe_candidates(self):
+        for korean_name in ("은하렌터카", "은하 렌트카"):
+            with self.subTest(korean_name=korean_name):
+                values = dict(idgen.stems(ko=korean_name))
+                self.assertIn("eunha", values)
+                self.assertTrue(all(idgen.validate_target_candidate("github", candidate)
+                                    for candidate, _, _ in idgen.generate(ko=korean_name)
+                                    if "_" not in candidate))
+
+    def test_brand_only_alias_and_korean_brand_narrow_queries_are_not_buried(self):
+        from sudetect.identifiers import generate_search_queries
+        rows = generate_search_queries(ko="은하렌터카", en="Galaxy Rent Car",
+                                       aliases=["Nova"], industry=["rental"],
+                                       functions=["dashboard"])
+        by_query = {row["query"]: row["rationale"] for row in rows}
+        self.assertEqual("short-name:operator-alias-brand-token", by_query["Nova"])
+        self.assertEqual("narrow:brand+industry", by_query["은하 rental"])
+        self.assertEqual("narrow:brand+function", by_query["은하 dashboard"])
+        self.assertLess(rows.index(next(row for row in rows if row["query"] == "Galaxy dashboard")),
+                        rows.index(next(row for row in rows if row["query"] == "Nova")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,7 @@ python -m sudetect discover --input candidates.json --scope-id TEAM
 python -m sudetect github-discover --scope-id TEAM --account approved-account
 python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
 python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite
+python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60
 python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 python -m sudetect ledger --db audit.sqlite due

@@ -38,7 +38,7 @@ import unicodedata
 # precedent behind this tool sat on stem+function, where the function word appears
 # nowhere in the company name.
 FUNCTION = [
-    "sales", "partners", "partner", "dev", "admin", "team", "official", "corp",
+    "sales", "partners", "partner", "dashboard", "dev", "admin", "team", "official", "corp",
     "group", "service", "support", "cs", "hr", "ops", "lab", "labs", "biz",
     "tech", "data", "api", "web", "app", "mall", "shop", "store", "media",
     "marketing", "solution", "system", "network", "digital", "global", "korea",
@@ -221,8 +221,9 @@ def stems(ko: str = "", en: str = "", extra: list[str] | None = None) -> list[tu
 
 
 # How much to trust a stem. A name the company actually writes beats one this script
-# invented by chopping letters off. Stem quality dominates the ranking: it is better to
-# exhaust every affix on a real stem than to try tier 1 of a speculative one.
+# invented by chopping letters off.  Within a quality group, generation is deliberately
+# interleaved: a finite probe budget needs one name, one business combination, and one
+# numeric variation from each spelling before it needs every suffix on one long stem.
 STEM_WEIGHT = {
     "operator-supplied": 0, "english-name": 0, "english-compound-joined": 0,
     "english-leading-token": 0, "english-token": 1,
@@ -248,35 +249,44 @@ def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
     inds = [normalize_term(i) for i in (industry or [])]
     inds = [i for i in inds if i]
     seen: set[str] = set()
-    out: list[tuple[str, int, str, int, int]] = []
+    out: list[tuple[str, int, str, int, int, int, int, int]] = []
 
-    def emit(value: str, tier: int, why: str, weight: int, joiner: int) -> None:
+    def emit(value: str, tier: int, why: str, weight: int, round_: int,
+             kind: int, stem_order: int, joiner: int) -> None:
         if value and value not in seen and 2 <= len(value) <= 39:
             seen.add(value)
-            out.append((value, tier, why, weight, joiner))
+            out.append((value, tier, why, weight, round_, kind, stem_order, joiner))
 
-    def affixes(stem: str, words: list[str], tier: int, kind: str, weight: int) -> None:
-        for word in words:
+    def affixes(stem: str, words: list[str], tier: int, kind: str, weight: int,
+                kind_order: int, stem_order: int) -> None:
+        for word_order, word in enumerate(words):
             if word in stem or stem in word:      # 'rent' + 'rent' is not a name
                 continue
             for ji, j in enumerate(JOINERS):
-                emit(f"{stem}{j}{word}", tier, f"stem+{kind}:{word}", weight, ji)
+                # Each word gets a round.  A separator is a spelling variation inside
+                # that round, after the compact form, rather than a reason to bury the
+                # next stem's brand+role candidate.
+                emit(f"{stem}{j}{word}", tier, f"stem+{kind}:{word}", weight,
+                     word_order + 1, kind_order, stem_order, ji)
 
-    for stem, why in base:
+    for stem_order, (stem, why) in enumerate(base):
         w = STEM_WEIGHT.get(why, 4)
-        emit(stem, 1, f"stem:{why}", w, 0)                     # tier 1 - bare
-        affixes(stem, inds, 2, "industry", w)                  # tier 2 - + industry
-        affixes(stem, funcs, 3, "function", w)                 # tier 3 - + function
-        for num in NUMERIC:                                    # tier 4 - + digits
-            emit(f"{stem}{num}", 4, f"stem+numeric:{num}", w, 0)
+        emit(stem, 1, f"stem:{why}", w, 0, 0, stem_order, 0)  # bare name
+        affixes(stem, inds, 2, "industry", w, 1, stem_order)
+        affixes(stem, funcs, 3, "function", w, 2, stem_order)
+        for number_order, num in enumerate(NUMERIC):           # uniqueness suffix
+            emit(f"{stem}{num}", 4, f"stem+numeric:{num}", w,
+                 number_order + 1, 3, stem_order, 0)
 
-    # A uniqueness numeric suffix on a direct, operator-written stem is a
-    # compact, common variation.  Test it before the much wider function-word
-    # fan-out, so a finite --limit does not bury it.  Tiers remain descriptive;
-    # this is the deterministic priority within a stem-quality group.
-    priority = {1: 1, 2: 2, 4: 3, 3: 4}
-    out.sort(key=lambda r: (r[3], priority[r[1]], r[4], len(r[0]), r[0]))
-    return [(v, t, why) for v, t, why, _, _ in out]
+    # Generic round-robin over each quality group: bare names first, then the first
+    # requested industry, function, and numeric form for every spelling.  This keeps
+    # a long official stem or a large FUNCTION lexicon from monopolizing a bounded
+    # batch.  Tier still describes how a candidate was derived; it is not its queue
+    # position.
+    # Separator choices are spelling variants, so the compact form for every stem
+    # is useful sooner than hyphen/underscore spellings of the first long stem.
+    out.sort(key=lambda r: (r[3], r[4], r[7], r[5], r[6], len(r[0]), r[0]))
+    return [(v, t, why) for v, t, why, *_ in out]
 
 
 TARGET_PATTERNS = {

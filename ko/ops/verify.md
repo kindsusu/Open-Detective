@@ -52,3 +52,5 @@ challenge/error-page indicator와 soft-404 의미 판단은 provisional classifi
 타인의 데이터에 접근하지 않으면서 같은 채널을 시험하는 대조군을 고른다. 알려진 공개 endpoint, 설정된 missing path, 소유자 제공 보호 fixture가 예다. target과 control이 함께 실패하면 채널 실패로 기록한다. 변동 서비스는 제한된 반복 관측이 필요하며 무응답이나 변화 없음은 이벤트 미수신의 증거가 아니다.
 
 새 익명 context로 정확한 원 locator, 알려진 모든 alias/deployment, 관련 cache, 승인된 archive channel을 확인한다. 동적 digest 변화만으로 조치 성공이나 재발을 증명하지 않는다. access/content 증거를 비교하고 잔존 unknown은 `partially_closed`로 둔다.
+
+브라우저 결과의 `complete`는 정해진 범위의 수집과 자동 분석이 끝났다는 뜻이다. `content_review_complete`는 별도의 공개 의도·민감도 검토 근거가 생기기 전까지 false로 유지한다. 파서 완료나 탐지 신호 없음은 민감 정보 부재를 증명하지 않는다. identity encoding인 probe 응답이 잘렸다면 수집된 앞부분에서 잠정 신호를 보존할 수 있지만 `analysis_complete`와 `capture_complete`는 false다. 이 앞부분 분석을 위해 추가 내용을 요청하지 않는다.

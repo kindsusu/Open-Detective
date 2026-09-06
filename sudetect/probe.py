@@ -79,10 +79,17 @@ def _run_one(scope: Scope, url: str, label: str = "", *, target_id: str | None =
         # attackable hash of a path that may contain a low-entropy secret.
         key = os.environ.get("SUDETECT_LOCATOR_HMAC_KEY")
         observation["target_id"] = target_id or (stable_ref(canonical, key) if key else "opaque:" + uuid.uuid4().hex)
-        if observation.get("capture_complete") and isinstance(observation.get("http_status"), int):
+        if isinstance(observation.get("http_status"), int):
             content_type = result.headers.get("content-type", "")
             if result.headers.get("content-encoding", "identity").casefold() in ("", "identity"):
                 classification = analyze(result.body, content_type, canonical)
+                if not observation.get("capture_complete"):
+                    # The transport retained a bounded identity-encoded prefix.  Its
+                    # signals are useful leads, but cannot establish that the whole
+                    # response was reviewed or that no later content changes them.
+                    classification.report["analysis_complete"] = False
+                    classification.report["content_review_complete"] = False
+                    classification.report["analysis_scope"] = "captured_prefix"
                 observation.update(classification.report)
     except PolicyError as exc:
         observation = _error_observation(scope, url, str(exc))

@@ -7,11 +7,11 @@ import urllib.parse
 from sudetect.github_discovery import DiscoveryError, GitHubBroker, discover, main
 
 
-def repo(owner, name, *, pages=False, homepage=None):
+def repo(owner, name, *, pages=False, homepage=None, owner_id=None):
     return {
         "name": name,
         "full_name": f"{owner}/{name}",
-        "owner": {"login": owner},
+        "owner": {"login": owner, **({"id": owner_id} if owner_id is not None else {})},
         "private": False,
         "has_pages": pages,
         "homepage": homepage,
@@ -140,12 +140,120 @@ class GitHubDiscoveryTests(unittest.TestCase):
     def test_rate_limit_is_failure_not_zero_complete(self):
         result = discover(
             "scope-8", accounts=["fabrikam-public"],
-            fetch=lambda *_: (403, {"message": "do not retain raw detail"}, {}),
+            fetch=lambda *_: (403, {"message": "do not retain raw detail"},
+                              {"X-RateLimit-Remaining": "0"}),
         )
         self.assertEqual("FAILED", result["status"])
         self.assertEqual(["RATE_LIMITED"], result["errors"])
         self.assertEqual("FAILED", result["coverage"]["list_public_repositories:fabrikam-public"]["state"])
         self.assertEqual([], result["candidates"])
+
+    def test_github_numeric_user_next_link_is_followed_when_owner_id_matches(self):
+        calls = []
+
+        def fetch(url, _headers):
+            calls.append(url)
+            page = int(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["page"][0])
+            if page == 1:
+                return 200, [repo("octo-example", "first", owner_id=49093)], {
+                    "Link": '<https://api.github.com/user/49093/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2>; rel="next"'
+                }
+            return 200, [repo("octo-example", "second", owner_id=49093)], {}
+
+        result = discover("numeric-link", accounts=["octo-example"], fetch=fetch)
+        coverage = result["coverage"]["list_public_repositories:octo-example"]
+        self.assertEqual("COMPLETE", result["status"])
+        self.assertEqual(2, coverage["pages"])
+        self.assertEqual("/user/49093/repos", urllib.parse.urlsplit(calls[1]).path)
+
+    def test_numeric_user_next_link_requires_matching_observed_owner_id(self):
+        calls = []
+
+        def fetch(url, _headers):
+            calls.append(url)
+            return 200, [repo("octo-example", "first", owner_id=49093)], {
+                "Link": '<https://api.github.com/user/99999/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2>; rel="next"'
+            }
+
+        result = discover("numeric-mismatch", accounts=["octo-example"], fetch=fetch)
+        self.assertEqual("PARTIAL", result["status"])
+        self.assertIn("PAGINATION_INVALID", result["errors"])
+        self.assertEqual(1, len(calls))
+
+    def test_not_found_is_completed_bounded_non_observation(self):
+        result = discover("missing-account", accounts=["absent-example"],
+                          fetch=lambda *_: (404, {"message": "not retained"}, {}))
+        coverage = result["coverage"]["list_public_repositories:absent-example"]
+        self.assertEqual("COMPLETE", result["status"])
+        self.assertEqual("COMPLETE", coverage["state"])
+        self.assertEqual("not_found_observed", coverage["end_condition"])
+        self.assertEqual(0, coverage["items"])
+        self.assertEqual(1, coverage["requests"])
+        self.assertEqual([], result["candidates"])
+        self.assertEqual("not_found", result["accounts"][0]["metadata_observation"])
+
+    def test_account_identity_is_case_insensitive_for_expansion_budget(self):
+        calls = []
+
+        def fetch(url, _headers):
+            calls.append(url)
+            return 200, [], {}
+
+        result = discover("casefold-account", accounts=["Octo-Example", "octo-example"],
+                          max_accounts=1, fetch=fetch)
+        self.assertEqual(1, len(result["accounts"]))
+        self.assertEqual(1, len(calls))
+        self.assertEqual([], result["errors"])
+        self.assertEqual("COMPLETE", result["coverage"]["account_expansion"]["state"])
+
+    def test_search_or_later_page_not_found_is_incomplete(self):
+        search = discover("missing-search", seeds=["example"],
+                          fetch=lambda *_: (404, {"message": "not retained"}, {}))
+        self.assertEqual("FAILED", search["status"])
+        self.assertEqual(["NOT_FOUND_OBSERVED"], search["errors"])
+
+        def fetch(url, _headers):
+            page = int(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["page"][0])
+            if page == 1:
+                return 200, [repo("octo-example", "first")], {
+                    "Link": '<https://api.github.com/users/octo-example/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2>; rel="next"'
+                }
+            return 404, {"message": "not retained"}, {}
+
+        listing = discover("missing-page", accounts=["octo-example"], fetch=fetch)
+        coverage = listing["coverage"]["list_public_repositories:octo-example"]
+        self.assertEqual("PARTIAL", listing["status"])
+        self.assertEqual("NOT_FOUND_OBSERVED", coverage["error_code"])
+        self.assertIsNone(coverage["end_condition"])
+
+    def test_forbidden_without_rate_headers_is_access_denied(self):
+        result = discover("forbidden", accounts=["private-example"],
+                          fetch=lambda *_: (403, {"message": "not retained"}, {}))
+        coverage = result["coverage"]["list_public_repositories:private-example"]
+        self.assertEqual("FAILED", result["status"])
+        self.assertEqual(["ACCESS_DENIED"], result["errors"])
+        self.assertEqual("ACCESS_DENIED", coverage["error_code"])
+
+    def test_429_is_rate_limited_without_optional_headers(self):
+        result = discover("rate-429", accounts=["busy-example"],
+                          fetch=lambda *_: (429, {"message": "not retained"}, {}))
+        self.assertEqual("FAILED", result["status"])
+        self.assertEqual(["RATE_LIMITED"], result["errors"])
+
+    def test_rate_limit_stops_actual_requests_for_remaining_methods(self):
+        calls = []
+
+        def fetch(url, _headers):
+            calls.append(url)
+            return 429, {"message": "not retained"}, {}
+
+        result = discover("rate-stop", accounts=["first-example", "second-example"],
+                          seeds=["broad"], fetch=fetch)
+        self.assertEqual(1, len(calls))
+        self.assertEqual(1, result["coverage"]["totals"]["requests"])
+        self.assertEqual(["RATE_LIMITED"], result["errors"])
+        self.assertEqual(
+            0, result["coverage"]["list_public_repositories:second-example"]["requests"])
 
     def test_broker_rejects_redirects_off_host_paths_and_credentials(self):
         broker = GitHubBroker(fetch=lambda *_: (302, {}, {"location": "https://evil.test/"}))
@@ -178,6 +286,40 @@ class GitHubDiscoveryTests(unittest.TestCase):
         self.assertEqual(1, len(calls))
         self.assertEqual(1, len(result["candidates"]))
 
+    def test_next_link_rejects_changed_host_path_query_and_loop(self):
+        malicious = (
+            "https://evil.test/users/adatum-lab/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2",
+            "https://api.github.com/users/other/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=2",
+            "https://api.github.com/users/adatum-lab/repos?type=all&sort=full_name&direction=asc&per_page=100&page=2",
+            "https://api.github.com/users/adatum-lab/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1",
+        )
+        for next_url in malicious:
+            calls = []
+
+            def fetch(url, _headers):
+                calls.append(url)
+                return 200, [repo("adatum-lab", "site")], {
+                    "Link": f'<{next_url}>; rel="next"'
+                }
+
+            with self.subTest(next_url=next_url):
+                result = discover("unsafe-next", accounts=["adatum-lab"], fetch=fetch)
+                self.assertIn("PAGINATION_INVALID", result["errors"])
+                self.assertEqual(1, len(calls))
+
+    def test_search_page_limit_reports_limit_instead_of_input_error(self):
+        def fetch(url, _headers):
+            parsed = urllib.parse.urlsplit(url)
+            page = int(urllib.parse.parse_qs(parsed.query)["page"][0])
+            return 200, {"items": [], "total_count": 1000, "incomplete_results": False}, {
+                "Link": f'<https://api.github.com{parsed.path}?q=sample+in%3Aname%2Cdescription%2Creadme&per_page=100&page={page + 1}>; rel="next"'
+            }
+
+        result = discover("page-cap", seeds=["sample"], max_pages=10, fetch=fetch)
+        coverage = result["coverage"]["search_repositories:1"]
+        self.assertEqual("PAGE_LIMIT_EXCEEDED", coverage["error_code"])
+        self.assertNotIn("INPUT_INVALID", result["errors"])
+
     def test_invalid_known_url_and_dirty_homepage_are_not_emitted(self):
         invalid = discover("scope-10", known_urls=["https://user.github.io/repo/?token=secret"], fetch=lambda *_: [])
         self.assertEqual("FAILED", invalid["status"])
@@ -204,6 +346,10 @@ class GitHubDiscoveryTests(unittest.TestCase):
         self.assertIn("SEARCH_INCOMPLETE", result["errors"])
         self.assertIn("RESULT_LIMIT_EXCEEDED", result["errors"])
         self.assertEqual("PARTIAL", result["coverage"]["search_users:1"]["state"])
+        self.assertEqual("SEARCH_INCOMPLETE",
+                         result["coverage"]["search_users:1"]["error_code"])
+        self.assertEqual("RESULT_LIMIT_EXCEEDED",
+                         result["coverage"]["search_repositories:1"]["error_code"])
 
     def test_account_cap_also_bounds_repository_candidates(self):
         rows = [repo(f"fictional-{index}", "docs") for index in range(11)]
@@ -220,7 +366,8 @@ class GitHubDiscoveryTests(unittest.TestCase):
 
         result = discover("scope-cap", seeds=["fictional"], fetch=fetch)
         self.assertEqual(10, len(result["accounts"]))
-        self.assertEqual(10, len(result["candidates"]))
+        self.assertEqual(11, len(result["candidates"]))
+        self.assertEqual("PARTIAL", result["coverage"]["account_expansion"]["state"])
         self.assertIn("RESULT_LIMIT_EXCEEDED", result["errors"])
         self.assertEqual("PARTIAL", result["coverage"]["search_repositories:1"]["state"])
 
@@ -263,6 +410,20 @@ class GitHubDiscoveryTests(unittest.TestCase):
         self.assertEqual("PARTIAL", result["status"])
         self.assertIn("REQUEST_LIMIT_EXCEEDED", result["errors"])
         self.assertEqual(1, result["coverage"]["totals"]["requests"])
+
+    def test_explicit_account_listing_precedes_broad_search_at_request_cap(self):
+        calls = []
+
+        def fetch(url, _headers):
+            calls.append(url)
+            return 200, [], {}
+
+        result = discover("reserved-account", accounts=["known-example"], seeds=["broad"],
+                          max_requests=1, fetch=fetch)
+        self.assertEqual("/users/known-example/repos", urllib.parse.urlsplit(calls[0]).path)
+        self.assertEqual("COMPLETE",
+                         result["coverage"]["list_public_repositories:known-example"]["state"])
+        self.assertIn("REQUEST_LIMIT_EXCEEDED", result["errors"])
 
     def test_standalone_cli_emits_json(self):
         stdout = io.StringIO()

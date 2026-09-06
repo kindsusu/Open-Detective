@@ -10,7 +10,7 @@ python tools/idgen.py --en "<이름>" --targets vercel --tier 3
 python tools/idgen.py --selftest
 ```
 
-tier 1은 직접 stem, tier 2는 industry affix, tier 3은 generic function affix, tier 4는 numeric suffix다. 여러 단어로 된 공식 영문 표기에서는 입력 단어에 근거한 제한된 복합어 경계(예: `brand-industryword`)와 그 숫자 변형도 보존한다. 순위는 결정론적 검색 순서이며 확률이나 confidence 점수가 아니다. 유한한 `--limit` 안에서 직접 stem과 짧은 숫자 고유화 변형에 먼저 닿도록 넓은 function-word 조합보다 앞에 둔다.
+tier 1은 직접 stem, tier 2는 industry affix, tier 3은 generic function affix, tier 4는 numeric suffix다. 여러 단어로 된 공식 영문 표기에서는 입력 단어에 근거한 제한된 복합어 경계(예: `brand-industryword`)와 그 숫자 변형도 보존한다. 순위는 결정론적 검색 순서이며 확률이나 confidence 점수가 아니다. 같은 stem 품질군에서는 직접 이름 다음에 업종·업무명·숫자 변형을 여러 표기 사이에 번갈아 배치한다. 한 긴 이름의 접미사들이 유한한 `--limit`을 모두 차지하지 않도록 하며, tier는 생성 방식이고 실제 실행 순번은 아니다.
 
 모든 출력은 후보다. owner API, 검증된 DNS/control-plane 관계, repository deployment metadata, 책임 있는 owner record로 확증한다. 유사성, 403/404, 존재하는 account, public page만으로는 부족하다. 확증된 진입점을 찾은 뒤에는 추가 추측보다 team/project/deployment/alias 같은 정확한 relation edge를 우선한다.
 

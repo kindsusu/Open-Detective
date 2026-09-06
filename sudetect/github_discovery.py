@@ -26,9 +26,11 @@ _SCOPE_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$")
 _ACCOUNT_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 _SAFE_ERRORS = {
+    "ACCESS_DENIED",
     "BODY_LIMIT_EXCEEDED",
     "INPUT_INVALID",
     "MALFORMED_RESPONSE",
+    "NOT_FOUND_OBSERVED",
     "PAGE_LIMIT_EXCEEDED",
     "PAGINATION_INVALID",
     "RATE_LIMITED",
@@ -92,7 +94,9 @@ def _repo_slug(owner: Any, repo: Any) -> str | None:
 
 def _normalize_response(value: Any) -> Response:
     if isinstance(value, Response):
-        return value
+        return Response(value.status, value.payload,
+                        {str(k).lower(): str(v) for k, v in value.headers.items()},
+                        value.body_bytes)
     if isinstance(value, tuple):
         if len(value) == 3:
             status, payload, headers = value
@@ -130,9 +134,10 @@ class GitHubBroker:
         self.requests_used = 0
         self.bytes_used = 0
         self._started = time.monotonic()
+        self._terminal_error: str | None = None
 
     @staticmethod
-    def _validate_url(url: str) -> None:
+    def _validate_url(url: str, *, pagination_candidate: bool = False) -> None:
         try:
             parsed = urllib.parse.urlsplit(url)
             query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
@@ -154,12 +159,23 @@ class GitHubBroker:
             except (ValueError, IndexError):
                 raise DiscoveryError("INPUT_INVALID") from None
             allowed = (set(query) == {"q", "per_page", "page"}
-                       and 1 <= per_page <= 100 and 1 <= page <= 10
+                       and 1 <= per_page <= 100
+                       and 1 <= page <= (11 if pagination_candidate else 10)
                        and 1 <= len(query.get("q", [""])[0]) <= 256)
         elif re.fullmatch(r"/users/[^/]+/repos", path):
             owner = urllib.parse.unquote(path.split("/")[2])
             allowed = (_valid_account(owner) is not None
                        and set(query) == {"type", "sort", "direction", "per_page", "page"}
+                       and query.get("type") == ["owner"]
+                       and query.get("sort") == ["full_name"]
+                       and query.get("direction") == ["asc"]
+                       and query.get("per_page") == ["100"]
+                       and query.get("page", [""])[0].isdigit()
+                       and 1 <= int(query["page"][0]) <= 100)
+        elif re.fullmatch(r"/user/[1-9][0-9]*/repos", path):
+            # GitHub can canonicalize a username collection to an immutable
+            # numeric-user collection in its Link header.
+            allowed = (set(query) == {"type", "sort", "direction", "per_page", "page"}
                        and query.get("type") == ["owner"]
                        and query.get("sort") == ["full_name"]
                        and query.get("direction") == ["asc"]
@@ -174,6 +190,8 @@ class GitHubBroker:
 
     def get(self, url: str) -> Response:
         self._validate_url(url)
+        if self._terminal_error is not None:
+            raise DiscoveryError(self._terminal_error)
         if self.requests_used >= self.max_requests:
             raise DiscoveryError("REQUEST_LIMIT_EXCEEDED")
         if time.monotonic() - self._started >= self.max_duration:
@@ -215,19 +233,23 @@ class GitHubBroker:
                         {str(k).lower(): str(v) for k, v in raw.headers.items()}, len(body),
                     )
             except urllib.error.HTTPError as exc:
-                code = "REDIRECT_BLOCKED" if 300 <= exc.code < 400 else (
-                    "RATE_LIMITED" if exc.code in {403, 429} else "REQUEST_FAILED")
+                response_headers = {
+                    str(k).lower(): str(v)
+                    for k, v in (exc.headers.items() if exc.headers else ())
+                }
+                code = self._http_error_code(exc.code, response_headers)
+                if code == "RATE_LIMITED":
+                    self._terminal_error = code
                 raise DiscoveryError(code) from None
             except DiscoveryError:
                 raise
             except Exception as exc:
                 raise DiscoveryError("REQUEST_FAILED") from exc
-        if 300 <= response.status < 400:
-            raise DiscoveryError("REDIRECT_BLOCKED")
-        if response.status in {403, 429}:
-            raise DiscoveryError("RATE_LIMITED")
         if not 200 <= response.status < 300:
-            raise DiscoveryError("REQUEST_FAILED")
+            code = self._http_error_code(response.status, response.headers)
+            if code == "RATE_LIMITED":
+                self._terminal_error = code
+            raise DiscoveryError(code)
         size = response.body_bytes
         if size < 0 or size > self.max_response_bytes:
             raise DiscoveryError("BODY_LIMIT_EXCEEDED")
@@ -235,6 +257,21 @@ class GitHubBroker:
         if self.bytes_used > self.max_total_bytes:
             raise DiscoveryError("BODY_LIMIT_EXCEEDED")
         return response
+
+    @staticmethod
+    def _http_error_code(status: int, headers: Mapping[str, str]) -> str:
+        if 300 <= status < 400:
+            return "REDIRECT_BLOCKED"
+        if status == 404:
+            return "NOT_FOUND_OBSERVED"
+        if status == 429:
+            return "RATE_LIMITED"
+        if status == 403:
+            remaining = str(headers.get("x-ratelimit-remaining", "")).strip()
+            if remaining == "0" or "retry-after" in headers:
+                return "RATE_LIMITED"
+            return "ACCESS_DENIED"
+        return "REQUEST_FAILED"
 
 
 def _known_pages_url(value: Any) -> tuple[str, str, str] | None:
@@ -297,7 +334,8 @@ def _clean_homepage(value: Any) -> str | None:
         return None
 
 
-def _next_link(header: str | None, current_url: str) -> str | None:
+def _next_link(header: str | None, current_url: str,
+               allowed_user_id: int | None = None) -> str | None:
     if not header:
         return None
     matches: list[str] = []
@@ -312,7 +350,12 @@ def _next_link(header: str | None, current_url: str) -> str | None:
     if not matches:
         return None
     candidate = matches[0]
-    GitHubBroker._validate_url(candidate)
+    try:
+        GitHubBroker._validate_url(candidate, pagination_candidate=True)
+    except DiscoveryError:
+        # Operator input was already validated; an unsafe provider cursor is a
+        # pagination failure rather than an input failure.
+        raise DiscoveryError("PAGINATION_INVALID") from None
     old = urllib.parse.urlsplit(current_url)
     new = urllib.parse.urlsplit(candidate)
     old_q = urllib.parse.parse_qs(old.query)
@@ -321,7 +364,13 @@ def _next_link(header: str | None, current_url: str) -> str | None:
         expected_page = int(old_q["page"][0]) + 1
     except (KeyError, ValueError, IndexError):
         raise DiscoveryError("PAGINATION_INVALID") from None
-    if (new.path != old.path or set(new_q) != set(old_q)
+    same_resource = new.path == old.path
+    canonical_match = re.fullmatch(r"/user/([1-9][0-9]*)/repos", new.path)
+    canonical_user_resource = (re.fullmatch(r"/users/[^/]+/repos", old.path)
+                               and canonical_match is not None
+                               and allowed_user_id is not None
+                               and int(canonical_match.group(1)) == allowed_user_id)
+    if (not (same_resource or canonical_user_resource) or set(new_q) != set(old_q)
             or any(new_q[key] != old_q[key] for key in old_q if key != "page")
             or new_q.get("page") != [str(expected_page)]):
         raise DiscoveryError("PAGINATION_INVALID")
@@ -423,7 +472,7 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             errors.append("MALFORMED_RESPONSE")
             return False
         key = valid.casefold()
-        if valid not in expansion_accounts:
+        if key not in expansion_priority:
             if len(expansion_accounts) >= max_accounts:
                 worst = max(expansion_accounts, key=lambda value: (expansion_priority[value.casefold()], expansion_accounts.index(value)))
                 if priority >= expansion_priority[worst.casefold()]:
@@ -442,10 +491,10 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             expansion_priority[key] = priority
         elif priority < expansion_priority.get(key, priority):
             expansion_priority[key] = priority
-        found_accounts.setdefault(key, valid)
+        canonical = found_accounts.setdefault(key, valid)
         account_sources.setdefault(key, set())
         account_sources.setdefault(key, set()).add(source)
-        edges.add((source, f"account:{valid}", "identified_account"))
+        edges.add((source, f"account:{canonical}", "identified_account"))
         return True
 
     def add_repo(row: Any, source: str, *, priority: int = 2) -> bool:
@@ -458,8 +507,9 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             errors.append("MALFORMED_RESPONSE")
             return False
         owner = item["slug"].split("/", 1)[0]
-        if not add_account(owner, source, priority=priority):
-            return False
+        # Candidate retention and account expansion have separate limits. A
+        # repository remains review evidence if its owner cannot be expanded.
+        add_account(owner, source, priority=priority)
         key = item["slug"].casefold()
         if key not in candidates and len(candidates) >= max_results:
             errors.append("RESULT_LIMIT_EXCEEDED")
@@ -481,6 +531,7 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
     def execute_pages(method: str, first_url: str, item_key: str,
                       consume: Callable[[Any, str], None]) -> None:
         nonlocal successful_requests
+        requests_before = broker.requests_used
         url: str | None = first_url
         pages = items = 0
         state = "COMPLETE"
@@ -496,6 +547,7 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
                 rows = payload.get(item_key) if isinstance(payload, Mapping) else payload
                 if not isinstance(rows, list):
                     raise DiscoveryError("MALFORMED_RESPONSE")
+                before_errors = len(errors)
                 if isinstance(payload, Mapping):
                     if payload.get("incomplete_results") is True:
                         errors.append("SEARCH_INCOMPLETE")
@@ -509,34 +561,68 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
                         expected_total = min(total_count, 1000)
                     elif total_count is not None:
                         raise DiscoveryError("MALFORMED_RESPONSE")
+                allowed_user_id: int | None = None
+                current = urllib.parse.urlsplit(url)
+                user_match = re.fullmatch(r"/users/([^/]+)/repos", current.path)
+                if user_match and rows:
+                    requested_owner = urllib.parse.unquote(user_match.group(1)).casefold()
+                    owner_ids: set[int] = set()
+                    all_rows_match = True
+                    for row in rows:
+                        owner = row.get("owner") if isinstance(row, Mapping) else None
+                        owner_id = owner.get("id") if isinstance(owner, Mapping) else None
+                        if (not isinstance(owner, Mapping)
+                                or not isinstance(owner.get("login"), str)
+                                or owner["login"].casefold() != requested_owner
+                                or not isinstance(owner_id, int) or isinstance(owner_id, bool)
+                                or owner_id <= 0):
+                            all_rows_match = False
+                            break
+                        owner_ids.add(owner_id)
+                    if all_rows_match and len(owner_ids) == 1:
+                        allowed_user_id = owner_ids.pop()
                 source = f"github_api:{method}:page:{pages + 1}"
-                before_errors = len(errors)
                 for row in rows:
                     consume(row, source)
                 if len(errors) > before_errors:
                     state = "PARTIAL"
+                    if method_error is None:
+                        method_error = errors[before_errors]
                 pages += 1
                 items += len(rows)
-                next_url = _next_link(response.headers.get("link"), url)
+                next_url = _next_link(response.headers.get("link"), url, allowed_user_id)
                 if next_url is None:
                     if expected_total is not None and items < expected_total:
                         raise DiscoveryError("PAGINATION_INVALID")
                     if expected_total is None and len(rows) == 100:
                         raise DiscoveryError("PAGINATION_INVALID")
+                elif pages >= max_pages:
+                    raise DiscoveryError("PAGE_LIMIT_EXCEEDED")
                 url = next_url
         except DiscoveryError as exc:
-            errors.append(exc.code)
-            method_error = exc.code
-            state = "PARTIAL" if pages else "FAILED"
+            if exc.code == "NOT_FOUND_OBSERVED" and pages == 0 and method.startswith(
+                    "list_public_repositories:"):
+                method_error = None
+                state = "COMPLETE"
+                end_condition = "not_found_observed"
+            else:
+                errors.append(exc.code)
+                method_error = method_error or exc.code
+                state = "PARTIAL" if pages else "FAILED"
+                end_condition = None
+        else:
+            end_condition = "page_exhausted" if state == "COMPLETE" else None
         report["coverage"][method] = {"state": state, "pages": pages, "items": items,
-                                      "end_condition": "page_exhausted" if state == "COMPLETE" else None,
-                                      "error_code": method_error}
+                                      "end_condition": end_condition,
+                                      "error_code": method_error,
+                                      "requests": broker.requests_used - requests_before}
         report["methods_executed"].append(method)
 
     # Exact known repositories run before any broad, potentially paginated search.
     for slug, source in known_repos.values():
         owner, repo = slug.split("/", 1)
         method = f"repository_detail:{owner}/{repo}"
+        requests_before = broker.requests_used
         try:
             response = broker.get(
                 f"https://api.github.com/repos/{urllib.parse.quote(owner, safe='-')}/"
@@ -547,15 +633,37 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
                 raise DiscoveryError("MALFORMED_RESPONSE")
             state, items = "COMPLETE", 1
         except DiscoveryError as exc:
-            errors.append(exc.code)
-            method_error = exc.code
-            state, items = "FAILED", 0
+            if exc.code == "NOT_FOUND_OBSERVED":
+                method_error = None
+                state, items = "COMPLETE", 0
+                end_condition = "not_found_observed"
+            else:
+                errors.append(exc.code)
+                method_error = exc.code
+                state, items = "FAILED", 0
+                end_condition = None
         else:
             method_error = None
+            end_condition = "page_exhausted"
         report["coverage"][method] = {"state": state, "pages": 1 if items else 0, "items": items,
-                                      "end_condition": "page_exhausted" if state == "COMPLETE" else None,
-                                      "error_code": method_error}
+                                      "end_condition": end_condition,
+                                      "error_code": method_error,
+                                      "requests": broker.requests_used - requests_before}
         report["methods_executed"].append(method)
+
+    # Exact operator accounts run before broad searches can consume the global
+    # request budget. Strong known URL details already ran above.
+    listed_accounts: set[str] = set()
+    for account in list(expansion_accounts):
+        if expansion_priority[account.casefold()] > 1:
+            continue
+        execute_pages(
+            f"list_public_repositories:{account}",
+            _query_url(f"/users/{urllib.parse.quote(account, safe='-')}/repos",
+                       type="owner", sort="full_name", direction="asc", per_page="100", page="1"),
+            "", add_repo,
+        )
+        listed_accounts.add(account.casefold())
 
     # Repository hits outrank user-name hits. Run the two search families in
     # priority order so low-quality user rows cannot consume every account slot.
@@ -576,7 +684,8 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
     # hard cap prevents an API response from turning this into mass enumeration.
     # Strong known inputs reserve listing capacity even when weak search/account
     # guesses already filled the ordinary expansion queue.
-    listing_accounts = list(dict.fromkeys(expansion_accounts))[:max_accounts]
+    listing_accounts = [account for account in dict.fromkeys(expansion_accounts)
+                        if account.casefold() not in listed_accounts][:max_accounts]
     for account in listing_accounts:
         method = f"list_public_repositories:{account}"
         execute_pages(
@@ -588,10 +697,27 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             "", add_repo,
         )
 
+    expansion_deferred = [item for item in deferred if item["kind"] == "account_expansion"]
+    report["coverage"]["account_expansion"] = {
+        "state": "PARTIAL" if expansion_deferred else "COMPLETE",
+        "scheduled": len(listed_accounts) + len(listing_accounts),
+        "deferred": len(expansion_deferred),
+        "end_condition": "account_limit_reached" if expansion_deferred else "queue_exhausted",
+        "error_code": "RESULT_LIMIT_EXCEEDED" if expansion_deferred else None,
+    }
+
+    absent_accounts = {
+        method.removeprefix("list_public_repositories:").casefold()
+        for method, coverage in report["coverage"].items()
+        if (method.startswith("list_public_repositories:")
+            and coverage.get("end_condition") == "not_found_observed")
+    }
+
     report["accounts"] = [
         {"login": account, "github_url": f"https://github.com/{account}",
          "workflow": "ownership_pending", "scope_label": "authorized_public_metadata_discovery",
-         "sources": sorted(account_sources[key])}
+         "sources": sorted(account_sources[key]),
+         "metadata_observation": "not_found" if key in absent_accounts else "observed_or_unresolved"}
         for key, account in sorted(found_accounts.items())
     ]
     report["candidates"] = sorted(candidates.values(), key=lambda item: item["slug"].casefold())
