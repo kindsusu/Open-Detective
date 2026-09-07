@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
-from .github_discovery import discover as github_discover
+from .github_discovery import (discover as github_discover, _validate_channel_health)
 from .identifiers import generate_identifiers, generate_search_queries, validate_target_candidate
 
 _NS = uuid.UUID("a63cb58e-29d3-450c-8a71-1e4ad86dbe38")
@@ -157,11 +157,32 @@ def _next_work(plan: Mapping[str,Any]) -> dict[str,Any]:
                         "reason":next_job.get("error_code") or next_job.get("deferred_reason") or "ready"}
     return answer
 
+def _health_requirements(job: Mapping[str, Any]) -> list[str]:
+    channel=job.get("channel")
+    if channel == "github" and job.get("kind") in {"account_candidate", "known_url"}:
+        return ["github-repositories"]
+    if channel == "github" and job.get("kind") == "search_query":
+        return ["github-user-search", "github-repository-search", "github-repositories"]
+    if channel in {"web", "documents", "certificate_transparency"}:
+        return [channel]
+    return ["invalid-channel"]
+
+def _health_provenance(report: object, required: Iterable[str]) -> dict[str, Any]:
+    """Keep audit identifiers and times, never copied control locations."""
+    try:
+        from .channel_health import extract_health_provenance
+        wanted=list(required); controls=extract_health_provenance(report, wanted)
+    except Exception:
+        wanted, controls=[], []
+    return {"kind": "channel_health", "validated_at": _now(),
+            "required_channels": sorted(set(wanted)), "controls": controls}
+
 def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
              resume_query_budget: int=0, resume_account_budget: int=0,
              retry_failed: bool=False, request_budget: int=20, max_batches: int=100,
              resume_all_deferred: bool=False, per_job_request_budget: int=6,
-             persist: Callable[[Mapping[str,Any]],None] | None=None) -> dict[str,Any]:
+             persist: Callable[[Mapping[str,Any]],None] | None=None,
+             channel_health: Mapping[str,Any] | None=None) -> dict[str,Any]:
     out=json.loads(json.dumps(plan)); jobs=out.get("jobs",[])
     if (out.get("coverage_version",1)<2 and
             any(run.get("status") != "COMPLETE" for run in out.get("runs",[]) if isinstance(run,Mapping))):
@@ -178,6 +199,13 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
                 job["state"]="planned"; job["retry_of_error"]=job.get("error_code")
     eligible=[j for j in jobs if j.get("channel")=="github" and
               (j.get("state")=="planned" or (resume_all_deferred and j.get("state")=="deferred"))]
+    if fetch is None and eligible:
+        # Validate the conservative union up front.  Every selected job is
+        # checked again immediately before its broker call as controls age.
+        required=sorted({channel for job in eligible for channel in _health_requirements(job)})
+        errors=_validate_channel_health(channel_health, required, now=datetime.now(timezone.utc))
+        if errors:
+            raise ValueError(errors[0])
     # Exact URLs and supplied/generated identity candidates are cheap and strong.
     # Run them before broad searches so a paginated search cannot starve them.
     def priority(job: Mapping[str,Any]) -> int:
@@ -206,6 +234,14 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         minimum=2 if job.get("kind")=="search_query" else 1
         if remaining<minimum:
             stop_reason="request_budget_exhausted"; break
+        required_health=_health_requirements(job)
+        if fetch is None:
+            health_errors=_validate_channel_health(channel_health, required_health, now=datetime.now(timezone.utc))
+            if health_errors:
+                # Earlier batches are already checkpointed.  Do not mutate the
+                # next job or make another request after a control expires.
+                stop_reason="channel_health_failed"
+                break
         if job.get("state")=="deferred":
             job["resumed_from_deferred_reason"]=job.get("deferred_reason")
             job["state"]="planned"; job.pop("deferred_reason",None)
@@ -213,7 +249,8 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         if job["kind"]=="search_query": kwargs["seeds"]=[job["value"]]
         elif job["kind"]=="account_candidate": kwargs["accounts"]=[job["value"]]
         else: kwargs["known_urls"]=[job["value"]]
-        result=github_discover(out["scope_id"],max_requests=min(per_job_request_budget,remaining),fetch=fetch,max_accounts=10,**kwargs)
+        result=github_discover(out["scope_id"],max_requests=min(per_job_request_budget,remaining),fetch=fetch,
+                               max_accounts=10,channel_health=channel_health,**kwargs)
         used=int(result.get("coverage",{}).get("totals",{}).get("requests",0))
         requests_used+=min(remaining,max(0,used)); batches+=1
         if job["kind"]=="search_query": keys=("search_users:1","search_repositories:1")
@@ -243,11 +280,21 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
                            "requests_used":0,"result":{"schema_version":"1.0","provider":"github_public",
                            "scope_id":out["scope_id"],"status":"COMPLETE","candidates":[],"accounts":[],
                            "errors":[],"coverage":{},"totals":{"requests":0,"batches":0}},"batches":[]}
+            if fetch is None:
+                execution_run["health_provenance"]=_health_provenance(channel_health or {}, required_health)
+            else:
+                execution_run["synthetic"]=True
             out.setdefault("runs",[]).append(execution_run)
         execution_run["work_ids"].append(job["work_id"])
         execution_run["requests_used"]+=used
         execution_run["batches"].append({"work_id":job["work_id"],"observed_at":result["observed_at"],
-                                          "status":result["status"],"requests_used":used,"result":result})
+                                          "status":result["status"],"requests_used":used,"result":result,
+                                          **({"health_provenance":_health_provenance(channel_health or {}, required_health)}
+                                             if fetch is None else {})})
+        if fetch is None:
+            prior=set(execution_run["health_provenance"].get("required_channels", []))
+            prior.update(required_health)
+            execution_run["health_provenance"]=_health_provenance(channel_health or {}, prior)
         aggregate=execution_run["result"]
         candidate_index={row["slug"].casefold():row for row in aggregate["candidates"]}
         candidate_index.update({row["slug"].casefold():row for row in result.get("candidates",[])})
@@ -305,6 +352,11 @@ def import_results(plan: Mapping[str,Any], payload: Mapping[str,Any]) -> dict[st
                 job.get("end_condition") not in {"cursor_exhausted","page_exhausted","provider_empty","import_verified",
                                                   "not_found_observed"}):
             job["state"]="failed"; job["error_code"]="PROVENANCE_INCOMPLETE"
+        elif state=="completed":
+            observed=datetime.fromisoformat(str(job["observed_at"]).replace("Z","+00:00"))
+            health_errors=_validate_channel_health(payload.get("channel_health"), _health_requirements(job), now=observed)
+            if health_errors:
+                job["state"]="failed"; job["error_code"]=health_errors[0]
         if state=="not_applicable" and not row.get("not_applicable_reason"):
             job["state"]="failed"; job["error_code"]="PROVENANCE_INCOMPLETE"
         elif state=="not_applicable":
@@ -313,9 +365,12 @@ def import_results(plan: Mapping[str,Any], payload: Mapping[str,Any]) -> dict[st
                       isinstance(job.get("pages"),int) and not isinstance(job.get("pages"),bool) and job["pages"]>=0)
         if state=="failed" and (not job.get("error_code") or not time_valid or not source_valid or not counts_valid):
             job["state"]="failed"; job["error_code"]="PROVENANCE_INCOMPLETE"
-        job.setdefault("attempts",[]).append({"attempted_at":job.get("observed_at"),"state":job["state"],
+        attempt={"attempted_at":job.get("observed_at"),"state":job["state"],
             "error_code":job.get("error_code"),"result_count":job.get("result_count"),"pages":job.get("pages"),
-            "end_condition":job.get("end_condition"),"source_ref":job.get("source_ref"),"method":"import"})
+            "end_condition":job.get("end_condition"),"source_ref":job.get("source_ref"),"method":"import"}
+        if state=="completed":
+            attempt["health_provenance"]=_health_provenance(payload.get("channel_health") or {}, _health_requirements(job))
+        job.setdefault("attempts",[]).append(attempt)
     out["status"]=_status(out); out["updated_at"]=_now(); return out
 
 def plan_status(plan):
@@ -337,6 +392,7 @@ def main(argv=None):
         cmd=sub.add_parser(name); cmd.add_argument("--plan",required=True)
         if name in {"run","run-until-budget"}:
             cmd.add_argument("--locator-store"); cmd.add_argument("--resume-query-budget",type=int,default=0); cmd.add_argument("--resume-account-budget",type=int,default=0)
+            cmd.add_argument("--channel-health", required=True)
             cmd.add_argument("--retry-failed",action="store_true")
             cmd.add_argument("--request-budget",type=int,default=20 if name=="run" else None,
                              required=name=="run-until-budget")
@@ -351,10 +407,13 @@ def main(argv=None):
         else:
             path=Path(args.plan); plan=json.loads(path.read_text(encoding="utf-8"))
             if args.command in {"run","run-until-budget"}:
+                from .channel_health import load_health_report
+                health=load_health_report(args.channel_health)
                 options={"resume_query_budget":args.resume_query_budget,"resume_account_budget":args.resume_account_budget,
                          "retry_failed":args.retry_failed,"request_budget":args.request_budget,"max_batches":args.max_batches,
                          "resume_all_deferred":args.command=="run-until-budget",
                          "per_job_request_budget":args.per_job_request_budget,
+                         "channel_health":health,
                          "persist":lambda value:_write(path,value)}
                 if args.locator_store:
                     from .locators import LocatorStore

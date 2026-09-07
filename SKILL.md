@@ -18,12 +18,13 @@ python -m sudetect probe --scope scope.json <url>
 python -m sudetect browser <url> --scope scope.json --duration 3
 python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
 python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect github-discover --scope-id TEAM --account approved-account
 python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60
-python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 python -m sudetect doctor --reference .
+python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
+python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 python -m sudetect ledger --db audit.sqlite due
 ```
 
@@ -42,6 +43,16 @@ confidence: confirmed | probable | unknown
 Statuses describe one request. `BODY_SERVED` does not mean sensitive content. `SENSITIVE_CONTENT_CONFIRMED` requires a linked observation, minimal actual evidence, ownership evidence, and anonymous conditions. A password input is only `LOGIN_FORM_INDICATOR`, not an automatic `PUBLIC_UI`, protection, or sensitivity decision. A denied API is `ACCESS_DENIED_OBSERVED`. An IdP redirect supports only `AUTH_REDIRECT_OBSERVED` for that path.
 
 For partial capture record `capture_complete=false`, inspected bytes, and stop reason. Distinguish full and prefix digests. Unsupported browser transports or unobserved Service Worker/WebSocket behavior remain `INDETERMINATE`; never claim total egress coverage.
+
+## Intake and phase gates
+
+Before any discovery, record local `audit-intake` data using `examples/audit-intake.example.json` and `schemas/audit-intake.schema.json`: exclusions with evidence; Korean/English identity, aliases, industry, functions, known URLs and domains; affiliate boundary; third-party declaration; owner/escalation references; and additional approval actions. It is neither executable scope nor a network grant. `third_parties.status="unknown"` is a gap, never a reason to infer ownership.
+
+Use this order: (1) intake for boundary, exclusions, ownership references, and escalation; (2) offline identifiers and search plan; (3) `doctor --reference .`, which reports the runtime root actually loaded and compares it with the reviewed source tree at `.`; (4) fresh scope-authorized positive controls with `channels-doctor`, then public GitHub discovery. Obtain administrator exports of contracts, assets, processor and outsourcer registers before approving executable scope and importing candidates. Owner-inventory credentials remain a separate authorization path.
+
+`channels-doctor` writes a local health report when its config and scope are valid, and prints changed channel rows. A control is `OK` only with HTTP 200, complete capture, and its configured `json_pointer` or `body_contains` expectation matched; prefer a specific JSON-pointer identity over a generic body marker, which can false-positive. Other reachable failures are `DEGRADED`; unreachable controls and HTTP 404/410 are `DEAD`. The report is local operational evidence with checked shape and freshness, not an electronic signature, remote attestation, or protection against a user who can change local files. Actual GitHub work needs fresh channel-specific controls: `github-repositories` for repository listing, and all three—`github-repositories`, `github-user-search`, `github-repository-search`—for a search seed because it can expand into repository listing. Imported results need health valid at `observed_at`; later expiry does not erase a historical result. Synthetic input never proves a real control. A successful control does not prove complete company discovery.
+
+Match GitHub control IDs to `api.github.com`: repository detail or `/users|orgs/<owner>/repos`, `/search/users`, and `/search/repositories?q=…`. A marker from another endpoint is not a substitute; detail controls do not prove pagination or permissions.
 
 ## Inventory, discovery, and browser
 

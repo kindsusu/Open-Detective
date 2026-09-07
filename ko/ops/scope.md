@@ -24,6 +24,10 @@
 
 ## 범위 문서
 
+실행 scope를 쓰기 전에 `examples/audit-intake.example.json`을 로컬로 복사하고 `schemas/audit-intake.schema.json`으로 검증한다. scope ID, 정확한 제외와 증거, identity/search 입력, 관계사 경계, 제3자 선언, escalation 참조, 추가 승인 행위를 기록한다. 이는 intake record일 뿐 권한 grant가 아니다. 특히 `third_parties.status="unknown"`은 커버리지 공백으로 남기며 추측으로 소유 자산으로 올리지 않는다.
+
+순서는 계약·자산·처리자/수탁자 대장의 관리자 export → scope 승인 → candidate import다. 승인된 owner inventory credential은 `SUD-R09`의 별도 provider/`--scope-id` 경로이며 intake에서 나오지 않고 target measurement를 허가하지 않는다.
+
 정책 로더는 JSON을 받는다. target은 exact origin 기반이다. HTTPS scheme, 정규화한 host, 명시/기본 port가 일치해야 한다. `path_prefixes`는 문자열 접두사가 아니라 경로 경계다. `/app/`는 `/application`을 허용하지 않는다. query는 target을 넓히지 않고 fragment는 거부한다.
 
 ```json

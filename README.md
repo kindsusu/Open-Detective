@@ -33,7 +33,7 @@ python -m playwright install chromium
 python -m sudetect --help
 ```
 
-The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 ```bash
 python -m sudetect probe --scope scope.json https://app.example.test/
@@ -41,14 +41,15 @@ python -m sudetect browser https://app.example.test/ --scope scope.json --durati
 python -m sudetect inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
 python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
 python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect github-discover --scope-id TEAM --account approved-account
 python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60
+python -m sudetect doctor --reference .
+python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json --previous _local/channel-health.previous.json
+python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
 python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 python -m sudetect ledger --db audit.sqlite due
-python -m sudetect doctor --reference .
 ```
 
 `tools/probe.sh` is a compatibility wrapper around the Python probe.
@@ -67,14 +68,17 @@ This example is deliberately expired. Copy [examples/scope.example.json](example
 
 ## Workflow
 
-1. Record exclusions, search seeds, affiliate boundaries, escalation routes, and approval-dependent actions.
-2. Import owner inventories and public candidates with provenance and pagination/completeness state.
-3. Confirm ownership before measurement. A public deployment can outlive a private repository.
-4. Run a bounded anonymous probe. Failures and partial captures are `INDETERMINATE`.
-5. Use the browser only when static HTML cannot answer the content question. `brokered_anonymous_browser` uses a fresh context and a policy-bound transport broker for approved GET document/script/stylesheet/XHR/fetch requests. It strips browser credentials, cookies, auth, and referrer; turns off Service Workers, blocks WebSocket server connections and discards messages in a local sink, closes popups, and refuses downloads. It inspects bounded live `input`, `textarea`, and `select` values only when the earlier DOM review finds no candidate. Canvas pixels, closed/open shadow-DOM content outside the serialized snapshot, JavaScript heap, post-interaction state, and unsupported behavior remain unmeasured. A password input is only a `LOGIN_FORM_INDICATOR`; it is not automatically `PUBLIC_UI`, protected, or sensitive. Chromium uses a dead proxy plus blocked host resolving so supported page requests use the broker. These controls are bounded to the observer, not an OS-firewall or total-egress guarantee.
-6. Confirm content only from minimal evidence. Stop when personal data or a usable secret is visible. Live secret validity remains unknown unless an authorized owner-side check establishes it.
-7. Balance urgent isolation, log preservation, secret rotation, and service continuity. Keep application authorization checks behind SSO.
-8. Close only after a fresh anonymous observation supports the state. Bind every ledger asset and alias to its opaque locator `target_id` and `policy_id`; reject a mismatch. Unchecked residue yields `partially_closed`. After closure, a current `BODY_SERVED`, unknown/incomplete result, or equal-time conflicting observation reopens or returns the finding to review.
+1. Create local audit intake before discovery: exclusions and evidence, organization identity, affiliate boundary, third-party status, owner/escalation references, and actions needing extra approval. Use [examples/audit-intake.example.json](examples/audit-intake.example.json) with [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json). This is not executable scope and grants no network authority. `third_parties.status="unknown"` is a recorded gap; do not infer those parties as owned.
+2. Obtain the administrator export for contracts, assets, and processor/outsourcer registers; approve executable scope; then import candidates. Owner-inventory credentials remain a separate authorization path.
+3. Build identifiers and `search-plan` offline from the intake.
+4. Run `doctor --reference .` to identify the runtime root actually loaded by the command and compare it with the reviewed source tree at `.`.
+5. Run fresh authorized positive controls with `channels-doctor`; only then run `github-discover` or `search-plan`. A successful control does not establish complete company discovery.
+6. Confirm ownership before target measurement. A public deployment can outlive a private repository.
+7. Run a bounded anonymous probe. Failures and partial captures are `INDETERMINATE`.
+8. Use the browser only when static HTML cannot answer the content question. `brokered_anonymous_browser` uses a fresh context and a policy-bound transport broker for approved GET document/script/stylesheet/XHR/fetch requests. It strips browser credentials, cookies, auth, and referrer; turns off Service Workers, blocks WebSocket server connections and discards messages in a local sink, closes popups, and refuses downloads. It inspects bounded live `input`, `textarea`, and `select` values only when the earlier DOM review finds no candidate. Canvas pixels, closed/open shadow-DOM content outside the serialized snapshot, JavaScript heap, post-interaction state, and unsupported behavior remain unmeasured. A password input is only a `LOGIN_FORM_INDICATOR`; it is not automatically `PUBLIC_UI`, protected, or sensitive. Chromium uses a dead proxy plus blocked host resolving so supported page requests use the broker. These controls are bounded to the observer, not an OS-firewall or total-egress guarantee.
+9. Confirm content only from minimal evidence. Stop when personal data or a usable secret is visible. Live secret validity remains unknown unless an authorized owner-side check establishes it.
+10. Balance urgent isolation, log preservation, secret rotation, and service continuity. Keep application authorization checks behind SSO.
+11. Close only after a fresh anonymous observation supports the state. Bind every ledger asset and alias to its opaque locator `target_id` and `policy_id`; reject a mismatch. Unchecked residue yields `partially_closed`. After closure, a current `BODY_SERVED`, unknown/incomplete result, or equal-time conflicting observation reopens or returns the finding to review.
 
 Owner API inventories follow every cursor and record permission, rate-limit, truncation, and time-window gaps. Normalized JSON imports retain source, retrieval time, owner scope, and completeness. A failed channel returning zero rows is not a zero-asset result.
 
@@ -88,6 +92,14 @@ Keep exact URLs in an owner-controlled local locator store. Shared discovery out
 
 `search-plan` creates a bounded, resumable manifest. It distinguishes aliases supplied by the operator from generated name variants, marks unrun work as `deferred`, and reports `PARTIAL` until every required channel is completed or explicitly `not_applicable` with a reason. `COMPLETE` describes only the declared plan and channel coverage; it does not prove that discovery is exhaustive. `discover` and search-plan can use a locator store to keep exact candidate URLs out of shared plan/output files. Owner inventory locator-store handoff follows the same private-store pattern when available; do not treat provider inventory metadata as a measurement grant.
 
+## Discovery-channel health controls
+
+`channels-doctor` performs a fresh, scope-authorized anonymous observation of local positive controls and writes a report when its config and scope are valid. Its JSON config accepts `max_age_seconds` and unique controls with `channel_id`, `control_id`, `url`, and either `expect.kind="json_pointer"` (`pointer`, `equals`) or `expect.kind="body_contains"` (`value`); see [examples/channel-health.example.json](examples/channel-health.example.json). Prefer a specific JSON-pointer identity such as `/items/0/login` or `/items/0/full_name`; a generic body marker can create a false positive. `OK` requires HTTP 200, complete capture, and a matching expected value. `DEGRADED` records an unexpected status, incomplete capture, or mismatch; `DEAD` records an unreachable control or HTTP 404/410. The CLI prints only changed channel rows and saves the full report.
+
+The report is local operational evidence whose format and freshness are checked. It is neither an electronic signature nor remote attestation, and it is not a security boundary against an operator who can alter local files. Each actual GitHub execution needs currently fresh controls: `github-repositories` for repository listing, and all three controls—`github-repositories`, `github-user-search`, and `github-repository-search`—for a search seed because results can expand into repository listing. Health for one API family never establishes health for another. Imported search-plan results must carry channel-health valid at their `observed_at`; later expiry does not erase a historically valid import. Synthetic test input is never a real channel validation.
+
+Bind each GitHub control to its `api.github.com` family: repository detail or `/users|orgs/<owner>/repos`, `/search/users`, and `/search/repositories?q=…`, respectively. A generic marker from another endpoint is not a substitute; a detail control does not prove pagination or permissions.
+
 ## Repository map
 
 | Path | Purpose |
@@ -100,6 +112,7 @@ Keep exact URLs in an owner-controlled local locator store. Shared discovery out
 | [ops/evidence.md](ops/evidence.md) | Evidence hygiene and provenance |
 | [ops/remediate.md](ops/remediate.md) | Containment and recheck |
 | [surfaces/inventory.md](surfaces/inventory.md) | Coverage checklist |
+| [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json) | Local pre-discovery intake shape |
 | [assets/ledger-template.md](assets/ledger-template.md) | Human-readable export |
 | [tools/idgen.py](tools/idgen.py) | Offline candidate generator |
 

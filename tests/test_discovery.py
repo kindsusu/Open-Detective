@@ -1,9 +1,21 @@
 import json
 import tempfile
 import unittest
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sudetect.discovery import import_candidates, priority_score
+from tests.health_fixtures import health_report as strict_health_report
+
+
+def health_report(channel, at):
+    current=datetime.fromisoformat(at.replace("Z","+00:00")); stamp=lambda value:value.isoformat().replace("+00:00","Z")
+    return {"schema_version":"1.0","kind":"channel_health","status":"OK","synthetic":False,
+            "observed_at":stamp(current),"expires_at":stamp(current+timedelta(minutes=5)),"controls":[{
+                "channel_id":channel,"control_id":"control-1","status":"OK","observed_at":stamp(current),
+                "expires_at":stamp(current+timedelta(minutes=5)),"observation_id":str(uuid.uuid4()),
+                "policy_id":"policy-1","reason_code":"expectation_matched","capture_complete":True,"http_status":200}]}
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -17,8 +29,32 @@ class DiscoveryTests(unittest.TestCase):
     def test_successful_empty_result_requires_end_condition_and_work_id(self):
         row={"channel_id":"search","state":"EXECUTED","complete":True,"observed_at":"2026-01-01T00:00:00Z",
              "source_ref":"fixture:empty","work_id":"work-1","end_condition":"provider_empty","pages":1,"items":0}
-        result=import_candidates({"required_channels":["search"],"channels":[row],"candidates":[]},scope_id="acme")
+        result=import_candidates({"required_channels":["search"],"channels":[row],"candidates":[],
+                                  "channel_health":health_report("search",row["observed_at"])},scope_id="acme")
         self.assertEqual("COMPLETE",result["status"])
+
+    def test_historical_import_keeps_completion_when_health_was_valid_then(self):
+        observed="2026-01-01T00:00:00Z"
+        row={"channel_id":"search","state":"EXECUTED","complete":True,"observed_at":observed,
+             "source_ref":"fixture:empty","work_id":"work-1","end_condition":"provider_empty","pages":1,"items":0}
+        result=import_candidates({"required_channels":["search"],"channels":[row],"candidates":[],
+                                  "channel_health":strict_health_report("search",now=datetime.fromisoformat(observed.replace("Z","+00:00")))},scope_id="acme")
+        self.assertEqual("COMPLETE",result["status"])
+        self.assertFalse(result["channels"][0]["health_errors"])
+
+    def test_health_provenance_is_safe_and_malformed_embedded_report_is_a_gap(self):
+        observed="2026-01-01T00:00:00Z"
+        row={"channel_id":"search","state":"EXECUTED","complete":True,"observed_at":observed,
+             "source_ref":"fixture:empty","work_id":"work-1","end_condition":"provider_empty"}
+        report=health_report("search",observed)
+        report["controls"][0]["policy_id"]="local-policy-must-not-leak"
+        result=import_candidates({"channels":[row],"candidates":[],"channel_health":report},scope_id="acme")
+        encoded=json.dumps(result)
+        self.assertNotIn("local-policy-must-not-leak",encoded)
+        report["controls"]=None
+        malformed=import_candidates({"channels":[row],"candidates":[],"channel_health":report},scope_id="acme")
+        self.assertFalse(malformed["channels"][0]["complete"])
+        self.assertEqual([],malformed["channels"][0]["health_provenance"]["controls"])
 
     def test_missing_required_channel_is_partial(self):
         result=import_candidates({"required_channels":["github","ct"],"channels":[{"channel_id":"github","state":"NOT_APPLICABLE"}],"candidates":[]},scope_id="acme")

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
+from .channel_health import extract_health_provenance, validate_health
+
 
 _NAMESPACE = uuid.UUID("d95936fb-8251-482a-ab3a-9071191814f2")
 CHANNEL_STATES = {"PLANNED", "EXECUTED", "NOT_APPLICABLE", "BLOCKED", "FAILED"}
@@ -71,6 +73,14 @@ def _count(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
+def _health_provenance(report: Any, channel_id: str) -> dict[str, Any]:
+    try:
+        controls=extract_health_provenance(report, [channel_id])
+    except Exception:
+        controls=[]
+    return {"kind":"channel_health", "channel_id":channel_id, "controls":controls}
+
+
 def _unit(value: Any, default: float) -> float:
     try: return min(1.0, max(0.0, float(value)))
     except (TypeError, ValueError): return default
@@ -116,6 +126,7 @@ def import_candidates(source: str | Path | Mapping[str, Any], *, scope_id: str,
     known_channels: set[str] = set()
     errors: list[str] = []
     seen_channels: set[str] = set()
+    health_report = payload.get("channel_health")
     for item in channels:
         if not isinstance(item, Mapping) or not isinstance(item.get("channel_id"), str):
             errors.append("CHANNEL_INVALID")
@@ -144,6 +155,13 @@ def import_candidates(source: str | Path | Mapping[str, Any], *, scope_id: str,
         if state == "EXECUTED" and work_id is None: errors.append("WORK_ID_MISSING")
         if state == "EXECUTED" and end_condition is None: errors.append("END_CONDITION_MISSING")
         provenance_complete = bool(supplied_time and supplied_source and work_id and end_condition and not error_code)
+        health_errors: list[str] = []
+        if state == "EXECUTED" and item.get("complete") is True and provenance_complete:
+            parsed_channel_time = datetime.fromisoformat(channel_time.replace("Z", "+00:00"))
+            health_errors = validate_health(health_report, [channel_id], now=parsed_channel_time)
+            if health_errors:
+                errors.extend("CHANNEL_HEALTH_" + code.upper() for code in health_errors)
+        provenance_complete = provenance_complete and not health_errors
         normalized_channels.append({
             "channel_id": channel_id,
             "state": state,
@@ -151,9 +169,11 @@ def import_candidates(source: str | Path | Mapping[str, Any], *, scope_id: str,
             "source_ref": supplied_source or None,
             "pages": _count(item.get("pages", 0)),
             "items": _count(item.get("items", 0)),
-            "complete": item.get("complete") is True and provenance_complete if state == "EXECUTED" else False,
+            "complete": item.get("complete") is True and provenance_complete and not health_errors if state == "EXECUTED" else False,
             "error_code": error_code, "work_id": work_id, "end_condition": end_condition,
             "provenance_complete": provenance_complete,
+            "health_errors": ["CHANNEL_HEALTH_" + code.upper() for code in health_errors],
+            "health_provenance": _health_provenance(health_report, channel_id),
         })
         if error_code: errors.append(error_code)
     normalized: list[dict[str, Any]] = []

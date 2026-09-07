@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 
@@ -40,6 +41,14 @@ _SAFE_ERRORS = {
     "RESULT_LIMIT_EXCEEDED",
     "SEARCH_INCOMPLETE",
     "TIME_LIMIT_EXCEEDED",
+    "CHANNEL_HEALTH_REQUIRED",
+    "CHANNEL_HEALTH_UNAVAILABLE",
+    "CHANNEL_HEALTH_INVALID",
+    "CHANNEL_HEALTH_MISSING",
+    "CHANNEL_HEALTH_STALE",
+    "CHANNEL_HEALTH_FUTURE",
+    "CHANNEL_HEALTH_DEGRADED",
+    "CHANNEL_HEALTH_DEAD",
 }
 _API_VERSION = "2022-11-28"
 
@@ -122,7 +131,8 @@ class GitHubBroker:
     def __init__(self, *, fetch: Fetch | None = None, max_requests: int = 30,
                  timeout: float = 10.0, max_duration: float = 60.0,
                  max_response_bytes: int = 2 * 1024 * 1024,
-                 max_total_bytes: int = 16 * 1024 * 1024):
+                 max_total_bytes: int = 16 * 1024 * 1024,
+                 health_check: Callable[[], list[str]] | None = None):
         if isinstance(max_requests, bool) or not 1 <= max_requests <= 30:
             raise DiscoveryError("INPUT_INVALID")
         self.fetch = fetch
@@ -135,6 +145,7 @@ class GitHubBroker:
         self.bytes_used = 0
         self._started = time.monotonic()
         self._terminal_error: str | None = None
+        self._health_check = health_check
 
     @staticmethod
     def _validate_url(url: str, *, pagination_candidate: bool = False) -> None:
@@ -191,6 +202,10 @@ class GitHubBroker:
 
     def get(self, url: str) -> Response:
         self._validate_url(url)
+        if self.fetch is None and self._health_check is not None:
+            errors = self._health_check()
+            if errors:
+                raise DiscoveryError(errors[0])
         if self._terminal_error is not None:
             raise DiscoveryError(self._terminal_error)
         if self.requests_used >= self.max_requests:
@@ -407,10 +422,55 @@ def _query_url(path: str, **params: str) -> str:
     return "https://api.github.com" + path + "?" + urllib.parse.urlencode(params)
 
 
+def _required_health_channels(*, seeds: Iterable[str], accounts: Iterable[str],
+                              known_urls: Iterable[str]) -> list[str]:
+    """Return the controls needed by the actual GitHub request families."""
+    required: list[str] = []
+    if any(isinstance(value, str) and value.strip() for value in accounts) or any(
+            isinstance(value, str) and value.strip() for value in known_urls):
+        required.append("github-repositories")
+    if any(isinstance(value, str) and value.strip() for value in seeds):
+        # Both searches may schedule repository listing for accounts found in
+        # their result rows.
+        required.extend(("github-user-search", "github-repository-search", "github-repositories"))
+    return list(dict.fromkeys(required))
+
+
+def _validate_channel_health(report: Any, required: Iterable[str], *, now: Any = None) -> list[str]:
+    if report is None:
+        return ["CHANNEL_HEALTH_REQUIRED"]
+    try:
+        from .channel_health import validate_health
+        errors = validate_health(report, list(required), now=now)
+    except ImportError:
+        return ["CHANNEL_HEALTH_UNAVAILABLE"]
+    except Exception:
+        return ["CHANNEL_HEALTH_UNAVAILABLE"]
+    safe = {"invalid", "missing", "stale", "future", "degraded", "dead"}
+    if not isinstance(errors, list) or any(not isinstance(code, str) or code not in safe for code in errors):
+        return ["CHANNEL_HEALTH_INVALID"]
+    priority = ("dead", "degraded", "stale", "future", "missing", "invalid")
+    present = set(errors)
+    return ["CHANNEL_HEALTH_" + code.upper() for code in priority if code in present]
+
+
+def _health_provenance(report: object, required: Iterable[str]) -> dict[str, Any]:
+    """Keep only validated opaque control identifiers, never local report fields."""
+    try:
+        from .channel_health import extract_health_provenance
+        requested = list(required)
+        controls = extract_health_provenance(report, requested)
+    except Exception:
+        requested, controls = [], []
+    return {"kind": "channel_health", "validated_at": _utc_now(),
+            "required_channels": sorted(set(requested)), "controls": controls}
+
+
 def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str] = (),
              known_urls: Iterable[str] = (), max_requests: int = 30,
              fetch: Fetch | None = None, max_accounts: int = 10,
-             max_results: int = 1000, max_pages: int = 10) -> dict[str, Any]:
+             max_results: int = 1000, max_pages: int = 10,
+             channel_health: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Discover public GitHub metadata from bounded, operator-supplied clues."""
     observed_at = _utc_now()
     report: dict[str, Any] = {
@@ -448,12 +508,28 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             if parsed is None:
                 raise DiscoveryError("INPUT_INVALID")
             parsed_known.append(parsed)
-        broker = GitHubBroker(fetch=fetch, max_requests=max_requests)
+        required_health = _required_health_channels(
+            seeds=seed_list, accounts=account_inputs, known_urls=known_inputs)
+        # An injected transport is an offline fixture.  It is deliberately
+        # marked synthetic below and cannot establish a live channel check.
+        if fetch is None and required_health:
+            health_errors = _validate_channel_health(channel_health, required_health)
+            if health_errors:
+                raise DiscoveryError(health_errors[0])
+        broker = GitHubBroker(fetch=fetch, max_requests=max_requests,
+                              health_check=(lambda: _validate_channel_health(
+                                  channel_health, required_health, now=datetime.now(timezone.utc))) if fetch is None else None)
     except DiscoveryError as exc:
         report["status"] = "FAILED"
         report["errors"] = [exc.code]
         report["coverage"]["input"] = {"state": "FAILED", "items": 0}
         return report
+
+    if fetch is not None:
+        report["synthetic"] = True
+        report["limitations"].append("synthetic_transport_not_live_health_validation")
+    else:
+        report["health_provenance"] = _health_provenance(channel_health, required_health)
 
     found_accounts: dict[str, str] = {}
     expansion_accounts: list[str] = []
@@ -749,15 +825,20 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--account", action="append", default=[])
     parser.add_argument("--known-url", action="append", default=[])
     parser.add_argument("--max-requests", type=int, default=30)
+    parser.add_argument("--channel-health", required=True)
     return parser
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = _parser().parse_args(list(argv) if argv is not None else None)
-    report = discover(
-        args.scope_id, seeds=args.seed, accounts=args.account,
-        known_urls=args.known_url, max_requests=args.max_requests,
-    )
+    try:
+        from .channel_health import load_health_report
+        health = load_health_report(args.channel_health)
+    except (ImportError, OSError, UnicodeError, ValueError, TypeError, RecursionError, json.JSONDecodeError):
+        health = None
+    report = discover(args.scope_id, seeds=args.seed, accounts=args.account,
+                      known_urls=args.known_url, max_requests=args.max_requests,
+                      channel_health=health)
     json.dump(report, sys.stdout, ensure_ascii=False, sort_keys=True)
     sys.stdout.write("\n")
     return 0 if report["status"] != "FAILED" else 2

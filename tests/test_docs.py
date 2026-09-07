@@ -1,6 +1,12 @@
+import json
 import re
 import unittest
 from pathlib import Path
+
+try:
+    import jsonschema
+except ImportError:  # The documented test extra supplies jsonschema.
+    jsonschema = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,10 +78,53 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn("inventory --provider import --scope-id TEAM --input inventory.json", text, path)
             self.assertIn("discover --input candidates.json --scope-id TEAM", text, path)
             self.assertIn("ledger --db audit.sqlite due", text, path)
+            self.assertIn("channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json", text, path)
+            self.assertIn("--channel-health _local/channel-health.json", text, path)
+            github = "github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json"
+            self.assertIn(github, text, path)
+            self.assertLess(text.index("doctor --reference ."), text.index("channels-doctor --config"), path)
+            self.assertLess(text.index("channels-doctor --config"), text.index(github), path)
             self.assertNotIn("ledger --database", text, path)
         for path in ("README.md", "README.ko.md"):
             self.assertIn('"targets"', self.read(path), path)
             self.assertNotIn('"grants"', self.read(path), path)
+
+    def test_audit_intake_example_and_unknown_third_party_contract(self):
+        schema = json.loads(self.read("schemas/audit-intake.schema.json"))
+        example = json.loads(self.read("examples/audit-intake.example.json"))
+        self.assertEqual("https://json-schema.org/draft/2020-12/schema", schema["$schema"])
+        self.assertEqual("unknown", example["third_parties"]["status"])
+        self.assertEqual([], example["third_parties"]["agencies"])
+        unknown_condition = schema["properties"]["third_parties"]["allOf"][2]["then"]["properties"]
+        self.assertEqual(0, unknown_condition["agencies"]["maxItems"])
+        self.assertEqual(0, unknown_condition["processors"]["maxItems"])
+        self.assertEqual(0, unknown_condition["suppliers"]["maxItems"])
+        if jsonschema is not None:
+            jsonschema.Draft202012Validator.check_schema(schema)
+            jsonschema.validate(example, schema)
+            invalid = json.loads(json.dumps(example))
+            invalid["third_parties"]["agencies"] = [{"party_id": "guess", "owner_ref": "e:owner", "inventory_ref": "e:inventory"}]
+            with self.assertRaises(jsonschema.ValidationError):
+                jsonschema.validate(invalid, schema)
+
+    def test_channel_health_docs_keep_controls_local_and_separate(self):
+        example = json.loads(self.read("examples/channel-health.example.json"))
+        self.assertEqual({"github-repositories", "github-user-search", "github-repository-search"},
+                         {item["channel_id"] for item in example["controls"]})
+        for path in ("README.md", "README.ko.md", "SKILL.md", "ko/SKILL.md", "ops/discovery.md", "ko/ops/discovery.md"):
+            text = self.read(path)
+            self.assertIn("github-repositories", text, path)
+            self.assertIn("github-user-search", text, path)
+            self.assertIn("github-repository-search", text, path)
+            self.assertIn("synthetic", text.casefold(), path)
+
+    def test_github_control_docs_bind_each_api_family(self):
+        for path in ("README.md", "README.ko.md", "SKILL.md", "ko/SKILL.md", "ops/discovery.md", "ko/ops/discovery.md"):
+            text = self.read(path)
+            self.assertIn("api.github.com", text, path)
+            self.assertIn("/search/users", text, path)
+            self.assertIn("/search/repositories", text, path)
+            self.assertIn("pagination", text, path)
 
     def test_status_verdicts_are_documented_as_observations(self):
         for path in ("ops/verify.md", "ko/ops/verify.md"):

@@ -1,0 +1,9 @@
+{
+  "scope_id": "replace-with-local-intake-id",
+  "excluded_urls": [{"url": "https://example.test/declared-public-notice", "evidence_ref": "replace-with-publication-review-ref"}],
+  "identity": {"company_ko": "", "company_en": "", "aliases": [], "industry": [], "functions": [], "known_urls": [], "domains": []},
+  "affiliate_boundary": {"included": [], "excluded": [], "evidence_ref": "replace-with-boundary-record-ref"},
+  "third_parties": {"status": "unknown", "source_ref": "", "agencies": [], "processors": [], "suppliers": []},
+  "escalation": {"owner_ref": "replace-with-owner-ref", "route_ref": "replace-with-escalation-route-ref"},
+  "additional_approval_actions": []
+}

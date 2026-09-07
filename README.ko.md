@@ -33,7 +33,7 @@ python -m playwright install chromium
 python -m sudetect --help
 ```
 
-루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
+루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 ```bash
 python -m sudetect probe --scope scope.json https://app.example.test/
@@ -41,14 +41,15 @@ python -m sudetect browser https://app.example.test/ --scope scope.json --durati
 python -m sudetect inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
 python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
 python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect github-discover --scope-id TEAM --account approved-account
 python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<수행자 입력>"
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60
+python -m sudetect doctor --reference .
+python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json --previous _local/channel-health.previous.json
+python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
 python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 python -m sudetect ledger --db audit.sqlite due
-python -m sudetect doctor --reference .
 ```
 
 `tools/probe.sh`는 Python probe의 호환 래퍼다.
@@ -67,14 +68,17 @@ python -m sudetect doctor --reference .
 
 ## 작업 흐름
 
-1. 제외 URL, 검색 씨앗, 관계사 경계, 에스컬레이션 경로, 별도 승인 행위를 기록한다.
-2. 소유자 인벤토리와 공개 후보를 provenance와 페이지 처리·완전성 상태와 함께 가져온다.
-3. 측정 전에 소유를 확증한다. 비공개 저장소의 공개 배포는 계속 남을 수 있다.
-4. 제한된 익명 probe를 실행한다. 실패와 부분 캡처는 `INDETERMINATE`다.
-5. 정적 HTML로 내용 질문에 답할 수 없을 때만 브라우저를 쓴다. `brokered_anonymous_browser`는 새 context와 정책 제한 transport broker로 승인된 GET document/script/stylesheet/XHR/fetch를 처리한다. browser credential, cookie, auth, referrer를 제거하고 Service Worker를 끈다. WebSocket server 연결을 막고 message는 local sink에서 버리며 popup을 닫고 download를 거부한다. 앞선 DOM 검토에서 candidate가 없을 때만 제한된 live `input`, `textarea`, `select` 값을 검사한다. canvas pixel, serialized snapshot 밖의 shadow DOM, JavaScript heap, interaction 이후 상태와 미지원 동작은 측정하지 않는다. password input은 `LOGIN_FORM_INDICATOR`일 뿐 `PUBLIC_UI`, 보호, 민감으로 자동 판정하지 않는다. dead proxy와 blocked host resolving으로 Chromium을 실행해 지원되는 page request가 broker를 거치게 한다. 이 통제는 observer 경계이며 OS firewall이나 전체 egress 보장이 아니다.
-6. 최소 증거로만 내용을 확정한다. 개인정보나 사용 가능한 비밀이 보이면 중단한다. 승인된 소유자 측 확인 전까지 비밀의 실제 유효성은 unknown이다.
-7. 긴급 격리, 로그 보존, 비밀 회전, 서비스 연속성을 함께 판단한다. SSO 뒤에서도 애플리케이션 권한 검사를 유지한다.
-8. 원 URL과 알려진 모든 alias의 새 익명 observation, 대조군, 선언한 잔존 범위의 증거가 완료 조건을 충족할 때 종결한다. ledger asset과 alias를 opaque locator `target_id`, `policy_id`에 바인딩하고 불일치를 거부한다. 잔존을 확인하지 못했으면 `partially_closed`다. 종결 뒤 현재 `BODY_SERVED`, unknown/incomplete 결과, 같은 시각의 충돌 관측은 finding을 재개하거나 재검토 상태로 돌린다.
+1. 발견 전에 로컬 audit intake에 제외와 증거, 조직 식별자, 관계사 경계, 제3자 상태, owner/escalation 참조, 추가 승인 행위를 기록한다. [examples/audit-intake.example.json](examples/audit-intake.example.json)과 [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json)을 쓴다. 이는 실행 scope가 아니며 네트워크 권한을 주지 않는다. `third_parties.status="unknown"`은 기록된 공백이고, 제3자를 추측해 소유로 올리지 않는다.
+2. 계약·자산·처리자/수탁자 대장의 관리자 export를 받고, 실행 scope를 승인한 다음 candidate를 import한다. owner-inventory 자격증명은 별도 권한 경로로 둔다.
+3. intake에서 identifier와 오프라인 `search-plan`을 만든다.
+4. `doctor --reference .`로 명령이 실제로 불러온 runtime root를 확인하고 검수한 `.` source tree와 비교한다.
+5. `channels-doctor`로 승인된 fresh positive control을 실행한 뒤에만 `github-discover` 또는 `search-plan`을 실행한다. 대조군 성공은 회사 전체 발견 완료가 아니다.
+6. 측정 전에 소유를 확증한다. 비공개 저장소의 공개 배포는 계속 남을 수 있다.
+7. 제한된 익명 probe를 실행한다. 실패와 부분 캡처는 `INDETERMINATE`다.
+8. 정적 HTML로 내용 질문에 답할 수 없을 때만 브라우저를 쓴다. `brokered_anonymous_browser`는 새 context와 정책 제한 transport broker로 승인된 GET document/script/stylesheet/XHR/fetch를 처리한다. browser credential, cookie, auth, referrer를 제거하고 Service Worker를 끈다. WebSocket server 연결을 막고 message는 local sink에서 버리며 popup을 닫고 download를 거부한다. 앞선 DOM 검토에서 candidate가 없을 때만 제한된 live `input`, `textarea`, `select` 값을 검사한다. canvas pixel, serialized snapshot 밖의 shadow DOM, JavaScript heap, interaction 이후 상태와 미지원 동작은 측정하지 않는다. password input은 `LOGIN_FORM_INDICATOR`일 뿐 `PUBLIC_UI`, 보호, 민감으로 자동 판정하지 않는다. dead proxy와 blocked host resolving으로 Chromium을 실행해 지원되는 page request가 broker를 거치게 한다. 이 통제는 observer 경계이며 OS firewall이나 전체 egress 보장이 아니다.
+9. 최소 증거로만 내용을 확정한다. 개인정보나 사용 가능한 비밀이 보이면 중단한다. 승인된 소유자 측 확인 전까지 비밀의 실제 유효성은 unknown이다.
+10. 긴급 격리, 로그 보존, 비밀 회전, 서비스 연속성을 함께 판단한다. SSO 뒤에서도 애플리케이션 권한 검사를 유지한다.
+11. 원 URL과 알려진 모든 alias의 새 익명 observation, 대조군, 선언한 잔존 범위의 증거가 완료 조건을 충족할 때 종결한다. ledger asset과 alias를 opaque locator `target_id`, `policy_id`에 바인딩하고 불일치를 거부한다. 잔존을 확인하지 못했으면 `partially_closed`다. 종결 뒤 현재 `BODY_SERVED`, unknown/incomplete 결과, 같은 시각의 충돌 관측은 finding을 재개하거나 재검토 상태로 돌린다.
 
 소유자 API는 모든 cursor를 끝까지 처리하고 권한·rate limit·truncation·시간 범위 공백을 기록한다. 정규화 JSON 가져오기는 source, retrieval time, owner scope, completeness를 보존한다. 채널 실패로 0행이 나온 것은 자산 0건이 아니다.
 
@@ -88,6 +92,14 @@ SQLite 대장은 append-only observation/event, alias, control, proof reference,
 
 `search-plan`은 제한된 재개 가능 manifest를 만든다. 수행자가 입력한 alias와 생성된 이름 변형을 구분하고, 실행하지 않은 작업은 `deferred`로 표시하며, 모든 필수 channel이 완료되거나 사유와 함께 `not_applicable`이 될 때까지 `PARTIAL`을 보고한다. `COMPLETE`는 선언한 plan과 channel coverage만 뜻하며 발견이 완전하다는 증거가 아니다. `discover`와 search-plan은 locator store로 정확한 후보 URL을 공유 plan/output 밖에 둘 수 있다. owner inventory의 locator-store handoff도 `--locator-store`로 같은 비공개-store 방식을 따르며 provider inventory metadata를 측정 승인으로 취급하지 않는다.
 
+## 발견 채널 상태 대조군
+
+`channels-doctor`는 로컬 positive control을 대상으로 scope 승인된 익명 관측을 새로 실행하고 config와 scope가 유효하면 report를 저장한다. JSON config는 `max_age_seconds`, 고유한 `channel_id`, `control_id`, `url`, 그리고 `expect.kind="json_pointer"` (`pointer`, `equals`) 또는 `expect.kind="body_contains"` (`value`)를 받는다. [examples/channel-health.example.json](examples/channel-health.example.json)을 참고한다. `/items/0/login`, `/items/0/full_name`처럼 구체적인 JSON-pointer 식별 검증을 우선하고, 일반적인 body marker는 false positive를 낼 수 있다. `OK`에는 HTTP 200, complete capture, 기대값 일치가 모두 필요하다. 예기치 않은 status, incomplete capture, mismatch는 `DEGRADED`, 도달 불가 또는 HTTP 404/410 control은 `DEAD`다. CLI는 바뀐 channel 행만 stdout에 내고 전체 report는 저장한다.
+
+report는 형식과 freshness를 검사하는 로컬 운영 근거다. 전자서명이나 원격 attestation이 아니며 로컬 파일을 바꿀 수 있는 수행자에 대한 보안 경계도 아니다. 실제 GitHub 실행 때마다 현재 시각에 fresh control이 필요하다. repository 목록에는 `github-repositories`, 검색 seed에는 결과에서 repository 목록 확장이 가능하므로 `github-repositories`, `github-user-search`, `github-repository-search` 세 control이 모두 필요하다. API family 하나의 건강은 다른 family의 건강을 뜻하지 않는다. 외부 search-plan import에는 그 `observed_at` 시점에 유효한 channel-health가 있어야 하며, 그 뒤 만료되었다고 과거의 유효 import가 지워지지 않는다. synthetic test input은 실제 채널 검증이 아니다.
+
+GitHub control은 `api.github.com` family에 맞춘다. 차례로 repository detail 또는 `/users|orgs/<owner>/repos`, `/search/users`, nonempty `q`가 있는 `/search/repositories`를 쓴다. 다른 endpoint의 일반 marker로 대신할 수 없고 detail control은 pagination·permission을 보장하지 않는다.
+
 ## 저장소 구성
 
 | 경로 | 용도 |
@@ -100,6 +112,7 @@ SQLite 대장은 append-only observation/event, alias, control, proof reference,
 | [ko/ops/evidence.md](ko/ops/evidence.md) | 증거 위생과 provenance |
 | [ko/ops/remediate.md](ko/ops/remediate.md) | 격리와 재측정 |
 | [ko/surfaces/inventory.md](ko/surfaces/inventory.md) | 커버리지 체크리스트 |
+| [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json) | 발견 전 로컬 intake 형식 |
 | [ko/assets/ledger-template.md](ko/assets/ledger-template.md) | 사람이 읽는 내보내기 |
 | [tools/idgen.py](tools/idgen.py) | 오프라인 후보 생성기 |
 

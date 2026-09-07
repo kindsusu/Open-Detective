@@ -1,9 +1,68 @@
 import contextlib, io, json, tempfile, unittest, urllib.parse
+from datetime import datetime
 from pathlib import Path
-from sudetect.search_plan import create_plan, import_results, main, plan_status, run_plan
+from sudetect.search_plan import _health_requirements, create_plan, import_results, main, plan_status, run_plan
 from tests.test_github_discovery import repo
+from tests.health_fixtures import health_report
 
 class SearchPlanTests(unittest.TestCase):
+    def test_health_requirements_are_channel_specific_and_fail_closed(self):
+        self.assertEqual(["github-repositories"], _health_requirements({"channel":"github", "kind":"known_url"}))
+        self.assertEqual(["github-user-search", "github-repository-search", "github-repositories"],
+                         _health_requirements({"channel":"github", "kind":"search_query"}))
+        self.assertEqual(["web"], _health_requirements({"channel":"web", "kind":"search_query"}))
+        self.assertEqual(["documents"], _health_requirements({"channel":"documents", "kind":"search_query"}))
+        self.assertEqual(["certificate_transparency"], _health_requirements({"channel":"certificate_transparency", "kind":"domain_seed"}))
+        self.assertEqual(["invalid-channel"], _health_requirements({"channel":"untrusted", "kind":"search_query"}))
+
+    def test_external_import_requires_its_own_health_at_observation_time(self):
+        plan=create_plan(scope_id="external-health",company_en="Starlight Lab",query_budget=1,account_budget=1)
+        job=next(job for job in plan["jobs"] if job["channel"]=="web")
+        observed="2026-01-01T00:00:00Z"
+        row={"work_id":job["work_id"],"state":"completed","result_count":0,"pages":1,
+             "end_condition":"provider_empty","observed_at":observed,"source_ref":"fixture:web"}
+        current=datetime.fromisoformat(observed.replace("Z","+00:00"))
+        valid=import_results(plan,{"jobs":[row],"channel_health":health_report("web",now=current)})
+        self.assertEqual("completed",next(job for job in valid["jobs"] if job["work_id"]==row["work_id"])["state"])
+        wrong=import_results(plan,{"jobs":[row],"channel_health":health_report("documents",now=current)})
+        changed=next(job for job in wrong["jobs"] if job["work_id"]==row["work_id"])
+        self.assertEqual("failed",changed["state"]); self.assertEqual("CHANNEL_HEALTH_MISSING",changed["error_code"])
+    def test_live_plan_requires_health_without_mutating_checkpoint(self):
+        plan=create_plan(scope_id="health-gate",company_en="Starlight",query_budget=1,account_budget=1)
+        before=json.loads(json.dumps(plan))
+        with self.assertRaisesRegex(ValueError,"CHANNEL_HEALTH_REQUIRED"):
+            run_plan(plan)
+        self.assertEqual(before,plan)
+
+    def test_expired_second_batch_preserves_history_and_deferred_state(self):
+        from unittest.mock import patch
+        plan=create_plan(scope_id="expiry-history",company_en="Starlight",query_budget=1,account_budget=1)
+        query=next(job for job in plan["jobs"] if job["kind"]=="search_query" and job["state"]=="planned")
+        account=next(job for job in plan["jobs"] if job["kind"]=="account_candidate" and job["state"]=="planned")
+        account.update(state="deferred", deferred_reason="fixture-deferred")
+        # Keep only query then deferred account runnable in run-until-budget.
+        for job in plan["jobs"]:
+            if job not in (query, account):
+                job.update(state="not_applicable", not_applicable_reason="fixture")
+        old_attempt={"attempted_at":"2026-01-01T00:00:00Z", "state":"completed", "method":"import"}
+        query["attempts"]=[old_attempt]
+        result={"schema_version":"1.0","provider":"github_public","scope_id":"expiry-history",
+                "status":"COMPLETE","observed_at":"2026-09-07T00:00:00Z","candidates":[],"accounts":[],
+                "edges":[],"errors":[],"coverage":{"search_users:1":{"state":"COMPLETE","pages":1,"items":0,
+                "end_condition":"page_exhausted","error_code":None},"search_repositories:1":{"state":"COMPLETE","pages":1,
+                "items":0,"end_condition":"page_exhausted","error_code":None},"totals":{"requests":2}},"methods_executed":[]}
+        checks=iter(([], [], ["CHANNEL_HEALTH_STALE"]))
+        with patch("sudetect.search_plan._validate_channel_health", side_effect=lambda *_args, **_kwargs: next(checks)), \
+             patch("sudetect.search_plan.github_discover", return_value=result) as discovered:
+            out=run_plan(plan, request_budget=5, max_batches=5, resume_all_deferred=True,
+                         channel_health={"controls":[]})
+        self.assertEqual(1,discovered.call_count)
+        unchanged=next(job for job in out["jobs"] if job["work_id"]==account["work_id"])
+        self.assertEqual("deferred",unchanged["state"]); self.assertEqual("fixture-deferred",unchanged["deferred_reason"])
+        retained=next(job for job in out["jobs"] if job["work_id"]==query["work_id"])
+        self.assertEqual(old_attempt,retained["attempts"][0])
+        self.assertEqual("channel_health_failed",out["last_execution"]["stop_reason"])
+
     def test_plan_separates_queries_accounts_and_preserves_deferred(self):
         plan=create_plan(scope_id="synthetic",company_ko="별빛 연구소",company_en="Starlight Research Lab",
                          aliases=["Star Light"],industry=["research"],functions=["docs"],query_budget=2,account_budget=2)

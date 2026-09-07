@@ -30,14 +30,20 @@ python -m venv .venv
 
 `examples/scope.example.json`은 의도적으로 만료된 예제다. ignored `_local/`에 복사하여 실제 소유 증거, 정확한 origin과 경로, 유효기간으로 바꾼 뒤 사용한다. 토큰은 지정한 환경 변수로만 인벤토리 프로세스에 제공한다. 검색·표적 브라우저에 관리 API 토큰을 전달하지 않는다.
 
+발견 전에는 `examples/audit-intake.example.json`을 `_local/`로 복사해 `schemas/audit-intake.schema.json`에 맞춰 작성한다. 이는 제외 URL과 증거, 조직 식별자, 관계사·제3자 경계, escalation, 추가 승인 행위를 받는 intake이며 실행 scope나 네트워크 grant가 아니다. 계약·자산·처리자/수탁자 대장의 관리자 export → 실행 scope 승인 → candidate import 순서를 유지한다. `third_parties.status="unknown"`은 소유로 추측하지 않는 공백이다.
+
 ```powershell
 .\.venv\Scripts\python.exe -m sudetect probe --scope _local/scope.json https://approved.example/
 .\.venv\Scripts\python.exe -m sudetect browser https://approved.example/ --scope _local/scope.json --duration 3
 .\.venv\Scripts\python.exe -m sudetect inventory --provider vercel --scope-id TEAM_ID --token-env VERCEL_TOKEN
 .\.venv\Scripts\python.exe -m sudetect inventory --provider github --scope-id ORG --token-env GITHUB_TOKEN
 .\.venv\Scripts\python.exe -m sudetect discover --input examples/discovery-import.json --scope-id fixture-team
+.\.venv\Scripts\python.exe -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
+.\.venv\Scripts\python.exe -m sudetect search-plan run --plan _local/plan.json --channel-health _local/channel-health.json
 .\.venv\Scripts\python.exe -m sudetect ledger --db _local/audit.sqlite --help
 ```
+
+`channels-doctor`는 local config에 있는 scope 승인 positive control을 매번 관측한다. HTTP 200만으로는 `OK`가 아니며 complete capture와 기대 JSON pointer/body marker 일치가 필요하다. `OK`/`DEGRADED`/`DEAD` report는 로컬 운영 근거의 형식·freshness 검사일 뿐 전자서명이나 원격 attestation이 아니고, 로컬 파일을 수정할 수 있는 수행자에 대한 보안 경계도 아니다. 실제 GitHub 실행은 repository 목록의 `github-repositories`, 검색의 `github-user-search`와 `github-repository-search`를 각각 fresh하게 요구한다. synthetic test input은 실제 채널 검증이 아니다.
 
 `discover` 예제는 CT 채널이 PLANNED이므로 PARTIAL이 정상이다. 실제 검색 결과를 직접 수집해 같은 입력 형식으로 가져온다. 조회 실패·미실행·권한 공백을 성공 0건으로 처리하지 않는다. `search-plan`은 이 상태를 재개 가능한 manifest로 보존한다. 수행자가 준 alias는 명시적 검색 씨앗일 뿐이며, alias만으로 발견이 충분하다고 가정하지 않는다. 국문 복합명 원형·띄어쓰기·브랜드·업종, 영문 브랜드 단독·업종 결합/분리 표기를 제한된 우선순위로 별도 생성하고, 넓은 단어 후보는 뒤로 미룬다.
 

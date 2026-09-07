@@ -10,6 +10,7 @@ def main(argv=None):
         "discover": "discovery", "github-discover": "github_discovery",
         "ledger": "ledger", "analyze": "classifiers",
         "search-plan": "search_plan", "locators": "locators", "doctor": "doctor",
+        "channels-doctor": "channel_health",
     }
     if not args or args[0] in ("-h", "--help"):
         print("usage: python -m sudetect {" + ",".join(commands) + "} [options]")

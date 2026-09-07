@@ -15,12 +15,13 @@ python -m sudetect probe --scope scope.json <url>
 python -m sudetect browser <url> --scope scope.json --duration 3
 python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
 python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect github-discover --scope-id TEAM --account approved-account
 python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<수행자 입력>"
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60
-python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 python -m sudetect doctor --reference .
+python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
+python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 python -m sudetect ledger --db audit.sqlite due
 ```
 
@@ -43,6 +44,16 @@ confidence: confirmed | probable | unknown
 상태는 요청 하나의 관측이다. `BODY_SERVED`는 민감한 내용이라는 뜻이 아니다. `SENSITIVE_CONTENT_CONFIRMED`에는 연결된 관측, 실제 최소 증거, 소유 증거, 익명 조건이 필요하다. password input은 `LOGIN_FORM_INDICATOR`일 뿐 `PUBLIC_UI`, 보호, 민감으로 자동 판정하지 않는다. 거부된 API는 `ACCESS_DENIED_OBSERVED`다. IdP 리다이렉트는 그 경로의 `AUTH_REDIRECT_OBSERVED`만 뒷받침한다.
 
 부분 캡처에는 `capture_complete=false`, 검사 바이트 수, 중단 이유를 적는다. 전체 digest와 prefix digest를 구분한다. 지원하지 않는 브라우저 transport나 관측하지 못한 Service Worker/WebSocket은 `INDETERMINATE`이며 전체 egress 통제를 주장하지 않는다.
+
+## intake와 단계 게이트
+
+발견 전에 `examples/audit-intake.example.json`, `schemas/audit-intake.schema.json`으로 로컬 `audit-intake`를 기록한다. 제외와 증거, 국문/영문 식별자·alias·업종·기능·known URL·domain, 관계사 경계, 제3자 선언, owner/escalation 참조, 추가 승인 행위를 담는다. 실행 scope나 네트워크 grant가 아니다. `third_parties.status="unknown"`은 공백이며 추측으로 소유를 만들지 않는다.
+
+순서는 (1) 경계·제외·소유 참조·에스컬레이션 intake, (2) 오프라인 identifier와 search plan, (3) 명령이 실제로 불러온 runtime root를 보고 검수한 `.` source tree와 비교하는 `doctor --reference .`, (4) scope 승인 fresh positive control을 `channels-doctor`로 실행한 뒤 공개 GitHub 발견이다. 계약·자산·처리자/수탁자 대장의 관리자 export를 받은 다음 실행 scope를 승인하고 candidate를 import한다. owner-inventory credential은 별도 권한 경로로 유지한다.
+
+`channels-doctor`는 config와 scope가 유효한 실행에서 report를 저장하고 바뀐 channel 행만 stdout에 출력한다. HTTP 200, complete capture, 설정한 `json_pointer` 또는 `body_contains` 기대값 일치가 모두 있어야 `OK`다. 일반 body marker보다 구체적인 JSON-pointer 식별 검증을 우선한다. 도달했지만 실패하면 `DEGRADED`, 도달 불가 또는 HTTP 404/410이면 `DEAD`다. 이 report는 형식과 freshness를 검사하는 로컬 운영 근거이며 전자서명·원격 attestation·로컬 파일 변경 가능 수행자에 대한 보안 경계가 아니다. 실제 GitHub 작업은 channel별 fresh control을 요구한다. repository 목록은 `github-repositories`, 검색 seed는 repository 목록 확장이 가능하므로 `github-repositories`, `github-user-search`, `github-repository-search`가 모두 필요하다. import 결과는 `observed_at`에 유효한 health가 필요하고 이후 만료가 과거 결과를 지우지 않는다. synthetic input은 실제 control 증명이 아니며 control 성공도 회사 전체 발견 완료가 아니다.
+
+GitHub control ID는 `api.github.com`에 맞춘다. 차례로 repository detail 또는 `/users|orgs/<owner>/repos`, `/search/users`, `/search/repositories?q=…`를 쓴다. 다른 endpoint marker로 대신할 수 없고 detail control은 pagination·permission을 보장하지 않는다.
 
 ## 인벤토리, 발견, 브라우저
 

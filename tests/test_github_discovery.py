@@ -1,10 +1,15 @@
 import contextlib
 import io
 import json
+import tempfile
 import unittest
 import urllib.parse
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from sudetect.github_discovery import DiscoveryError, GitHubBroker, discover, main
+from sudetect.github_discovery import DiscoveryError, GitHubBroker, _required_health_channels, discover, main
+from tests.health_fixtures import health_report
 
 
 def repo(owner, name, *, pages=False, homepage=None, owner_id=None):
@@ -19,6 +24,59 @@ def repo(owner, name, *, pages=False, homepage=None, owner_id=None):
 
 
 class GitHubDiscoveryTests(unittest.TestCase):
+    def test_required_health_channels_are_ordered_and_deduplicated(self):
+        required=_required_health_channels(seeds=["fixture"], accounts=["fixture"],
+                                           known_urls=["https://github.com/fixture/site"])
+        self.assertEqual(["github-repositories", "github-user-search", "github-repository-search"], required)
+    def test_live_discovery_requires_health_before_any_request(self):
+        calls=[]
+        result=discover("health-required", accounts=["fixture-account"],
+                        fetch=None, max_requests=1)
+        self.assertEqual("FAILED",result["status"])
+        self.assertEqual(["CHANNEL_HEALTH_REQUIRED"],result["errors"])
+        self.assertEqual(0,result["coverage"].get("totals",{}).get("requests",0))
+
+    def test_stale_or_dead_health_blocks_live_transport(self):
+        from unittest.mock import patch
+        for mutation, expected in ((lambda report: report.update(expires_at="2020-01-01T00:00:00Z"), "CHANNEL_HEALTH_STALE"),
+                                   (lambda report: report["controls"][0].update(status="DEAD"), "CHANNEL_HEALTH_DEAD")):
+            with self.subTest(expected=expected):
+                report=health_report("github-repositories"); mutation(report)
+                with patch("sudetect.github_discovery.urllib.request.build_opener") as opener:
+                    result=discover("blocked-health", accounts=["fixture-account"], channel_health=report, max_requests=1)
+                self.assertEqual("FAILED",result["status"]); self.assertIn(expected,result["errors"])
+                opener.assert_not_called()
+
+    def test_seed_requires_repository_control_for_expansion(self):
+        report=health_report("github-user-search", "github-repository-search")
+        result=discover("subchannel-required", seeds=["fixture"], channel_health=report, max_requests=1)
+        self.assertEqual("FAILED",result["status"])
+        self.assertEqual(["CHANNEL_HEALTH_MISSING"],result["errors"])
+
+    def test_health_expiring_before_second_broker_get_sends_one_request(self):
+        from unittest.mock import patch
+        class Raw:
+            status=200; headers={}
+            def read(self, _limit): return b"[]"
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+        class Opener:
+            def __init__(self): self.calls=0
+            def open(self, *_args, **_kwargs): self.calls+=1; return Raw()
+        opener=Opener(); checks=iter(([], ["CHANNEL_HEALTH_STALE"]))
+        broker=GitHubBroker(max_requests=2, health_check=lambda: next(checks))
+        url="https://api.github.com/users/fixture-user/repos?type=owner&sort=full_name&direction=asc&per_page=100&page=1"
+        with patch("sudetect.github_discovery.urllib.request.build_opener", return_value=opener):
+            broker.get(url)
+            with self.assertRaisesRegex(DiscoveryError, "CHANNEL_HEALTH_STALE"):
+                broker.get(url)
+        self.assertEqual(1,opener.calls); self.assertEqual(1,broker.requests_used)
+
+    def test_injected_transport_is_marked_synthetic(self):
+        result=discover("synthetic-health", accounts=["fixture-account"], max_requests=1,
+                        fetch=lambda _url,_headers:(200,[],{}))
+        self.assertTrue(result["synthetic"])
+
     def test_known_detail_runs_before_paginated_search_exhausts_requests(self):
         calls=[]
         def fetch(url,_headers):
@@ -461,8 +519,11 @@ class GitHubDiscoveryTests(unittest.TestCase):
 
     def test_standalone_cli_emits_json(self):
         stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            code = main(["--scope-id", "scope-12", "--max-requests", "0"])
+        with tempfile.TemporaryDirectory() as td:
+            path=Path(td)/"health.json"
+            path.write_text(json.dumps(health_report("github-repositories")),encoding="utf-8")
+            with contextlib.redirect_stdout(stdout):
+                code = main(["--scope-id", "scope-12", "--max-requests", "0", "--channel-health",str(path)])
         self.assertEqual(2, code)
         self.assertEqual("FAILED", json.loads(stdout.getvalue())["status"])
 
