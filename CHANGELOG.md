@@ -8,6 +8,7 @@
 - Added bounded source-word initialisms, explicit industry-tail brand compounds, and multiword alias boundaries to offline identifier generation. Derived abbreviations remain lower-priority candidates, not ownership evidence.
 - Fixed anonymous GitHub numeric-ID pagination, scoped 404 observations, case-insensitive account deduplication, and rate-limit termination. Repository retention no longer depends on available account-expansion slots.
 - Added checkpointed multi-batch discovery, explicit total/per-job request budgets, separate failed-work retries, preserved batch and attempt provenance, and next-work diagnostics. Interleaved name/industry/function/numeric candidates improve bounded recall without treating similarity as ownership.
+- Refined bounded plan scheduling to round-robin full identity, industry context, and function context while preserving order within each family. Short or broad work remains later, identity/context account candidates alternate one-for-one, and ordinary runs do not implicitly promote existing deferred work.
 - Analyze already-captured truncated response prefixes for provisional signals while keeping capture and analysis incomplete.
 
 - Added bounded `search-plan`, private locator-store handoff, locator/policy-bound ledger rechecks, and read-only `doctor` runtime/source parity checks. Exact locators remain local; a repository push does not update an installed runtime.

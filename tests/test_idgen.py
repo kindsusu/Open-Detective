@@ -116,6 +116,20 @@ class IdgenTests(unittest.TestCase):
         self.assertLess(rows.index(next(row for row in rows if row["query"] == "Galaxy dashboard")),
                         rows.index(next(row for row in rows if row["query"] == "Galaxy")))
 
+    def test_narrow_query_families_take_deterministic_early_turns(self):
+        from sudetect.identifiers import generate_search_queries, round_robin_narrow_queries
+        rows = generate_search_queries(en="Atlas Systems", aliases=["Atlas Cloud", "Atlas Data"],
+                                       industry=["hosting", "analytics"], functions=["dashboard", "portal"])
+        first = [(row["query"], row["rationale"]) for row in rows[:6]]
+        self.assertEqual("full-name:official-english", first[0][1])
+        self.assertEqual("narrow:brand+industry", first[1][1])
+        self.assertEqual("narrow:brand+function", first[2][1])
+        self.assertTrue(all(row["rationale"].startswith("full-name:") or row["rationale"].startswith("narrow:")
+                            for row in rows[:6]))
+        self.assertEqual(rows, round_robin_narrow_queries(rows))
+        original = [{"query": "x", "rationale": "narrow:unknown"}, {"query": "y", "rationale": "broad:test"}]
+        self.assertEqual(original, round_robin_narrow_queries(original))
+
     def test_korean_rentcar_spellings_and_platform_safe_candidates(self):
         for korean_name in ("은하렌터카", "은하 렌트카"):
             with self.subTest(korean_name=korean_name):

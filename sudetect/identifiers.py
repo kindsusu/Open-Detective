@@ -8,11 +8,44 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Iterable
+from typing import Iterable, Mapping, TypeVar
 
 from .idgen import (FUNCTION, TARGET_PATTERNS, TAILS_KO, generate, initials, main,
                          normalize_term, positive_int, romanize, selftest, stems,
                          validate_target_candidate, _strip_korean_legal_boundary)
+
+
+_QueryRow = TypeVar("_QueryRow", bound=Mapping[str, object])
+
+
+def round_robin_narrow_queries(rows: Iterable[_QueryRow]) -> list[_QueryRow]:
+    """Keep full identity first while giving each narrow family an early turn.
+
+    This is only an ordering operation: rows, their exact query text, and their
+    within-family order are retained.  Short and broad work remains after the
+    full/narrow sequence.
+    """
+    full: list[_QueryRow] = []
+    industry: list[_QueryRow] = []
+    function: list[_QueryRow] = []
+    tail: list[_QueryRow] = []
+    for row in rows:
+        rationale = row.get("rationale", row.get("generation_rationale", ""))
+        if not isinstance(rationale, str):
+            tail.append(row)
+        elif rationale.startswith("full-name:"):
+            full.append(row)
+        elif rationale in {"narrow:brand+industry", "narrow:korean-brand+compound-industry"}:
+            industry.append(row)
+        elif rationale == "narrow:brand+function":
+            function.append(row)
+        else:
+            tail.append(row)
+    ordered: list[_QueryRow] = []
+    for index in range(max(len(full), len(industry), len(function))):
+        for family in (full, industry, function):
+            if index < len(family): ordered.append(family[index])
+    return ordered + tail
 
 
 def generate_identifiers(*, ko: str = "", en: str = "", aliases: Iterable[str] = (),
@@ -24,12 +57,11 @@ def generate_identifiers(*, ko: str = "", en: str = "", aliases: Iterable[str] =
 
 def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str] = (),
                             industry: Iterable[str] = (), functions: Iterable[str] = ()) -> list[dict[str, str]]:
-    """Return ordered full-name, narrow, short-name, and broad search phrases.
+    """Return full/narrow round-robin, then short-name and broad search phrases.
 
     ``rationale`` is intentionally an explicit query-classification field.  Search
-    planners preserve its order, so a small budget first spends requests on the
-    written company name and brand-plus-context phrases, before generic brand or
-    industry terms that may describe unrelated organizations.
+    planners preserve its order, so a small budget rotates available full-name,
+    industry, and function context work before generic brand or industry terms.
     """
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -108,9 +140,9 @@ def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str
             add("".join(parts[1:]), "broad:english-industry-joined")
     for term in query_industry:
         add(term, "broad:operator-industry")
-    return rows
+    return round_robin_narrow_queries(rows)
 
 
 __all__ = ["FUNCTION", "TARGET_PATTERNS", "generate", "generate_identifiers",
-           "generate_search_queries", "initials", "main", "normalize_term",
+           "generate_search_queries", "round_robin_narrow_queries", "initials", "main", "normalize_term",
            "positive_int", "romanize", "selftest", "stems", "validate_target_candidate"]

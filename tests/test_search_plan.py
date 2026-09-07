@@ -75,6 +75,68 @@ class SearchPlanTests(unittest.TestCase):
         self.assertTrue(any(j["kind"]=="search_query" and j["value"]=="별빛 연구소" for j in plan["jobs"] if j["channel"]=="web"))
         self.assertTrue(any(j["channel"]=="certificate_transparency" and j["state"]=="not_applicable" for j in plan["jobs"]))
 
+    def test_function_narrow_query_runs_in_first_three_query_turns(self):
+        plan=create_plan(scope_id="round-robin",company_en="Atlas Systems",
+                         aliases=["Atlas Cloud", "Atlas Data"], industry=["hosting", "analytics"],
+                         functions=["dashboard", "portal"], query_budget=3, account_budget=1)
+        observed_queries=[]
+        def fetch(url,_headers):
+            parsed=urllib.parse.urlsplit(url)
+            if parsed.path.startswith("/search/"):
+                query=urllib.parse.parse_qs(parsed.query)["q"][0]
+                observed_queries.append(query)
+                if parsed.path=="/search/repositories":
+                    rows=[repo("atlas-org","dashboard-repo")] if query.startswith("Atlas dashboard ") else []
+                    return 200,{"items":rows,"total_count":len(rows),"incomplete_results":False},{}
+                return 200,{"items":[],"total_count":0,"incomplete_results":False},{}
+            if parsed.path.startswith("/users/"): return 200,[],{}
+            self.fail(url)
+        result=run_plan(plan,fetch=fetch,request_budget=10,max_batches=4)
+        query_turns=[]
+        for value in observed_queries:
+            seed=value.split(" in:",1)[0]
+            if seed not in query_turns: query_turns.append(seed)
+        self.assertIn("Atlas dashboard",query_turns[:3])
+        candidates=[candidate["slug"] for run in result["runs"] for candidate in run["result"]["candidates"]]
+        self.assertIn("atlas-org/dashboard-repo",candidates)
+
+    def test_legacy_query_order_is_reselected_without_mutating_history_or_ids(self):
+        plan=create_plan(scope_id="legacy-query-order",company_en="Atlas Systems",
+                         aliases=["Atlas Cloud", "Atlas Data"], industry=["hosting", "analytics"],
+                         functions=["dashboard", "portal"], query_budget=1, account_budget=1)
+        github_queries=[job for job in plan["jobs"] if job["channel"]=="github" and job["kind"]=="search_query"]
+        completed=github_queries[0]
+        completed.update(state="completed", result_count=0, pages=2, end_condition="page_exhausted",
+                         observed_at="2026-01-01T00:00:00Z", source_ref="fixture:historic",
+                         attempts=[{"attempted_at":"2026-01-01T00:00:00Z", "state":"completed"}])
+        for job in github_queries[1:]:
+            job.update(state="deferred", deferred_reason="legacy-order")
+        for job in plan["jobs"]:
+            if job["channel"]=="github" and job["kind"]=="account_candidate":
+                job.update(state="not_applicable", not_applicable_reason="fixture")
+        # Simulate a persisted legacy order where all industry rows precede functions.
+        plan["jobs"]=[job for job in plan["jobs"] if job not in github_queries] + [completed] + sorted(
+            github_queries[1:], key=lambda job: "function" in job["generation_rationale"])
+        before_ids={job["work_id"] for job in plan["jobs"]}
+        seen=[]
+        def fetch(url,_headers):
+            parsed=urllib.parse.urlsplit(url)
+            if parsed.path.startswith("/search/"):
+                query=urllib.parse.parse_qs(parsed.query)["q"][0]; seen.append(query)
+                rows=[repo("atlas-org","dashboard-repo")] if query.startswith("Atlas dashboard ") and parsed.path=="/search/repositories" else []
+                return 200,{"items":rows,"total_count":len(rows),"incomplete_results":False},{}
+            self.fail(url)
+        result=run_plan(plan,fetch=fetch,resume_all_deferred=True,request_budget=6,max_batches=3)
+        query_turns=[]
+        for value in seen:
+            seed=value.split(" in:",1)[0]
+            if seed not in query_turns: query_turns.append(seed)
+        self.assertIn("Atlas dashboard",query_turns[:3])
+        current=next(job for job in result["jobs"] if job["work_id"]==completed["work_id"])
+        self.assertEqual("fixture:historic",current["source_ref"])
+        self.assertEqual([{"attempted_at":"2026-01-01T00:00:00Z", "state":"completed"}],current["attempts"])
+        self.assertTrue(before_ids.issubset({job["work_id"] for job in result["jobs"]}))
+
     def test_ct_uses_only_explicit_domain_seed(self):
         plan=create_plan(scope_id="ct-fixture",company_en="Starlight Lab",domains=["starlight.example"])
         ct=[j for j in plan["jobs"] if j["channel"]=="certificate_transparency"]

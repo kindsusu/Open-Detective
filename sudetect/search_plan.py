@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .github_discovery import (discover as github_discover, _validate_channel_health)
-from .identifiers import generate_identifiers, generate_search_queries, validate_target_candidate
+from .identifiers import (generate_identifiers, generate_search_queries,
+                          round_robin_narrow_queries, validate_target_candidate)
 
 _NS = uuid.UUID("a63cb58e-29d3-450c-8a71-1e4ad86dbe38")
 CHANNELS = ("github", "web", "certificate_transparency", "documents")
@@ -215,7 +216,7 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         if job.get("kind")=="search_query": return 3
         return 99
     known=sorted((j for j in eligible if priority(j)==0),key=priority)
-    queries=[j for j in eligible if priority(j)==1]
+    queries=round_robin_narrow_queries(j for j in eligible if priority(j)==1)
     accounts=[j for j in eligible if priority(j)==2 and j.get("generation_rationale")!="github-search-discovered-account"]
     interleaved=[]
     for index in range(max(len(queries),len(accounts))):

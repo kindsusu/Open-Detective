@@ -68,7 +68,7 @@ GitHub는 다음 페이지 Link에 계정명 대신 숫자 사용자 ID를 넣�
 
 ## 명시적 예산으로 검색 재개
 
-일반 `search-plan run`은 planned 작업을 총 요청 예산(기본 20회)과 작업별 한도(기본 6회) 안에서 실행한다. 알려진 URL을 우선하고 이름·업무 문맥 쿼리와 식별자 계정 후보를 번갈아 조회하며, 넓은 단어와 검색에서 나온 계정 확장은 뒤에 둔다. 한도에 닿은 쿼리는 미완료로 남긴다. 의도적으로 더 깊이 재조회할 때는 `--per-job-request-budget`을 최대 30까지 늘린다.
+일반 `search-plan run`은 planned 작업을 총 요청 예산(기본 20회)과 작업별 한도(기본 6회) 안에서 실행한다. 알려진 URL을 우선한다. 전체 identity, industry 문맥, function 문맥 query family를 번갈아 조회하되 각 family 안에서는 순서를 보존하며, 짧거나 넓은 단어와 검색에서 나온 계정 확장은 뒤에 둔다. eligible query와 identity account 후보는 1:1로 번갈아 처리한다. 이는 제한된 heuristic이므로 전체 표기가 지연될 수 있으며 exhaustive 또는 최적 recall을 뜻하지 않는다. 한도에 닿은 쿼리는 미완료로 남긴다. 의도적으로 더 깊이 재조회할 때는 `--per-job-request-budget`을 최대 30까지 늘린다.
 
 ```bash
 python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --per-job-request-budget 6 --max-batches 30 --channel-health _local/channel-health.json
@@ -76,4 +76,4 @@ python -m sudetect search-plan run --plan _local/plan.json --locator-store _loca
 python -m sudetect search-plan status --plan _local/plan.json
 ```
 
-`run-until-budget`은 총예산을 명시해야 하며 deferred GitHub 작업도 순차 검토한다. 일반 `run`에서 보류 작업을 추가하려면 `--resume-query-budget` 또는 `--resume-account-budget`을 지정한다. 실패 작업의 선택은 `--retry-failed`로 별도 제어한다. 선택된 작업은 한 실행에서 최대 한 번 수행한다. rate-limit 응답을 받으면 후속 제공사 요청을 멈추고 실행을 종료하며, 제한 해제까지 기다리거나 무한 재시도하지 않는다. 매 batch가 원자적으로 저장되고 작업별 시도 이력과 원본 batch 메타데이터를 비공개 plan에 보존하며 집계 요청 수는 이 기록과 일치해야 한다. 상태는 최신 작업 근거와 남은 계정 확장을 반영하고 다음 작업 사유를 별도로 제공한다. 과거 실패 이력은 삭제하지 않는다. 작업별 증거가 없는 구형 partial/failed plan은 legacy coverage gap을 유지한다. 기존 plan은 이력으로 보존하고 같은 이름 입력으로 새 version-2 plan을 생성한다. 일부 재시도나 임의 import로 이 공백을 없애지 않는다. 선언된 plan 완료도 인터넷 전체 발견을 증명하지 않는다.
+`run-until-budget`은 총예산을 명시해야 하며 deferred GitHub 작업도 순차 검토한다. 일반 `run`은 기존 deferred 작업을 암묵적으로 올리지 않는다. `run-until-budget` 또는 명시적 `--resume-query-budget` / `--resume-account-budget`을 사용한다. 실패 작업의 선택은 `--retry-failed`로 별도 제어한다. 선택된 작업은 한 실행에서 최대 한 번 수행한다. rate-limit 응답을 받으면 후속 제공사 요청을 멈추고 실행을 종료하며, 제한 해제까지 기다리거나 무한 재시도하지 않는다. 매 batch가 원자적으로 저장되고 작업별 시도 이력과 원본 batch 메타데이터를 비공개 plan에 보존하며 집계 요청 수는 이 기록과 일치해야 한다. 상태는 최신 작업 근거와 남은 계정 확장을 반영하고 다음 작업 사유를 별도로 제공한다. 과거 실패 이력은 삭제하지 않는다. 작업별 증거가 없는 구형 partial/failed plan은 legacy coverage gap을 유지한다. 기존 plan은 이력으로 보존하고 같은 이름 입력으로 새 version-2 plan을 생성한다. 일부 재시도나 임의 import로 이 공백을 없애지 않는다. 선언된 plan 완료도 인터넷 전체 발견을 증명하지 않는다.

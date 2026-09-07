@@ -12,6 +12,8 @@ python tools/idgen.py --selftest
 
 tier 1은 직접 stem, tier 2는 industry affix, tier 3은 generic function affix, tier 4는 numeric suffix다. 여러 단어로 된 공식 영문 표기에서는 입력 단어에 근거한 제한된 복합어 경계(예: `brand-industryword`)와 그 숫자 변형도 보존한다. 순위는 결정론적 검색 순서이며 확률이나 confidence 점수가 아니다. 같은 stem 품질군에서는 직접 이름 다음에 업종·업무명·숫자 변형을 여러 표기 사이에 번갈아 배치한다. 한 긴 이름의 접미사들이 유한한 `--limit`을 모두 차지하지 않도록 하며, tier는 생성 방식이고 실제 실행 순번은 아니다.
 
+생성기와 plan의 eligible-query queue는 전체 identity, industry 문맥, function 문맥 family를 번갈아 처리하되 각 family 안에서는 순서를 보존한다. 짧거나 넓은 형태는 뒤 작업으로 남긴다. 이는 제한된 scheduling heuristic이므로 앞선 전체 표기가 지연될 수 있으며, exhaustive 또는 최적 recall을 주장하지 않는다.
+
 여러 단어 영문 입력에서는 첫 글자만 잇는 약어 하나도 실제 표기보다 낮은 우선순위의 bare-only 후보로 낸다. 이 약어에는 업무명·숫자·구분자를 덧붙이지 않는다. 마지막 업종 단어를 제외한 여러 단어 브랜드의 하이픈 표기는 그 업종 꼬리를 `--industry`로 명시했을 때만 만들며, 여러 단어 operator alias도 입력 단어 경계의 하이픈 표기를 보존한다. 임의 부분문자열이나 추정한 브랜드 철자는 만들지 않는다.
 
 모든 출력은 후보다. owner API, 검증된 DNS/control-plane 관계, repository deployment metadata, 책임 있는 owner record로 확증한다. 유사성, 403/404, 존재하는 account, public page만으로는 부족하다. 확증된 진입점을 찾은 뒤에는 추가 추측보다 team/project/deployment/alias 같은 정확한 relation edge를 우선한다.
