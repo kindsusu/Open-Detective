@@ -128,6 +128,12 @@ def _dynamic_account_job(plan: dict[str,Any], account: str, rationale: str) -> d
     plan["jobs"].append(job)
     return job
 
+def _is_unobserved_expansion_limit(row: Mapping[str,Any]) -> bool:
+    """True only for the provider's zero-request account-expansion marker."""
+    return (row.get("error_code") == "REQUEST_LIMIT_EXCEEDED"
+            and all(type(row.get(field)) is int and row.get(field) == 0
+                    for field in ("requests", "pages", "items")))
+
 def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -> None:
     coverage=result.get("coverage",{})
     observed_at=str(result.get("observed_at") or _now())
@@ -138,6 +144,16 @@ def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -
         job=_dynamic_account_job(plan,account,"github-search-discovered-account")
         key=next((value for value in coverage if value.casefold()==f"list_public_repositories:{account}".casefold()),None)
         if key is not None:
+            marker=coverage[key]
+            if (isinstance(marker,Mapping)
+                    and _is_unobserved_expansion_limit(marker)):
+                # The provider recorded an expansion it could not start.  Keep
+                # this durable work resumable; the raw batch remains its only
+                # provenance, rather than inventing a zero-request attempt.
+                if job.get("state") in {"planned","deferred"}:
+                    job["state"]="deferred"
+                    job["deferred_reason"]="account_expansion_not_observed_request_limit"
+                continue
             # One discover batch can mention an account through several edges.
             latest=(job.get("attempts") or [{}])[-1]
             if latest.get("attempted_at") != observed_at:

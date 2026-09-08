@@ -8,6 +8,7 @@
 - Added bounded source-word initialisms, explicit industry-tail brand compounds, and multiword alias boundaries to offline identifier generation. Derived abbreviations remain lower-priority candidates, not ownership evidence.
 - Fixed anonymous GitHub numeric-ID pagination, scoped 404 observations, case-insensitive account deduplication, and rate-limit termination. Repository retention no longer depends on available account-expansion slots.
 - Added checkpointed multi-batch discovery, explicit total/per-job request budgets, separate failed-work retries, preserved batch and attempt provenance, and next-work diagnostics. Interleaved name/industry/function/numeric candidates improve bounded recall without treating similarity as ownership.
+- Preserved a search-discovered account expansion as deferred when its provider records only a strict zero-request `REQUEST_LIMIT_EXCEEDED` marker. Real failures and prior completed/failed evidence remain unchanged; deferred resumption is explicit.
 - Refined bounded plan scheduling to round-robin full identity, industry context, and function context while preserving order within each family. Short or broad work remains later, identity/context account candidates alternate one-for-one, and ordinary runs do not implicitly promote existing deferred work.
 - Analyze already-captured truncated response prefixes for provisional signals while keeping capture and analysis incomplete.
 

@@ -285,7 +285,7 @@ class SearchPlanTests(unittest.TestCase):
         self.assertEqual("request_budget_exhausted",result["last_execution"]["stop_reason"])
         self.assertGreater(result["last_execution"]["next_work"]["remaining"],0)
 
-    def test_search_discovered_unexpanded_account_becomes_durable_job(self):
+    def test_zero_request_expansion_limit_stays_deferred_and_resumes(self):
         plan=create_plan(scope_id="durable-expansion",company_en="Starlight",query_budget=1,account_budget=1)
         # Mark initial account out of the way so this batch exercises the query.
         for job in plan["jobs"]:
@@ -300,6 +300,66 @@ class SearchPlanTests(unittest.TestCase):
             self.fail(url)
         result=run_plan(plan,fetch=fetch,request_budget=2,max_batches=1)
         expansion=next(j for j in result["jobs"] if j["kind"]=="account_candidate" and j["value"]=="new-account")
+        self.assertEqual("deferred",expansion["state"])
+        self.assertEqual("account_expansion_not_observed_request_limit",expansion["deferred_reason"])
+        self.assertNotIn("attempts",expansion)
+        for job in result["jobs"]:
+            if job is not expansion and job["state"] in {"planned","deferred"}:
+                job.update(state="not_applicable",not_applicable_reason="fixture")
+        resumed=run_plan(result,fetch=lambda url,_headers: (200,[],{}) if urllib.parse.urlsplit(url).path=="/users/new-account/repos" else self.fail(url),
+                         request_budget=1,max_batches=1,resume_all_deferred=True)
+        current=next(j for j in resumed["jobs"] if j["work_id"]==expansion["work_id"])
+        self.assertEqual("completed",current["state"])
+        self.assertEqual(1,len(current["attempts"]))
+
+    def test_zero_request_expansion_marker_preserves_completed_and_failed_evidence(self):
+        from sudetect.search_plan import _record_discovered_accounts
+        plan=create_plan(scope_id="marker-history",company_en="Starlight",query_budget=1,account_budget=1)
+        query=next(j for j in plan["jobs"] if j["kind"]=="search_query" and j["state"]=="planned")
+        query.update(state="failed",error_code="CHANNEL_PARTIAL",result_count=0,pages=1,end_condition=None,
+                     observed_at="2026-01-01T00:00:00Z",source_ref="fixture",
+                     attempts=[{"attempted_at":"2026-01-01T00:00:00Z","state":"failed","error_code":"CHANNEL_PARTIAL"}])
+        query_before=json.loads(json.dumps(query))
+        completed=next(j for j in plan["jobs"] if j["kind"]=="account_candidate" and j["state"]=="planned")
+        completed["value"]="new-account"; completed.update(state="completed",result_count=0,pages=1,
+            end_condition="provider_empty",observed_at="2026-01-01T00:00:00Z",source_ref="old",
+            attempts=[{"attempted_at":"2026-01-01T00:00:00Z","state":"completed","source_ref":"old"}])
+        marker={"state":"FAILED","requests":0,"pages":0,"items":0,"error_code":"REQUEST_LIMIT_EXCEEDED"}
+        _record_discovered_accounts(plan,{"observed_at":"2026-09-08T00:00:00Z","accounts":[{"login":"new-account"}],
+            "coverage":{"list_public_repositories:new-account":marker}})
+        self.assertEqual(query_before,query)
+        self.assertEqual("completed",completed["state"])
+        self.assertEqual([{"attempted_at":"2026-01-01T00:00:00Z","state":"completed","source_ref":"old"}],completed["attempts"])
+        completed.update(state="failed",error_code="REQUEST_FAILED",
+                         attempts=[{"attempted_at":"2026-01-02T00:00:00Z","state":"failed","error_code":"REQUEST_FAILED"}])
+        before=json.loads(json.dumps(completed))
+        _record_discovered_accounts(plan,{"observed_at":"2026-09-08T00:00:00Z","accounts":[{"login":"new-account"}],
+            "coverage":{"list_public_repositories:new-account":marker}})
+        self.assertEqual(before,completed)
+
+    def test_expansion_marker_with_actual_request_stays_failed(self):
+        from sudetect.search_plan import _record_discovered_accounts
+        plan=create_plan(scope_id="marker-actual",company_en="Starlight",query_budget=1,account_budget=1)
+        query=next(j for j in plan["jobs"] if j["kind"]=="search_query" and j["state"]=="planned")
+        query.update(state="completed",result_count=0,pages=2,end_condition="page_exhausted",
+                     observed_at="2026-01-01T00:00:00Z",source_ref="fixture")
+        marker={"state":"FAILED","requests":1,"pages":0,"items":0,"error_code":"REQUEST_LIMIT_EXCEEDED"}
+        _record_discovered_accounts(plan,{"observed_at":"2026-09-08T00:00:00Z","accounts":[{"login":"new-account"}],
+            "coverage":{"list_public_repositories:new-account":marker}})
+        expansion=next(j for j in plan["jobs"] if j["kind"]=="account_candidate" and j["value"]=="new-account")
+        self.assertEqual("failed",expansion["state"])
+        self.assertEqual("REQUEST_LIMIT_EXCEEDED",expansion["error_code"])
+
+    def test_expansion_marker_with_boolean_count_stays_failed(self):
+        from sudetect.search_plan import _record_discovered_accounts
+        plan=create_plan(scope_id="marker-boolean",company_en="Starlight",query_budget=1,account_budget=1)
+        query=next(j for j in plan["jobs"] if j["kind"]=="search_query" and j["state"]=="planned")
+        query.update(state="completed",result_count=0,pages=2,end_condition="page_exhausted",
+                     observed_at="2026-01-01T00:00:00Z",source_ref="fixture")
+        marker={"state":"FAILED","requests":False,"pages":0,"items":0,"error_code":"REQUEST_LIMIT_EXCEEDED"}
+        _record_discovered_accounts(plan,{"observed_at":"2026-09-08T00:00:00Z","accounts":[{"login":"new-account"}],
+            "coverage":{"list_public_repositories:new-account":marker}})
+        expansion=next(j for j in plan["jobs"] if j["kind"]=="account_candidate" and j["value"]=="new-account")
         self.assertEqual("failed",expansion["state"])
         self.assertEqual("REQUEST_LIMIT_EXCEEDED",expansion["error_code"])
 
