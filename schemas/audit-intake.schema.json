@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Open-Detective local audit intake",
+  "description": "Pre-discovery owner and boundary intake. This file neither authorizes network activity nor replaces the executable scope policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scope_id", "excluded_urls", "identity", "affiliate_boundary", "third_parties", "escalation", "additional_approval_actions"],
+  "properties": {
+    "scope_id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+    "excluded_urls": {"type": "array", "maxItems": 256, "items": {"type": "object", "additionalProperties": false, "required": ["url", "evidence_ref"], "properties": {"url": {"type": "string", "format": "uri", "minLength": 1, "maxLength": 4096}, "evidence_ref": {"$ref": "#/$defs/ref"}}}},
+    "identity": {"type": "object", "additionalProperties": false, "required": ["company_ko", "company_en", "aliases", "industry", "functions", "known_urls", "domains"], "properties": {"company_ko": {"type": "string", "maxLength": 256}, "company_en": {"type": "string", "maxLength": 256}, "aliases": {"$ref": "#/$defs/strings"}, "industry": {"$ref": "#/$defs/strings"}, "functions": {"$ref": "#/$defs/strings"}, "known_urls": {"type": "array", "maxItems": 256, "items": {"type": "string", "format": "uri", "maxLength": 4096}}, "domains": {"type": "array", "maxItems": 256, "items": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[A-Za-z0-9.-]+$"}}}},
+    "affiliate_boundary": {"type": "object", "additionalProperties": false, "required": ["included", "excluded", "evidence_ref"], "properties": {"included": {"$ref": "#/$defs/strings"}, "excluded": {"$ref": "#/$defs/strings"}, "evidence_ref": {"$ref": "#/$defs/ref"}}},
+    "third_parties": {"type": "object", "additionalProperties": false, "required": ["status", "source_ref", "agencies", "processors", "suppliers"], "properties": {"status": {"enum": ["provided", "unknown", "none_declared"]}, "source_ref": {"type": "string", "maxLength": 256}, "agencies": {"type": "array", "maxItems": 256, "items": {"type": "object", "additionalProperties": false, "required": ["party_id", "owner_ref", "inventory_ref"], "properties": {"party_id": {"type": "string", "minLength": 1, "maxLength": 128}, "owner_ref": {"$ref": "#/$defs/ref"}, "inventory_ref": {"$ref": "#/$defs/ref"}}}}, "processors": {"$ref": "#/$defs/partyRefs"}, "suppliers": {"$ref": "#/$defs/partyRefs"}}, "allOf": [{"if": {"properties": {"status": {"const": "provided"}}}, "then": {"properties": {"source_ref": {"$ref": "#/$defs/ref"}}}}, {"if": {"properties": {"status": {"const": "none_declared"}}}, "then": {"properties": {"source_ref": {"$ref": "#/$defs/ref"}, "agencies": {"maxItems": 0}, "processors": {"maxItems": 0}, "suppliers": {"maxItems": 0}}}}, {"if": {"properties": {"status": {"const": "unknown"}}}, "then": {"properties": {"agencies": {"maxItems": 0}, "processors": {"maxItems": 0}, "suppliers": {"maxItems": 0}}}}]},
+    "escalation": {"type": "object", "additionalProperties": false, "required": ["owner_ref", "route_ref"], "properties": {"owner_ref": {"$ref": "#/$defs/ref"}, "route_ref": {"$ref": "#/$defs/ref"}}},
+    "additional_approval_actions": {"$ref": "#/$defs/strings"}
+  },
+  "$defs": {
+    "ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "strings": {"type": "array", "maxItems": 256, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+    "partyRefs": {"type": "array", "maxItems": 256, "items": {"type": "object", "additionalProperties": false, "required": ["party_id", "owner_ref", "inventory_ref"], "properties": {"party_id": {"type": "string", "minLength": 1, "maxLength": 128}, "owner_ref": {"$ref": "#/$defs/ref"}, "inventory_ref": {"$ref": "#/$defs/ref"}}}}
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "channels": [
+    {
+      "channel_id": "owner-linked-search",
+      "state": "EXECUTED",
+      "complete": true,
+      "observed_at": "2026-09-06T00:00:00Z",
+      "source_ref": "fixture:search-export",
+      "work_id": "fixture-search-work",
+      "end_condition": "page_exhausted",
+      "pages": 1,
+      "items": 1
+    },
+    {"channel_id": "certificate-transparency", "state": "PLANNED"}
+  ],
+  "candidates": [
+    {
+      "url": "https://candidate.example.invalid/",
+      "channel_id": "owner-linked-search",
+      "source_ref": "fixture:result-1",
+      "kind": "deployment_result",
+      "observed_at": "2026-09-06T00:00:00Z"
+    }
+  ]
+}

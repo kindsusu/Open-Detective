@@ -5,3 +5,15 @@ _local/
 __pycache__/
 *.py[cod]
 *.tmp
+.venv/
+*.sqlite
+*.sqlite3
+*.db
+audit-scope*.json
+evidence/
+captures/
+*.egg-info/
+build/
+dist/
+*.har
+*.trace.zip

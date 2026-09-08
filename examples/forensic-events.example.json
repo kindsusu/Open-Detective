@@ -1,0 +1,1 @@
+{"format":"JSONL; each source record contains event_id,event_time,ingest_time,clock_uncertainty_ms,actor_ref,asset_ref,activity. Timeline input additionally binds source_id,evidence_id and source_record_ref=SHA-256 of canonical source record.","warning":"Synthetic format example only. It grants no collection authority and is not evidence of access, attribution, or exfiltration."}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "scope_id": "replace-with-scope-id",
+  "provider": "generic_json_export",
+  "channel_id": "documents",
+  "source_id": "operator-approved-public-json-export",
+  "expected_control_ids": ["replace-with-source-control-id"],
+  "query": {"work_id": "replace-with-plan-work-id", "value": "replace-with-local-query"},
+  "endpoint": {"url": "https://search.example.invalid/export", "query_param": "q", "page_param": "page", "start_page": 1, "results_pointer": "/results", "url_pointer": "/url", "record_id_pointer": "/id", "has_more_pointer": "/has_more"},
+  "limits": {"max_requests": 4, "max_pages": 4, "max_body_bytes": 262144, "max_candidates": 500}
+}

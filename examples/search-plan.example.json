@@ -1,0 +1,10 @@
+{
+  "scope_id": "fixture-team",
+  "company_ko": "별빛 연구소",
+  "company_en": "Starlight Laboratory",
+  "aliases": ["Starlight Lab"],
+  "industry": ["research"],
+  "functions": ["docs"],
+  "known_urls": [],
+  "note": "Pass these values to `search-plan plan`; generated raw queries stay in the ignored local manifest."
+}

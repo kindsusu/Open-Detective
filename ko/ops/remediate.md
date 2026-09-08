@@ -1,85 +1,21 @@
-# 조치 — 무엇을 먼저 하는가
+# 격리, 복구, 재측정
 
-## 순서
+확정 증거와 현재 피해를 기준으로 조치를 고른다. 현재 개인정보나 비밀 노출이면 긴급 격리와 로그 보존이 연속성 작업보다 앞설 수 있다. 현재 피해가 없는 계획 이전이면 대체 경로를 먼저 준비할 수 있다. 하나의 고정 순서를 적용하지 말고 이유를 기록한다.
 
-**교체와 차단은 병행한다. 하나만 먼저 해야 한다면 교체다.**
+## 조치 계획
 
-```
-① 자격증명 교체·회전     ← 공개 저장소의 시크릿은 봇이 이미 수집했다고 전제한다
-② 노출 차단             ← private 전환 / 인증 게이트 / 파일 제거
-③ 잔존 확인·제거 요청    ← 아카이브·CDN 미러·검색 인덱스. ops/verify.md의 잔존 표 전부
-④ 노출 범위 산정        ← 언제부터 열려 있었나. 접근 로그가 있으면 확보
-⑤ 재측정으로 종결       ← 같은 실측을 다시 돌린다
-```
+1. 증거 참조를 고정하고 노출 내용을 복제하지 않으면서 필요한 provider/application log를 보존한다.
+2. 정확한 public deployment, share, object, alias를 제한/삭제하고 다른 alias 연결을 확인한다.
+3. 확정된 private secret을 소유자 통제 시스템에서 회전한다. audit code는 시험하거나 사용하지 않는다.
+4. 연속성이 필요하면 검토된 private deployment로 서비스를 복구한다.
+5. SSO나 edge access gate 뒤에서도 server-side user, role, tenant, object authorization을 유지한다. SSO authentication은 application authorization이 아니다.
+6. 제한된 노출 기간의 owner-side access log를 보고 privacy/legal 판단을 책임자에게 보낸다.
+7. 새 익명 context로 원 locator와 알려진 모든 deployment/alias를 재확인한다. 허용된 cache와 archive는 별도로 확인한다.
 
-**차단이 유출을 되돌리지 못한다.** 이미 복제된 것은 닫아도 사라지지 않는다.
-교육 자료의 "공유 중지 → 키 교체" 순서는 인식 제고용이고, **실행 순서는 교체가 먼저다.**
+repository private 전환이 예전 deployment, fork, package release, build artifact, copied file을 제거한다고 가정하지 않는다. 대응에 필요한 log를 삭제하지 않는다. 격리가 큰 outage를 만들면 tradeoff를 명시해 에스컬레이션한다. 현재 피해가 크면 즉시 격리가 여전히 필요할 수 있다.
 
-> 노출된 키를 **무효화·회전하는 것은 원격 관리 조치**이며,
-> "발견한 자격증명으로 로그인하지 않는다"(원칙 3)에 저촉되지 않는다. 구분할 것.
+## 종결
 
-## 무중단 이전 — 운영 중인 자산은 닫는 것이 마지막
+`closed`에는 알려진 모든 live locator에서 기대하는 access/content 상태를 보이는 새 observation evidence와 선언한 residue scope 완료가 필요하다. target/policy binding은 등록된 원 locator와 alias에 일치해야 한다. live access는 막혔지만 archive/cache/deployment coverage가 불완전하면 `partially_closed`다. 종결 뒤 현재 `BODY_SERVED`, unknown/incomplete observation, 같은 시각 충돌은 finding을 재검토 상태로 돌린다. digest 변화만으로는 부족하다.
 
-```
-① 신규 경로를 먼저 살린다 — 인증이 걸린 배포처에 올린다
-② 실제 사용자가 들어가지는지 확인한다
-③ 그 다음에 구 경로를 닫는다
-④ 인증 계층이 겹치면 하나를 걷어낸다
-```
-
-**③을 먼저 하면 사고가 난다.** 운영 중인 문서는 닫는 순간 업무가 멈춘다.
-> 선례: 저장소를 private으로 바꾸자 Pages가 즉시 죽어 2분 만에 되돌린 사고가 있었다.
-> **"저장소를 private으로"와 "페이지를 비공개로"는 다른 일이다.**
-
-## 인증은 HTML이 나가기 전에 건다
-
-브라우저에서 도는 로그인 화면은 **HTML이 이미 전송된 뒤** 동작한다. 통제가 아니다.
-서버가 **전달 자체를 막는 구조**만 실제 접근통제다.
-
-| 선택지 | 인증 | 적합 |
-|---|---|---|
-| Cloudflare Pages + Access | Google·Microsoft·OTP·SSO | 가장 간단한 직원 전용 사이트 |
-| Azure Static Web Apps + Entra ID | M365 회사 계정 | M365 사용사. 단 테넌트 제한은 상위 플랜 |
-| GitHub Pages | 없음 — **배포된 페이지는 기본 공개** | 사내 자료에 부적합 |
-
-- 무료 플랜에서 저장소를 private으로 바꾸면 Pages가 닫힌다.
-- Pro/Team 이상이면 private 저장소에서 Pages 배포는 되지만 **배포된 페이지는 여전히 공개**다.
-- 비공개 Pages는 Enterprise Cloud 전용이다.
-- **인증 계층을 중복시키지 않는다.** 서버 앞단 인증이 자리잡으면 앱 자체 비밀번호는 걷어낸다.
-
-## 잔존 제거
-
-| 대상 | 방법 |
-|---|---|
-| Wayback | Internet Archive에 제외 요청. **서버를 고쳐도 아카이브는 남는다** |
-| 제3자 CDN 미러(jsDelivr 등) | 원 저장소 삭제·비공개화 후 캐시 만료 확인. **커밋 고정 경로는 오래 남는다** |
-| 검색엔진 인덱스 | Google·Bing·네이버 각각 제거 요청. **폐쇄 전에 인덱스 현황을 먼저 확인**한다 |
-| GitHub 커밋 히스토리 | 히스토리 재작성 후에도 **SHA 직접 접근으로 당분간 유효**. 필요하면 GitHub Support에 GC 요청 |
-| 포크 | 포크된 사본은 원본 삭제로 사라지지 않는다 |
-| AI 검색엔진 인용 | 일반 검색과 창구가 다르다 — 각 서비스의 제거 절차를 따른다 |
-
-**폐쇄가 잔존을 만들 수도 있다.** 폐쇄 후 아카이브를 재확인한다.
-
-## 소유자 라우팅 — 조치가 멈추는 지점
-
-> 선례: 감사에서 노출을 확정하고도 **"소유 직원·부서 미확인"으로 조치 요청 경로가 없어 방치**됐다.
-> 19일 뒤에도 미해결이었고, 그 사이 노출 자산이 1건에서 8건으로 늘었다.
-
-```
-자산 → 계정 → 사람 → 부서 → 조치 요청 경로
-```
-
-- 계정 식별: 커밋 author, 저장소 설명, 배포 설정, 연락처 메타데이터
-- **소유자를 특정하지 못하면 그 사실 자체를 보고 항목으로 올린다.** "미확인"으로 남겨 두지 않는다
-- 접촉은 **건별 승인 후 공식 경로로만**(원칙 14) — 점검 사실이 알려지면 증거인멸·분쟁이 생길 수 있다
-
-**보안 조치와 인사 조치를 분리한다.** takedown·키 회전·범위 산정은 대상이 누구든 즉시 수행한다.
-징계 판단은 취업규칙 절차로 별도 진행하며, **같은 사람이 겸하지 않는다**(원칙 15).
-
-## 종결 조건
-
-**"고쳤다"로 끝나는 보고는 실패다.**
-
-- 같은 실측을 다시 돌려 **판정이 바뀐 것을 확인**해야 종결이다
-- 대장에 **재측정일을 적고** 그날 다시 돌린다
-- 잔존 확인(§잔존 제거 표)이 끝나지 않았으면 **부분 종결**로 표시한다
+owner, action due date, recheck due date, backoff/retry policy, escalation route를 정한다. 변화 없는 observation은 조용히 둘 수 있지만 overdue, failed, reopened, user-action-required event는 보여야 한다.

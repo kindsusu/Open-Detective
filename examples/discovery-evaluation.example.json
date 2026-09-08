@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "dataset_card": {"dataset_id":"synthetic-example-v1","created_at":"2026-01-01T00:00:00Z","synthetic":true,"candidate_ids_fixed_before_runs":true,"test_labels_not_used_for_tuning":true,"split_grouping":"candidate_id","limitations":["Synthetic fixture; it does not establish Internet-wide coverage or schedule optimality."]},
+  "candidates": [
+    {"candidate_id":"cand-train-1","label":"relevant","families":["identity"]},
+    {"candidate_id":"cand-test-1","label":"relevant","families":["identity"]},
+    {"candidate_id":"cand-test-2","label":"known_false_positive","families":["context"]},
+    {"candidate_id":"cand-test-3","label":"unlabeled_unknown","families":["identity"]}
+  ],
+  "splits":{"train":["cand-train-1"],"test":["cand-test-1","cand-test-2","cand-test-3"]},
+  "query_results":[{"query_id":"query-identity-1","family":"identity","cost":2,"candidate_ids":["cand-test-1","cand-test-3"]},{"query_id":"query-context-1","family":"context","cost":1,"candidate_ids":["cand-test-2"]}],
+  "schedules":{"baseline":["query-context-1","query-identity-1"],"proposed":["query-identity-1","query-context-1"]},
+  "budgets":[0,1,2,3]
+}

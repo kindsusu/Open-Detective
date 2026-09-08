@@ -1,51 +1,47 @@
-# Exposure Ledger — <organization> / opened <YYYY-MM-DD>
+# Exposure ledger export
 
-**A report that ends at "fixed" has failed.** Closure requires re-running the same measurement and
-seeing the verdict change.
+This Markdown is a review/export view. The SQLite ledger is the operational source of truth; observations and events are append-only.
 
-## Summary
-| Grade | Count | Unremediated |
-|---|---|---|
-| S credentials | | |
-| A personal data | | |
-| B confidential business data | | |
-| C internal structure | | |
-| D branding | | |
+## Finding
 
-## Items
-| # | Asset (URL) | Found via | Owner | Grade | Verdict | Pass | sha256 | Found | Owner contact | Deadline | Re-measure | Status |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | | | ours / personal / third-party | | EXPOSED / AUTH-GATE / BLOCKED / CLIENT-ENCRYPTED / UNKNOWN | crawler / browser | | | | | | open / pending-browser / in progress / partially closed / closed |
+| Field | Value |
+|---|---|
+| finding_id | |
+| asset_id / endpoint_id | |
+| owner / ownership_evidence | |
+| masked_locator / protected_locator_ref | |
+| severity | S / A / B / C / D / unassigned |
+| workflow | candidate / ownership_pending / verification_pending / open / containment_pending / recheck_pending / partially_closed / closed / reopened |
+| assignee / escalation_route | |
+| action_due_at / recheck_due_at | |
+| created_at / updated_at | |
 
-- If the owner is a **third party**, the remediation column says **notify** only. Do not probe.
-- **Partially closed**: blocked, but residue checks are not finished.
+## Latest observation
 
-## Residue check — fill every column per item.
-## If even one is unchecked, do not write "no residue."
-| # | Wayback | archive.today | Bulk crawl index | Software Heritage | CDN mirror (jsDelivr etc.) | Commit SHA | Forks | Search index |
-|---|---|---|---|---|---|---|---|---|
-| 1 | | | | | | | | |
+| observation_id | observed_at | anonymous_mode | access | content | confidence | capture_complete | digest_kind/value | evidence_ref | control_id | stop_reason |
+|---|---|---|---|---|---|---|---|---|---|---|
+| | | | | | | | | | | |
 
-> What you can write is a **point-in-time statement**: "as of YYYY-MM-DD, no snapshot in X."
-> "No permanent residue" is not a claim you can make.
+Allowed access values: `BODY_SERVED`, `ACCESS_DENIED_OBSERVED`, `AUTH_REDIRECT_OBSERVED`, `NOT_FOUND_OBSERVED`, `INDETERMINATE`.
 
-## Controls — measure these alongside every run
-| Control | Expected verdict | Actual |
-|---|---|---|
-| (an internal site behind an auth gate) | AUTH-GATE | |
-| (a path that does not exist) | ABSENT | |
+Allowed content values: `PUBLIC_UI`, `SENSITIVE_CONTENT_CONFIRMED`, `SENSITIVE_CANDIDATE`, `CLIENT_ENCRYPTED_OBSERVED`, `NOT_INSPECTED`.
 
-## Unconfirmed items
-| Item | Current evidence | What would confirm it | Owner |
-|---|---|---|---|
-| | | | |
+## Aliases and deployments
 
-## Escalations
-| When | Item | Grade | Sent to (DPO / legal / management) | Outcome |
-|---|---|---|---|---|
-| | | | | |
+| alias_id | masked_locator | deployment_id | relationship_source | ownership_evidence | first_seen | last_checked | status |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
 
-## Re-measurement history
-| Date | Items | Exposed | Closed | New | Notes |
-|---|---|---|---|---|---|
-| | | | | | |
+## Controls and proof
+
+| control_id | purpose | expected | observed | observed_at | channel_status | evidence_ref |
+|---|---|---|---|---|---|---|
+| | | | | | | |
+
+## Event and recheck history
+
+| event_id | occurred_at | type | from_state | to_state | actor | reason/evidence_ref | next_due_at |
+|---|---|---|---|---|---|---|---|
+| | | | | | | | |
+
+Closure requires a new anonymous observation for every known live locator and completion of the declared residue scope. Unknown archive/cache/alias coverage produces `partially_closed`. Do not paste raw personal data, secrets, headers, or token-bearing URLs here.
