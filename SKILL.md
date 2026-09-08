@@ -1,9 +1,11 @@
 ---
-name: su-detect
+name: open-detective
 description: Audit publicly reachable organization-owned assets for accidental personal-data or confidential-content exposure. Use for external inventory, public deployment discovery, anonymous observation, evidence classification, remediation tracking, and rechecks. Do not use for vulnerability scanning, authentication bypass, exploitation, credential use, or adjacent-record enumeration.
 ---
 
-# su-detect
+# Open-Detective
+
+This installed skill defines the workflow; it does not install the Python package. Install the package with the [README instructions](README.md) before running `open-detective`.
 
 Run **scope → inventory/discovery → ownership → anonymous observation → content classification → containment → recheck**. Never claim closure without a fresh observation.
 
@@ -14,18 +16,18 @@ Read `ops/scope.md`. Measurement commands require an unexpired `--scope` file co
 Owner inventory may use explicitly authorized read credentials. Keep its credentials, process, browser profile, and output separate from anonymous target measurement. Discovery output is a candidate until ownership evidence links it to the organization.
 
 ```bash
-python -m sudetect probe --scope scope.json <url>
-python -m sudetect browser <url> --scope scope.json --duration 3
-python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
-python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
-python -m sudetect doctor --reference .
-python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
-python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
-python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
-python -m sudetect ledger --db audit.sqlite due
+open-detective probe --scope scope.json <url>
+open-detective browser <url> --scope scope.json --duration 3
+open-detective inventory --provider import --scope-id TEAM --input inventory.json
+open-detective discover --input candidates.json --scope-id TEAM
+open-detective search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
+open-detective doctor --reference .
+open-detective channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
+open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
+open-detective ledger --db audit.sqlite due
 ```
 
 `forensics` is separate private-local work for an approved `--case` and owner-authorized read-only exports. Its case authorization is not a network measurement `--scope`. Read `ops/forensics.md`; do not authenticate, reuse credentials, acquire RAM/disk images, or infer no exfiltration from a missing log.

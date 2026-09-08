@@ -190,7 +190,7 @@ class Broker:
                 query_ok = path_owner.casefold() == str(self.scope_id).casefold() and query == {"recursive":["1"]}
             if not allowed or not query_ok:
                 raise InventoryError("REQUEST_FAILED")
-        headers = {"Accept": "application/json", "User-Agent": "su-detect-inventory/1"}
+        headers = {"Accept": "application/json", "User-Agent": "open-detective-inventory/1"}
         if self.provider == "vercel":
             headers["Authorization"] = f"Bearer {self._token}"
         else:

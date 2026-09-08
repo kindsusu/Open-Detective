@@ -216,7 +216,7 @@ class GitHubBroker:
         headers = {
             "Accept": "application/vnd.github+json",
             "Accept-Encoding": "identity",
-            "User-Agent": "su-detect-github-discovery/1 (anonymous public metadata)",
+            "User-Agent": "open-detective-github-discovery/1 (anonymous public metadata)",
             "X-GitHub-Api-Version": _API_VERSION,
         }
         if self.fetch is not None:

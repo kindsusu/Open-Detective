@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/su-detect/ledger.schema.json",
-  "title": "su-detect ledger event",
+  "title": "Open-Detective ledger event",
   "type": "object",
   "required": ["event_id", "event_type", "entity_id", "occurred_at", "payload"],
   "properties": {

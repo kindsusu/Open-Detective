@@ -1,10 +1,21 @@
-# su-detect
+# Open-Detective
 
-`su-detect`는 조직 소유 공개 자산을 인벤토리로 모으고, 익명 접근을 관측하고, 증거가 뒷받침하는 내용만 분류하고, 재측정을 예약한다. 취약점 스캐너가 아니다. 발견한 비밀로 로그인하거나 통제를 우회하거나 인접 레코드를 열거하지 않으며 인터넷 전체를 확인했다고 주장하지 않는다.
+![Open-Detective 증거 조사 작업 공간](assets/hero.png)
 
-영문: [README.md](README.md)
+**조직의 공개 노출을 증거 중심으로 조사합니다.** Open-Detective는 외부에 공개된 자산을 찾고, 소유 관계를 확인할 수 있는 배포를 발견하며, 승인된 익명 접근을 관측하고, 우발적인 개인정보·기밀 콘텐츠 노출을 분류·격리·재측정하는 데 필요한 증거를 보존합니다.
+
+범위 경계, 소유 증거, 명시적인 커버리지 공백, 최소 수집, 포렌식에 연결할 수 있는 로컬 증거 흐름을 갖춰 조사 기록을 검토 가능하게 만듭니다. 취약점 스캐너가 아니며, 발견한 비밀로 인증하거나 통제를 우회하거나 인접 레코드를 열거하지 않고 인터넷 전체를 확인했다고 주장하지 않습니다.
+
+[저장소](https://github.com/kindsusu/Open-Detective) · [영문 문서](README.md) · [포렌식 흐름](ko/ops/forensics.md)
 
 수정본의 설치·적용 절차와 구현 범위: [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
+
+## 하는 일
+
+- **범위와 소유:** 네트워크 관측 전에 승인된 경계와 소유 증거를 기록합니다.
+- **노출 발견:** 지원하는 소유자 소스를 인벤토리로 수집하고, 기본 수집기가 지원하지 않는 소스는 출처를 남긴 정규화된 로컬 내보내기로 가져옵니다.
+- **증거와 포렌식:** 관측이 뒷받침하는 내용만 분류하고, 보관 내용을 최소화하며, 승인된 로컬 보관 연속성과 타임라인 작업을 지원합니다.
+- **격리와 재측정:** append-only 운영 대장에서 alias, 조치, 대조군, 새 관측을 추적합니다.
 
 ## 판정 모델
 
@@ -30,26 +41,28 @@ Python 3.11 이상이 필요하다. 브라우저 캡처는 선택 기능이다.
 python -m pip install -e .
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
-python -m sudetect --help
+open-detective --help
 ```
+
+기본 명령은 `open-detective`입니다. 기존 `su-detect`와 `python -m sudetect` 진입점도 계속 지원하며 같은 CLI를 실행합니다.
 
 루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 ```bash
-python -m sudetect probe --scope scope.json https://app.example.test/
-python -m sudetect browser https://app.example.test/ --scope scope.json --duration 3
-python -m sudetect inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
-python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
-python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<수행자 입력>"
-python -m sudetect doctor --reference .
-python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json --previous _local/channel-health.previous.json
-python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
-python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
-python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
-python -m sudetect ledger --db audit.sqlite due
+open-detective probe --scope scope.json https://app.example.test/
+open-detective browser https://app.example.test/ --scope scope.json --duration 3
+open-detective inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
+open-detective inventory --provider import --scope-id TEAM --input inventory.json
+open-detective discover --input candidates.json --scope-id TEAM
+open-detective search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<수행자 입력>"
+open-detective doctor --reference .
+open-detective channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json --previous _local/channel-health.previous.json
+open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
+open-detective probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
+open-detective ledger --db audit.sqlite due
 ```
 
 `forensics`는 승인된 private local case와 소유자가 허가한 read-only export를 위한 별도 흐름이다. 이 `--case` authorization은 측정 `--scope`가 아니다. [ko/ops/forensics.md](ko/ops/forensics.md)를 읽는다. 인증·image 획득·법적 증거능력 판단을 하지 않으며, 없는 log에서 exfiltration 부재를 추론하지 않는다.

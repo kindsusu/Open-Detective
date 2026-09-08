@@ -15,7 +15,7 @@ def main(argv=None):
         "discovery-eval": "discovery_eval", "asset-graph": "asset_graph",
     }
     if not args or args[0] in ("-h", "--help"):
-        print("usage: python -m sudetect {" + ",".join(commands) + "} [options]")
+        print("usage: open-detective {" + ",".join(commands) + "} [options]")
         print("All network measurements require an explicit ownership scope.")
         return 0
     if args[0] == "--version":

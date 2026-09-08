@@ -106,7 +106,7 @@ class _SafeParser(argparse.ArgumentParser):
 
 def _parser() -> argparse.ArgumentParser:
     parser = _SafeParser(
-        prog="su-detect-probe",
+        prog="open-detective probe",
         description="Observe an explicitly owned HTTPS target and emit JSONL.",
     )
     parser.add_argument("--scope", help="scope JSON file or inline JSON (or set SU_SCOPE)")

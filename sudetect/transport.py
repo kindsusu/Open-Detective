@@ -45,7 +45,7 @@ def _default_resolver(host: str, port: int, timeout: float) -> list[str]:
             except queue.Full:
                 pass
 
-    threading.Thread(target=run, daemon=True, name="su-detect-dns").start()
+    threading.Thread(target=run, daemon=True, name="open-detective-dns").start()
     try:
         answer = result.get(timeout=max(0.001, timeout))
     except queue.Empty:
@@ -261,7 +261,7 @@ def fetch(
                         "Accept": "*/*",
                         "Accept-Encoding": "identity",
                         "Connection": "close",
-                        "User-Agent": "su-detect/2 (authorized anonymous observation)",
+                        "User-Agent": "open-detective/2 (authorized anonymous observation)",
                     },
                 )
                 response = connection.getresponse()

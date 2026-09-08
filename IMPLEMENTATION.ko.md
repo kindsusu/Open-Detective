@@ -1,4 +1,6 @@
-# su-detect 수정본 적용 안내
+# Open-Detective 수정본 적용 안내
+
+현재 공개 저장소: [kindsusu/Open-Detective](https://github.com/kindsusu/Open-Detective)
 
 2026-09-06 · 기준 커밋 `f1e127bdb404a3bab88a3bcd57701806d99e1723`에서 수정 · 패키지 버전 `2.0.0`
 
@@ -33,14 +35,14 @@ python -m venv .venv
 발견 전에는 `examples/audit-intake.example.json`을 `_local/`로 복사해 `schemas/audit-intake.schema.json`에 맞춰 작성한다. 이는 제외 URL과 증거, 조직 식별자, 관계사·제3자 경계, escalation, 추가 승인 행위를 받는 intake이며 실행 scope나 네트워크 grant가 아니다. 계약·자산·처리자/수탁자 대장의 관리자 export → 실행 scope 승인 → candidate import 순서를 유지한다. `third_parties.status="unknown"`은 소유로 추측하지 않는 공백이다.
 
 ```powershell
-.\.venv\Scripts\python.exe -m sudetect probe --scope _local/scope.json https://approved.example/
-.\.venv\Scripts\python.exe -m sudetect browser https://approved.example/ --scope _local/scope.json --duration 3
-.\.venv\Scripts\python.exe -m sudetect inventory --provider vercel --scope-id TEAM_ID --token-env VERCEL_TOKEN
-.\.venv\Scripts\python.exe -m sudetect inventory --provider github --scope-id ORG --token-env GITHUB_TOKEN
-.\.venv\Scripts\python.exe -m sudetect discover --input examples/discovery-import.json --scope-id fixture-team
-.\.venv\Scripts\python.exe -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
-.\.venv\Scripts\python.exe -m sudetect search-plan run --plan _local/plan.json --channel-health _local/channel-health.json
-.\.venv\Scripts\python.exe -m sudetect ledger --db _local/audit.sqlite --help
+open-detective probe --scope _local/scope.json https://approved.example/
+open-detective browser https://approved.example/ --scope _local/scope.json --duration 3
+open-detective inventory --provider vercel --scope-id TEAM_ID --token-env VERCEL_TOKEN
+open-detective inventory --provider github --scope-id ORG --token-env GITHUB_TOKEN
+open-detective discover --input examples/discovery-import.json --scope-id fixture-team
+open-detective channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
+open-detective search-plan run --plan _local/plan.json --channel-health _local/channel-health.json
+open-detective ledger --db _local/audit.sqlite --help
 ```
 
 `channels-doctor`는 local config에 있는 scope 승인 positive control을 매번 관측한다. HTTP 200만으로는 `OK`가 아니며 complete capture와 기대 JSON pointer/body marker 일치가 필요하다. `OK`/`DEGRADED`/`DEAD` report는 로컬 운영 근거의 형식·freshness 검사일 뿐 전자서명이나 원격 attestation이 아니고, 로컬 파일을 수정할 수 있는 수행자에 대한 보안 경계도 아니다. 실제 GitHub 실행은 repository 목록의 `github-repositories`, 검색의 `github-user-search`와 `github-repository-search`를 각각 fresh하게 요구한다. synthetic test input은 실제 채널 검증이 아니다.
@@ -69,6 +71,6 @@ Vercel 프로젝트 continuation과 배포 alias 요청 형식은 [프로젝트 
 
 ## GitHub 누락 사례 후속 보완
 
-`python -m sudetect github-discover --scope-id TEAM --account approved-account` 명령을 추가했다. 공개 사용자/저장소 검색, 알려진 계정의 전체 공개 저장소 페이지 처리, 제공된 Pages URL의 계정/저장소 역추적, 출처 그래프와 채널별 오류를 지원한다. `--seed` 및 `--known-url`을 반복 지정할 수 있다. 배포 URL은 후보이며 소유 확인과 익명 실측이 별도로 필요하다.
+`open-detective github-discover --scope-id TEAM --account approved-account` 명령을 추가했다. 공개 사용자/저장소 검색, 알려진 계정의 전체 공개 저장소 페이지 처리, 제공된 Pages URL의 계정/저장소 역추적, 출처 그래프와 채널별 오류를 지원한다. `--seed` 및 `--known-url`을 반복 지정할 수 있다. 배포 URL은 후보이며 소유 확인과 익명 실측이 별도로 필요하다.
 
 식별자 생성기는 영문 브랜드+업종 복합형의 하이픈 및 숫자 접미사, 브랜드+업무명을 우선순위에 반영한다. 분류기는 JS 비밀번호 비교와 동적 fetch 미해결 신호를 보완했다. 실제 회사명/URL은 공개 테스트에 넣지 않았으며, 독립 발견과 제공 계정 확장 결과는 로컬 보고서에서 따로 평가한다.

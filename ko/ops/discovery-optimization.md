@@ -5,10 +5,10 @@
 `channel-discover`는 현재 두 adapter만 지원한다. `certspotter`는 certificate-transparency 이름을 소유 대조 후보로 처리한다. `generic_json_export`는 수행자가 지정한 query-bound JSON search 또는 export endpoint를 소비하며 native web/document search coverage를 주장하지 않는다. 두 adapter 모두 provider, channel, source, query work ID, 관측 시각, requests, pages, end condition, partial/error 상태, health provenance, opaque candidate reference를 기록한다. 정확한 후보 URL을 공유 출력에 복사하지 않는다.
 
 ```bash
-python -m sudetect channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json
-python -m sudetect channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json --plan _local/search-plan.json --import-output _local/search-plan-import.json
-python -m sudetect discovery-eval --input _local/evaluation.json --output _local/evaluation-result.json
-python -m sudetect asset-graph --input _local/asset-records.json --previous _local/asset-graph.previous.json --output _local/asset-graph.json
+open-detective channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json
+open-detective channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json --plan _local/search-plan.json --import-output _local/search-plan-import.json
+open-detective discovery-eval --input _local/evaluation.json --output _local/evaluation-result.json
+open-detective asset-graph --input _local/asset-records.json --previous _local/asset-graph.previous.json --output _local/asset-graph.json
 ```
 
 channel config는 versioned local operator input이다. provider(`certspotter` 또는 `generic_json_export`), 허용 channel(`certificate_transparency`, `web`, `documents`), opaque source ID, query work ID/value, endpoint shape, 필수 expected control ID, hard request/page/body/candidate limit을 선언한다. 실행은 선언한 expected control ID와 일치할 때만 health provenance를 받는다. provider 결과가 0행이어도 선언한 end condition과 coverage가 뒷받침하지 않으면 complete가 아니다. failed·stale·partial channel은 공백으로 남고 그 상태로 search plan에 import할 수 있다.

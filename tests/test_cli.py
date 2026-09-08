@@ -84,6 +84,7 @@ class CommandTests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(main(['--help']), 0)
             self.assertEqual(main(['--version']), 0)
+        self.assertIn('usage: open-detective', out.getvalue())
         self.assertIn('2.0.0', out.getvalue())
 
     def test_unknown_command_safe(self):

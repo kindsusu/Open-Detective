@@ -1,10 +1,21 @@
-# su-detect
+# Open-Detective
 
-`su-detect` inventories organization-owned public assets, observes anonymous access, classifies only content supported by evidence, and schedules rechecks. It is not a vulnerability scanner. It does not authenticate with discovered secrets, bypass controls, enumerate adjacent records, or claim complete Internet coverage.
+![Open-Detective evidence investigation workspace](assets/hero.png)
 
-Korean: [README.ko.md](README.ko.md)
+**Evidence-led public exposure investigation for organizations.** Open-Detective maps the public attack surface, discovers attributable deployments, observes approved anonymous access, and preserves the evidence needed to classify, contain, and recheck accidental data or confidential-content exposure.
+
+It is built for investigators who need a defensible record: bounded scope, ownership evidence, explicit coverage gaps, minimal collection, and forensic-ready local evidence workflows. It is not a vulnerability scanner. It does not authenticate with discovered secrets, bypass controls, enumerate adjacent records, or claim complete Internet coverage.
+
+[Repository](https://github.com/kindsusu/Open-Detective) · [Korean documentation](README.ko.md) · [Forensic workflow](ops/forensics.md)
 
 Implementation and rollout notes (Korean): [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
+
+## What it does
+
+- **Scope and ownership:** records approved boundaries and ownership evidence before any network observation.
+- **Exposure discovery:** inventories supported owner sources and imports normalized local exports with provenance when a source is outside the built-in collectors.
+- **Evidence and forensics:** classifies only what the observation supports, minimizes retained content, and supports approved local custody and timeline workflows.
+- **Containment and rechecks:** tracks aliases, remediation, controls, and fresh rechecks in an append-only operational ledger.
 
 ## Decision model
 
@@ -30,26 +41,28 @@ Python 3.11 or newer is required. Browser capture is optional.
 python -m pip install -e .
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
-python -m sudetect --help
+open-detective --help
 ```
+
+The primary command is `open-detective`. The existing `su-detect` and `python -m sudetect` entry points remain supported and invoke the same CLI.
 
 The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 ```bash
-python -m sudetect probe --scope scope.json https://app.example.test/
-python -m sudetect browser https://app.example.test/ --scope scope.json --duration 3
-python -m sudetect inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
-python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
-python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
-python -m sudetect doctor --reference .
-python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json --previous _local/channel-health.previous.json
-python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
-python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
-python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
-python -m sudetect ledger --db audit.sqlite due
+open-detective probe --scope scope.json https://app.example.test/
+open-detective browser https://app.example.test/ --scope scope.json --duration 3
+open-detective inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
+open-detective inventory --provider import --scope-id TEAM --input inventory.json
+open-detective discover --input candidates.json --scope-id TEAM
+open-detective search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
+open-detective doctor --reference .
+open-detective channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json --previous _local/channel-health.previous.json
+open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
+open-detective probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
+open-detective ledger --db audit.sqlite due
 ```
 
 `forensics` is a separate private-local workflow for an approved case and owner-authorized read-only exports; its `--case` authorization is not a measurement `--scope`. See [ops/forensics.md](ops/forensics.md). It does not authenticate, acquire images, establish legal admissibility, or infer exfiltration from an absent log.

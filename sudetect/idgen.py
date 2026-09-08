@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""su-detect / idgen.py - candidate identifier generator.
+"""Open-Detective / idgen.py - candidate identifier generator.
 
 The account that hosts a leak is almost never the registered company name. It is a
 coinage an employee invented at signup, under namespace rules (no spaces, lowercase,

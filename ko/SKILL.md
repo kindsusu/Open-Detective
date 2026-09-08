@@ -1,6 +1,8 @@
-# su-detect 한국어 번역
+# Open-Detective 한국어 번역
 
 이 파일은 루트 `SKILL.md`의 번역이며 설치용 frontmatter가 없다. 설치되는 스킬 항목은 하나다.
+
+설치된 스킬은 작업 흐름만 정의하며 Python 패키지를 설치하지 않는다. `open-detective` 실행 전 [README 설치 안내](../README.ko.md)를 따라 패키지를 설치한다.
 
 **범위 → 인벤토리/발견 → 소유 확인 → 익명 관측 → 내용 분류 → 격리 → 재측정** 순서로 실행한다. 새 관측 없이 종결을 주장하지 않는다.
 
@@ -11,18 +13,18 @@
 소유자 인벤토리는 명시적으로 승인된 읽기 자격증명을 사용할 수 있다. 이 자격증명, 프로세스, 브라우저 프로필, 출력은 익명 표적 측정과 분리한다. 발견 결과는 소유 증거가 조직과 연결할 때까지 후보다.
 
 ```bash
-python -m sudetect probe --scope scope.json <url>
-python -m sudetect browser <url> --scope scope.json --duration 3
-python -m sudetect inventory --provider import --scope-id TEAM --input inventory.json
-python -m sudetect discover --input candidates.json --scope-id TEAM
-python -m sudetect search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<수행자 입력>"
-python -m sudetect doctor --reference .
-python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
-python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
-python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
-python -m sudetect ledger --db audit.sqlite due
+open-detective probe --scope scope.json <url>
+open-detective browser <url> --scope scope.json --duration 3
+open-detective inventory --provider import --scope-id TEAM --input inventory.json
+open-detective discover --input candidates.json --scope-id TEAM
+open-detective search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<수행자 입력>"
+open-detective doctor --reference .
+open-detective channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json
+open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
+open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
+open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
+open-detective ledger --db audit.sqlite due
 ```
 
 `forensics`는 승인된 `--case`와 소유자가 허가한 read-only export를 위한 별도 private local 작업이다. case authorization은 네트워크 측정 `--scope`가 아니다. `ko/ops/forensics.md`를 읽고, 인증·credential 재사용·RAM/disk image 획득을 하지 않으며 없는 log에서 미유출을 추론하지 않는다.

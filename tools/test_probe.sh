@@ -5,10 +5,10 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 TMPROOT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
-TMP="$(mktemp -d "$TMPROOT/su-detect-test.XXXXXX")"
+TMP="$(mktemp -d "$TMPROOT/open-detective-test.XXXXXX")"
 TMP="$(cd "$TMP" && pwd -P)"
 case "$TMP" in
-  "$TMPROOT"/su-detect-test.*) ;;
+  "$TMPROOT"/open-detective-test.*) ;;
   *) echo "temporary_directory_out_of_scope" >&2; exit 2 ;;
 esac
 trap 'rm -rf -- "$TMP"' EXIT INT TERM

@@ -5,10 +5,10 @@ The discovery adapters extend the existing provenance-import workflow; they do n
 `channel-discover` currently supports two bounded adapters only. `certspotter` handles certificate-transparency names as ownership candidates. `generic_json_export` consumes an operator-configured, query-bound JSON search or export endpoint; it does not claim native web or document search coverage. Both record provider, channel, source, query work ID, observation time, requests, pages, end condition, partial/error state, health provenance, and opaque candidate references. They never copy exact candidate URLs to shared output.
 
 ```bash
-python -m sudetect channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json
-python -m sudetect channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json --plan _local/search-plan.json --import-output _local/search-plan-import.json
-python -m sudetect discovery-eval --input _local/evaluation.json --output _local/evaluation-result.json
-python -m sudetect asset-graph --input _local/asset-records.json --previous _local/asset-graph.previous.json --output _local/asset-graph.json
+open-detective channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json
+open-detective channel-discover --config _local/channel.json --scope _local/scope.json --channel-health _local/channel-health.json --locator-store _local/locators.sqlite --output _local/channel-result.json --plan _local/search-plan.json --import-output _local/search-plan-import.json
+open-detective discovery-eval --input _local/evaluation.json --output _local/evaluation-result.json
+open-detective asset-graph --input _local/asset-records.json --previous _local/asset-graph.previous.json --output _local/asset-graph.json
 ```
 
 The channel config is versioned local operator input. It declares one provider (`certspotter` or `generic_json_export`), a permitted channel (`certificate_transparency`, `web`, or `documents`), opaque source ID, query work ID/value, endpoint shape, required expected control IDs, and hard request/page/body/candidate limits. The run accepts health provenance only when it matches a declared expected control ID. A provider result with zero rows is not complete unless its declared end condition and coverage support that conclusion. Failed, stale, or partial channels remain gaps and can be imported into a search plan as such.

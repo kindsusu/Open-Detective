@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/su-detect/inventory.schema.json",
-  "title": "su-detect sanitized owner inventory",
+  "title": "Open-Detective sanitized owner inventory",
   "type": "object",
   "required": ["schema_version", "inventory_id", "provider", "scope_id", "status", "observed_at", "assets", "edges", "coverage", "errors"],
   "properties": {

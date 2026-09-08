@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "su-detect ownership scope",
+  "title": "Open-Detective ownership scope",
   "type": "object",
   "additionalProperties": false,
   "required": ["policy_id", "expires_at", "targets"],

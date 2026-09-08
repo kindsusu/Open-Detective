@@ -44,13 +44,13 @@ python tools/idgen.py --en "<이름>" --targets github --limit 100
 
 ## 익명 GitHub 메타데이터 발견
 
-실제 익명 GitHub 실행 전 `python -m sudetect channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json [--previous _local/channel-health.previous.json]`을 실행한다. config는 로컬 수행자 입력이며 control URL도 실행 scope가 필요하고 추가 네트워크 접근을 허가하지 않는다. `github-discover`와 `search-plan run`에는 fresh report가 필요하다. repository 목록에는 `github-repositories`, 검색 seed에는 두 검색이 repository 목록 확장으로 이어질 수 있으므로 `github-repositories`, `github-user-search`, `github-repository-search`가 모두 필요하다. 한 channel의 정상은 다른 channel의 정상이나 회사 전체 발견 완료가 아니다.
+실제 익명 GitHub 실행 전 `open-detective channels-doctor --config _local/channels.json --scope _local/control-scope.json --output _local/channel-health.json [--previous _local/channel-health.previous.json]`을 실행한다. config는 로컬 수행자 입력이며 control URL도 실행 scope가 필요하고 추가 네트워크 접근을 허가하지 않는다. `github-discover`와 `search-plan run`에는 fresh report가 필요하다. repository 목록에는 `github-repositories`, 검색 seed에는 두 검색이 repository 목록 확장으로 이어질 수 있으므로 `github-repositories`, `github-user-search`, `github-repository-search`가 모두 필요하다. 한 channel의 정상은 다른 channel의 정상이나 회사 전체 발견 완료가 아니다.
 
 config와 scope가 유효한 실행마다 `OK`, `DEGRADED`, `DEAD`, 측정 시각, 만료, 최소 관측 근거를 저장하며 control body를 복사하지 않는다. `OK`에는 HTTP 200, complete capture, 기대 JSON pointer 또는 body marker 일치가 모두 필요하다. 일반 body marker는 false positive가 가능하므로 구체적인 JSON-pointer 식별 검증을 우선한다. `DEAD`에는 도달 불가 control과 HTTP 404/410이 포함된다. report는 검사된 로컬 운영 근거이며 전자서명·원격 attestation·로컬 파일 변경에 대한 경계가 아니다. 외부 plan import는 `web`, `documents`, `certificate_transparency` 각 channel의 control이 해당 작업 `observed_at`에 유효해야 하며 이후 만료가 이미 유효한 과거 import를 무효로 만들지 않는다. 저장하는 health provenance에는 검증한 불투명 control 식별자와 시각만 넣고 policy text는 넣지 않는다. synthetic fixture는 실제 channel 검증이 아니다.
 
 GitHub control ID는 `api.github.com` endpoint family와 맞아야 한다. `github-repositories`는 `/repos/<owner>/<repo>` 또는 `/users|orgs/<owner>/repos`, `github-user-search`는 `/search/users`, `github-repository-search`는 nonempty `q`가 있는 `/search/repositories`를 쓴다. 다른 endpoint의 일반 공개 marker로 대신할 수 없다. Detail API control은 core repository family의 proxy일 뿐 pagination·permission coverage를 보장하지 않는다.
 
-`python -m sudetect github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json`는 자격증명 없이 공개 저장소 메타데이터를 조회한다. `--seed`는 사용자·저장소 검색, `--known-url`은 제공된 GitHub/GitHub Pages 링크에서 계정·저장소를 추출한다. 계정을 알게 되면 웹 검색 0건이어도 공개 저장소 목록을 조회한다. 저장소명, `has_pages`, 홈페이지 메타데이터와 관례상 Pages 주소를 후보로 연결한다. 생성한 주소는 실제 배포 확인이 아니며 커스텀 도메인·비공개 소스의 Pages는 누락될 수 있다.
+`open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json`는 자격증명 없이 공개 저장소 메타데이터를 조회한다. `--seed`는 사용자·저장소 검색, `--known-url`은 제공된 GitHub/GitHub Pages 링크에서 계정·저장소를 추출한다. 계정을 알게 되면 웹 검색 0건이어도 공개 저장소 목록을 조회한다. 저장소명, `has_pages`, 홈페이지 메타데이터와 관례상 Pages 주소를 후보로 연결한다. 생성한 주소는 실제 배포 확인이 아니며 커스텀 도메인·비공개 소스의 Pages는 누락될 수 있다.
 
 페이지 연결을 검증하고 요청·시간·응답 크기·계정·결과 상한을 적용한다. 실행 방법, 출처 그래프, 채널별 완전성과 오류를 출력한다. `COMPLETE`는 실행한 제한된 메타데이터 채널만 뜻하며 회사 전체 자산의 완전성을 뜻하지 않는다. 실제 식별자와 결과는 ignored `_local/`에 둔다. 회사명만 사용한 독립 발견과 제공 URL에서의 확장을 별도 평가한다. 놓친 URL을 입력해 다시 찾는 것은 기존 자동 발견 능력의 증거가 아니다.
 
@@ -71,9 +71,9 @@ GitHub는 다음 페이지 Link에 계정명 대신 숫자 사용자 ID를 넣�
 일반 `search-plan run`은 planned 작업을 총 요청 예산(기본 20회)과 작업별 한도(기본 6회) 안에서 실행한다. 알려진 URL을 우선한다. 전체 identity, industry 문맥, function 문맥 query family를 번갈아 조회하되 각 family 안에서는 순서를 보존하며, 짧거나 넓은 단어와 검색에서 나온 계정 확장은 뒤에 둔다. eligible query와 identity account 후보는 1:1로 번갈아 처리한다. 이는 제한된 heuristic이므로 전체 표기가 지연될 수 있으며 exhaustive 또는 최적 recall을 뜻하지 않는다. 한도에 닿은 쿼리는 미완료로 남긴다. 의도적으로 더 깊이 재조회할 때는 `--per-job-request-budget`을 최대 30까지 늘린다.
 
 ```bash
-python -m sudetect search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --per-job-request-budget 6 --max-batches 30 --channel-health _local/channel-health.json
-python -m sudetect search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --retry-failed --request-budget 20 --per-job-request-budget 10 --channel-health _local/channel-health.json
-python -m sudetect search-plan status --plan _local/plan.json
+open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --per-job-request-budget 6 --max-batches 30 --channel-health _local/channel-health.json
+open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --retry-failed --request-budget 20 --per-job-request-budget 10 --channel-health _local/channel-health.json
+open-detective search-plan status --plan _local/plan.json
 ```
 
 `run-until-budget`은 총예산을 명시해야 하며 deferred GitHub 작업도 순차 검토한다. 일반 `run`은 기존 deferred 작업을 암묵적으로 올리지 않는다. `run-until-budget` 또는 명시적 `--resume-query-budget` / `--resume-account-budget`을 사용한다. 실패 작업의 선택은 `--retry-failed`로 별도 제어한다. 선택된 작업은 한 실행에서 최대 한 번 수행한다. rate-limit 응답을 받으면 후속 제공사 요청을 멈추고 실행을 종료하며, 제한 해제까지 기다리거나 무한 재시도하지 않는다. search 결과가 새 계정 확장을 보고할 때, 그 확장의 requests·pages·items가 모두 엄격한 숫자 0이고 `REQUEST_LIMIT_EXCEEDED`이면 실제 관측 전의 좁은 marker다. 이 durable 작업은 deferred로 남아 명시적 deferred 재개에서 선택할 수 있으며, 제공사 batch를 provenance로 보존하고 가짜 attempt를 추가하지 않는다. 원래 search는 별도로 partial 또는 failed일 수 있고 그 근거는 유지한다. 실제 요청이 하나라도 있거나 count가 없거나 잘못됐거나 boolean이면 실패로 남는다. 이 marker는 기존 completed/failed 계정 근거를 바꾸지 않으며, 과거 failed record는 명시적으로 `--retry-failed`을 사용해 재시도한다. 매 batch가 원자적으로 저장되고 작업별 시도 이력과 원본 batch 메타데이터를 비공개 plan에 보존하며 집계 요청 수는 이 기록과 일치해야 한다. 상태는 최신 작업 근거와 남은 계정 확장을 반영하고 다음 작업 사유를 별도로 제공한다. 과거 실패 이력은 삭제하지 않는다. 작업별 증거가 없는 구형 partial/failed plan은 legacy coverage gap을 유지한다. 기존 plan은 이력으로 보존하고 같은 이름 입력으로 새 version-2 plan을 생성한다. 일부 재시도나 임의 import로 이 공백을 없애지 않는다. 선언된 plan 완료도 인터넷 전체 발견을 증명하지 않는다.

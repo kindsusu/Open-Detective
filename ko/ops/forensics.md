@@ -5,12 +5,12 @@
 case 파일, source export, 획득 artifact, manifest, custody chain, timeline은 소유자가 통제하는 로컬 디렉터리에 두고 commit하지 않는다. case에는 목적·보존 참조, 기간이 있는 authorization 참조, 승인된 read-only collector, 정확한 allowed source를 기록한다. 이 흐름으로 로그인, credential 재사용, 통제 우회, 인접 레코드 열거, RAM/disk image 획득을 하지 않는다. 이번 구현은 소유자가 제공한 `normalized_event_jsonl` export만 받으며 disk/RAM image와 vendor format import는 범위 밖이다.
 
 ```bash
-python -m sudetect forensics acquire --case _local/case.json --source-id src_00000000000000000000000000000005 --export _local/export.jsonl --evidence-dir _local/evidence
-python -m sudetect forensics verify --manifest _local/evidence/<evidence-id>/manifest.json --evidence-dir _local/evidence
-python -m sudetect forensics custody-add --case _local/case.json --chain _local/evidence/custody.jsonl --event _local/event.json --evidence-dir _local/evidence
-python -m sudetect forensics custody-verify --chain _local/evidence/custody.jsonl --expected-head "<승인된 별도 보관 head hash>"
-python -m sudetect forensics timeline --case _local/case.json --events _local/events.jsonl --evidence-dir _local/evidence --output _local/timeline.json
-python -m sudetect forensics timeline-verify --timeline _local/timeline.json --evidence-dir _local/evidence
+open-detective forensics acquire --case _local/case.json --source-id src_00000000000000000000000000000005 --export _local/export.jsonl --evidence-dir _local/evidence
+open-detective forensics verify --manifest _local/evidence/<evidence-id>/manifest.json --evidence-dir _local/evidence
+open-detective forensics custody-add --case _local/case.json --chain _local/evidence/custody.jsonl --event _local/event.json --evidence-dir _local/evidence
+open-detective forensics custody-verify --chain _local/evidence/custody.jsonl --expected-head "<승인된 별도 보관 head hash>"
+open-detective forensics timeline --case _local/case.json --events _local/events.jsonl --evidence-dir _local/evidence --output _local/timeline.json
+open-detective forensics timeline-verify --timeline _local/timeline.json --evidence-dir _local/evidence
 ```
 
 명령은 안전한 JSON 요약만 stdout에 내며 source content를 복사하지 않아야 한다. hash는 획득한 byte stream의 이후 변경을 탐지하지만 artifact의 진본성, 소유, 법적 증거능력, 완전한 custody를 보장하지 않는다. custody-add에 `--evidence-dir`를 주면 참조 manifest/artifact와 case를 검증하며, 없으면 custody reference는 self-reported다. 외부에 보관한 `--expected-head` 없이 custody chain을 검증하면 내부 link는 확인할 수 있어도 모든 tail truncation·full rehash를 탐지할 수 없다. source 제공 provenance, collector identity, authorization reference, event time, ingest time, clock uncertainty, retention gap, 수집 side effect를 분리해 기록한다. 원본을 보존하고 필요할 때만 통제된 redacted derivative를 공유한다. timeline 입력은 `normalized_event_jsonl` type의 획득된 allowed source만 허용하며 각 행은 일치하는 source·evidence·event time·canonical raw-line hash reference를 보존해야 한다.

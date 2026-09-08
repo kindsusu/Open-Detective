@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "su-detect local audit intake",
+  "title": "Open-Detective local audit intake",
   "description": "Pre-discovery owner and boundary intake. This file neither authorizes network activity nor replaces the executable scope policy.",
   "type": "object",
   "additionalProperties": false,

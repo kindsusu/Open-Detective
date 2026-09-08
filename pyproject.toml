@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "su-detect"
+name = "open-detective"
 version = "2.0.0"
 description = "Scope-bound exposure measurements, inventory, and evidence tracking"
 requires-python = ">=3.11"
@@ -15,7 +15,12 @@ browser = ["playwright==1.58.0"]
 test = ["jsonschema>=4.23,<5"]
 
 [project.scripts]
+open-detective = "sudetect.__main__:main"
 su-detect = "sudetect.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/kindsusu/Open-Detective"
+Repository = "https://github.com/kindsusu/Open-Detective"
 
 [tool.setuptools.packages.find]
 include = ["sudetect*"]

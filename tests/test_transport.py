@@ -81,6 +81,8 @@ class TransportTests(unittest.TestCase):
         self.assertEqual("GET", record[0][0])
         lowered = {key.lower() for key in record[0][2]}
         self.assertFalse(lowered & {"authorization", "cookie", "referer", "origin"})
+        self.assertEqual("open-detective/2 (authorized anonymous observation)",
+                         record[0][2]["User-Agent"])
         self.assertEqual("text/plain", result.headers["content-type"])
 
     def test_every_dns_answer_must_be_public(self):

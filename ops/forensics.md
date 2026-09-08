@@ -5,12 +5,12 @@ Forensics is separate from anonymous measurement and from the operational SQLite
 Keep case files, source exports, acquired artifacts, manifests, custody chains, and timelines in an owner-controlled local directory. Do not commit them. A case declares its purpose and retention reference, time-bounded authorization references, approved read-only collectors, and exact allowed sources. Do not use this workflow to log in, reuse credentials, bypass controls, enumerate adjacent records, or acquire RAM/disk images. This implementation accepts only owner-provided `normalized_event_jsonl` exports; disk/RAM images and vendor-format imports are out of scope.
 
 ```bash
-python -m sudetect forensics acquire --case _local/case.json --source-id src_00000000000000000000000000000005 --export _local/export.jsonl --evidence-dir _local/evidence
-python -m sudetect forensics verify --manifest _local/evidence/<evidence-id>/manifest.json --evidence-dir _local/evidence
-python -m sudetect forensics custody-add --case _local/case.json --chain _local/evidence/custody.jsonl --event _local/event.json --evidence-dir _local/evidence
-python -m sudetect forensics custody-verify --chain _local/evidence/custody.jsonl --expected-head "<approved saved head hash>"
-python -m sudetect forensics timeline --case _local/case.json --events _local/events.jsonl --evidence-dir _local/evidence --output _local/timeline.json
-python -m sudetect forensics timeline-verify --timeline _local/timeline.json --evidence-dir _local/evidence
+open-detective forensics acquire --case _local/case.json --source-id src_00000000000000000000000000000005 --export _local/export.jsonl --evidence-dir _local/evidence
+open-detective forensics verify --manifest _local/evidence/<evidence-id>/manifest.json --evidence-dir _local/evidence
+open-detective forensics custody-add --case _local/case.json --chain _local/evidence/custody.jsonl --event _local/event.json --evidence-dir _local/evidence
+open-detective forensics custody-verify --chain _local/evidence/custody.jsonl --expected-head "<approved saved head hash>"
+open-detective forensics timeline --case _local/case.json --events _local/events.jsonl --evidence-dir _local/evidence --output _local/timeline.json
+open-detective forensics timeline-verify --timeline _local/timeline.json --evidence-dir _local/evidence
 ```
 
 The commands emit safe JSON summaries and should not copy source content to stdout. Hashes detect later changes to an acquired byte stream; they do not establish an artifact's authenticity, ownership, legal admissibility, or a complete chain of custody. Supply `--evidence-dir` to custody-add to verify the referenced manifest/artifact and case; without it, the custody reference is self-reported. A custody-chain check without an externally retained `--expected-head` can verify its internal links but cannot detect every tail truncation or full rehash. Record source-provided provenance, collector identity, authorization reference, event time, ingest time, clock uncertainty, retention gaps, and collection side effects separately. Preserve originals and share only a controlled redacted derivative when required. Timeline input is only an acquired allowed source whose type is `normalized_event_jsonl`; each row must retain the matching source, evidence, event time, and canonical raw-line hash reference.
