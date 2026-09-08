@@ -25,6 +25,10 @@ python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM 
 python -m sudetect ledger --db audit.sqlite due
 ```
 
+`forensics`는 승인된 `--case`와 소유자가 허가한 read-only export를 위한 별도 private local 작업이다. case authorization은 네트워크 측정 `--scope`가 아니다. `ko/ops/forensics.md`를 읽고, 인증·credential 재사용·RAM/disk image 획득을 하지 않으며 없는 log에서 미유출을 추론하지 않는다.
+
+`channel-discover`는 제한된 Cert Spotter CT와 수행자 지정 query-bound JSON export만 지원한다. `discovery-eval`, `asset-graph`는 오프라인이다. `ko/ops/discovery-optimization.md`를 읽고, 어떤 결과도 소유나 측정 권한으로 취급하지 않는다.
+
 `tools/probe.sh`는 Python probe만 감싼다. 예전 분류를 다시 만들거나 호출 페이지 헤더를 자동 재전송하지 않는다.
 
 ## 필수 발견 계획
@@ -77,6 +81,6 @@ workflow 상태는 `candidate`, `ownership_pending`, `verification_pending`, `op
 
 observation 기반 사실, 대조군, 소유자와 심각도, unknown과 해소 조건, 격리와 기한, 재측정 증거, 하지 않은 행위를 보고한다. 커버리지는 정확한 scope, channel, 완료 page로 표현한다. 합성 테스트를 배포나 실제 자산 검증으로 표현하지 않는다.
 
-지원 파일: `ko/ops/discovery.md`, `ko/ops/verify.md`, `ko/ops/triage.md`, `ko/ops/evidence.md`, `ko/ops/remediate.md`, `ko/surfaces/inventory.md`, `ko/assets/ledger-template.md`.
+지원 파일: `ko/ops/discovery.md`, `ko/ops/discovery-optimization.md`, `ko/ops/verify.md`, `ko/ops/triage.md`, `ko/ops/evidence.md`, `ko/ops/remediate.md`, `ko/ops/forensics.md`, `ko/surfaces/inventory.md`, `ko/assets/ledger-template.md`.
 
 익명 `github-discover`는 공개 사용자·저장소 검색과 알려진 계정/Pages 링크 확장을 지원한다. 관례상 Pages URL 후보와 실제 배포 실측을 분리한다. 전체 회사 자산의 발견 완료를 뜻하지 않는다.

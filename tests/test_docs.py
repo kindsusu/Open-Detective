@@ -18,6 +18,8 @@ POLICY_PAIRS = [
     ("ops/evidence.md", "ko/ops/evidence.md"),
     ("ops/remediate.md", "ko/ops/remediate.md"),
     ("ops/identifiers.md", "ko/ops/identifiers.md"),
+    ("ops/forensics.md", "ko/ops/forensics.md"),
+    ("ops/discovery-optimization.md", "ko/ops/discovery-optimization.md"),
     ("surfaces/inventory.md", "ko/surfaces/inventory.md"),
     ("assets/ledger-template.md", "ko/assets/ledger-template.md"),
 ]
@@ -135,6 +137,15 @@ class DocumentationTests(unittest.TestCase):
             self.assertNotIn("confirmed not-found", text)
             self.assertIn("prefix_sha256", text)
             self.assertIn("identity encoding", text)
+
+    def test_forensics_docs_keep_case_authority_separate_from_measurement_scope(self):
+        for path in ("ops/forensics.md", "ko/ops/forensics.md"):
+            text=self.read(path)
+            self.assertIn("--case",text)
+            self.assertIn("--scope",text)
+            self.assertIn("read-only",text)
+            self.assertIn("NIST SP 800-86",text)
+            self.assertIn("NIST SP 800-61r3",text)
 
 
 if __name__ == "__main__":

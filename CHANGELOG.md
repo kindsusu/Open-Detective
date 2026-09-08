@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added separate approved-local forensic case commands and documentation for read-only export acquisition, custody verification, and evidence-linked timelines. Case authority remains distinct from anonymous measurement scope; hashes support integrity checks but do not establish legal admissibility or artifact authenticity.
+
 - Added a strict local audit-intake schema and neutral examples for exclusions, identity inputs, affiliate boundary, third-party declaration, escalation, and approval-dependent actions. Intake is explicitly separate from executable scope and network authorization.
 - Added documented anonymous discovery-channel positive controls. `channels-doctor` reports fresh `OK`/`DEGRADED`/`DEAD` health for separate GitHub repository and search API families; GitHub discovery and plan execution require channel-specific health evidence.
 

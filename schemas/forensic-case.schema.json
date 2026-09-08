@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Authorized local forensic-style export case",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "case_id", "purpose_ref", "retention_until", "authorization", "collectors", "allowed_sources"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "case_id": {"type": "string", "pattern": "^case_[0-9a-f]{32}$"},
+    "purpose_ref": {"$ref": "#/$defs/opaque"},
+    "retention_until": {"type": "string", "format": "date-time"},
+    "authorization": {"type": "object", "additionalProperties": false, "required": ["authorization_ref", "valid_from", "expires_at", "revoked"], "properties": {"authorization_ref": {"$ref": "#/$defs/opaque"}, "valid_from": {"type": "string", "format": "date-time"}, "expires_at": {"type": "string", "format": "date-time"}, "revoked": {"type": "boolean"}}},
+    "collectors": {"type": "array", "minItems": 1, "maxItems": 128, "items": {"type": "object", "additionalProperties": false, "required": ["collector_id", "tool", "version", "read_only"], "properties": {"collector_id": {"type": "string", "pattern": "^col_[0-9a-f]{32}$"}, "tool": {"type": "string", "minLength": 1, "maxLength": 128}, "version": {"type": "string", "minLength": 1, "maxLength": 128}, "read_only": {"const": true}}}},
+    "allowed_sources": {"type": "array", "minItems": 1, "maxItems": 512, "items": {"type": "object", "additionalProperties": false, "required": ["source_id", "source_type", "collector_id", "source_provenance_ref", "authorization_ref"], "properties": {"source_id": {"type": "string", "pattern": "^src_[0-9a-f]{32}$"}, "source_type": {"const": "normalized_event_jsonl"}, "collector_id": {"type": "string", "pattern": "^col_[0-9a-f]{32}$"}, "source_provenance_ref": {"$ref": "#/$defs/opaque"}, "authorization_ref": {"$ref": "#/$defs/opaque"}}}}
+  },
+  "$defs": {"opaque": {"type": "string", "pattern": "^opaque:[0-9a-f]{32}$"}}
+}

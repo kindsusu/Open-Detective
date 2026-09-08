@@ -33,7 +33,7 @@ python -m playwright install chromium
 python -m sudetect --help
 ```
 
-루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
+루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 ```bash
 python -m sudetect probe --scope scope.json https://app.example.test/
@@ -51,6 +51,10 @@ python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM 
 python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 python -m sudetect ledger --db audit.sqlite due
 ```
+
+`forensics`는 승인된 private local case와 소유자가 허가한 read-only export를 위한 별도 흐름이다. 이 `--case` authorization은 측정 `--scope`가 아니다. [ko/ops/forensics.md](ko/ops/forensics.md)를 읽는다. 인증·image 획득·법적 증거능력 판단을 하지 않으며, 없는 log에서 exfiltration 부재를 추론하지 않는다.
+
+`channel-discover`는 Cert Spotter CT와 수행자 지정 query-bound JSON export로 제한되며, `discovery-eval`과 `asset-graph`는 오프라인이다. [ko/ops/discovery-optimization.md](ko/ops/discovery-optimization.md)를 본다. 어느 것도 소유를 확정하거나 후보를 측정 target으로 바꾸지 않는다.
 
 `tools/probe.sh`는 Python probe의 호환 래퍼다.
 
@@ -111,6 +115,8 @@ GitHub control은 `api.github.com` family에 맞춘다. 차례로 repository det
 | [ko/ops/triage.md](ko/ops/triage.md) | 심각도와 최소화 |
 | [ko/ops/evidence.md](ko/ops/evidence.md) | 증거 위생과 provenance |
 | [ko/ops/remediate.md](ko/ops/remediate.md) | 격리와 재측정 |
+| [ko/ops/forensics.md](ko/ops/forensics.md) | 승인된 로컬 증거 흐름 |
+| [ko/ops/discovery-optimization.md](ko/ops/discovery-optimization.md) | 제한된 adapter, 오프라인 평가, asset graph |
 | [ko/surfaces/inventory.md](ko/surfaces/inventory.md) | 커버리지 체크리스트 |
 | [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json) | 발견 전 로컬 intake 형식 |
 | [ko/assets/ledger-template.md](ko/assets/ledger-template.md) | 사람이 읽는 내보내기 |

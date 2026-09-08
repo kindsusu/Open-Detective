@@ -25,7 +25,7 @@ source와 retrieval time이 없는 행은 거부하거나 격리한다. dedup을
 
 ## 공개 발견
 
-승인된 씨앗을 public repository, search engine, CT, DNS record, archive, public storage metadata, document/share index, hosting platform에서 보완한다. 현재 `discover` 명령은 수행자가 수집한 normalized JSON을 가져올 뿐 이 채널을 crawl하거나 query하지 않는다. 각 import record에 query/source channel, observation time, pagination/completeness, limitation을 둔다. 검색 index와 archive는 지연되고 불완전하다.
+승인된 씨앗을 public repository, search engine, CT, DNS record, archive, public storage metadata, document/share index, hosting platform에서 보완한다. 현재 `discover` 명령은 수행자가 수집한 normalized JSON을 가져올 뿐 이 채널을 crawl하거나 query하지 않는다. 각 import record에 query/source channel, observation time, pagination/completeness, limitation을 둔다. 검색 index와 archive는 지연되고 불완전하다. 별도 `channel-discover`는 제한된 Cert Spotter CT와 수행자 지정 query-bound JSON export만 지원하며 일반 crawler나 native web/document search가 아니다. [discovery-optimization.md](discovery-optimization.md)를 본다.
 
 이름을 만들기 전에 소유 metadata에서 찾은 정확한 public link를 사용한다. shared IP, favicon 유사성, 이름 유사성, certificate adjacency, reverse-IP output은 confidence가 있는 graph edge이지 ownership이 아니다. 새로 확증한 owned host에 CT/DNS/search를 다시 적용하되 무관한 tenant로 확장하지 않는다.
 

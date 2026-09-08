@@ -29,7 +29,10 @@ def check(skill_root=None, reference=None, require_browser=False):
     failures = []
     required = ("SKILL.md", "sudetect/__main__.py", "sudetect/search_plan.py",
                 "sudetect/identifiers.py", "sudetect/idgen.py", "sudetect/locators.py",
-                "tools/idgen.py", "ops/scope.md")
+                "tools/idgen.py", "ops/scope.md", "ops/forensics.md", "ko/ops/forensics.md",
+                "ops/discovery-optimization.md", "ko/ops/discovery-optimization.md",
+                "sudetect/forensic_cli.py", "sudetect/discovery_channels.py",
+                "sudetect/discovery_eval.py", "sudetect/asset_graph.py")
     missing = [name for name in required if not (root / name).is_file()]
     if missing:
         failures.append("RUNTIME_FILES_MISSING")

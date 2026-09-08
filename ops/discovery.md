@@ -25,7 +25,7 @@ Reject or quarantine rows without a source and retrieval time. Keep source recor
 
 ## Public discovery
 
-Supplement owner inventory with approved seeds across public repositories, search engines, CT, DNS records, archives, public storage metadata, document/share indexes, and known hosting platforms. The current `discover` command imports operator-collected normalized JSON and does not crawl or query these channels. Each imported record carries query/source channel, observation time, pagination/completeness, and limitations. Search indexes and archives are delayed and incomplete.
+Supplement owner inventory with approved seeds across public repositories, search engines, CT, DNS records, archives, public storage metadata, document/share indexes, and known hosting platforms. The current `discover` command imports operator-collected normalized JSON and does not crawl or query these channels. Each imported record carries query/source channel, observation time, pagination/completeness, and limitations. Search indexes and archives are delayed and incomplete. Separately, `channel-discover` supports only bounded Cert Spotter CT and operator-configured query-bound JSON exports; it is not a general crawler or native web/document search. See [discovery-optimization.md](discovery-optimization.md).
 
 Use exact public links found in owned metadata before generating names. Shared IPs, favicon similarity, naming resemblance, certificate adjacency, and reverse-IP output are graph edges with confidence, not ownership. Reapply CT/DNS/search to newly confirmed owned hosts without expanding to unrelated tenants.
 

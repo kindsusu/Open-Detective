@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "scope_id": "replace-with-scope-id",
+  "provider": "certspotter",
+  "channel_id": "certificate_transparency",
+  "source_id": "certspotter-v1-issuances",
+  "expected_control_ids": ["replace-with-certspotter-control-id"],
+  "query": {"work_id": "replace-with-plan-work-id", "value": "example.invalid"},
+  "endpoint": {"url": "https://api.certspotter.com/v1/issuances", "include_subdomains": true},
+  "limits": {"max_requests": 6, "max_pages": 6, "max_body_bytes": 262144, "max_candidates": 1000}
+}

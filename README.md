@@ -33,7 +33,7 @@ python -m playwright install chromium
 python -m sudetect --help
 ```
 
-The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 ```bash
 python -m sudetect probe --scope scope.json https://app.example.test/
@@ -51,6 +51,10 @@ python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM 
 python -m sudetect probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 python -m sudetect ledger --db audit.sqlite due
 ```
+
+`forensics` is a separate private-local workflow for an approved case and owner-authorized read-only exports; its `--case` authorization is not a measurement `--scope`. See [ops/forensics.md](ops/forensics.md). It does not authenticate, acquire images, establish legal admissibility, or infer exfiltration from an absent log.
+
+`channel-discover` is limited to Cert Spotter CT and operator-configured query-bound JSON exports; `discovery-eval` and `asset-graph` are offline. See [ops/discovery-optimization.md](ops/discovery-optimization.md). None confirms ownership or turns a candidate into a measurement target.
 
 `tools/probe.sh` is a compatibility wrapper around the Python probe.
 
@@ -111,6 +115,8 @@ Bind each GitHub control to its `api.github.com` family: repository detail or `/
 | [ops/triage.md](ops/triage.md) | Severity and minimization |
 | [ops/evidence.md](ops/evidence.md) | Evidence hygiene and provenance |
 | [ops/remediate.md](ops/remediate.md) | Containment and recheck |
+| [ops/forensics.md](ops/forensics.md) | Authorized local evidence workflow |
+| [ops/discovery-optimization.md](ops/discovery-optimization.md) | Bounded adapters, offline evaluation, and asset graph |
 | [surfaces/inventory.md](surfaces/inventory.md) | Coverage checklist |
 | [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json) | Local pre-discovery intake shape |
 | [assets/ledger-template.md](assets/ledger-template.md) | Human-readable export |

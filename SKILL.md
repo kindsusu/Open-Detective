@@ -28,6 +28,10 @@ python -m sudetect locators --store _local/locators.sqlite bind --scope-id TEAM 
 python -m sudetect ledger --db audit.sqlite due
 ```
 
+`forensics` is separate private-local work for an approved `--case` and owner-authorized read-only exports. Its case authorization is not a network measurement `--scope`. Read `ops/forensics.md`; do not authenticate, reuse credentials, acquire RAM/disk images, or infer no exfiltration from a missing log.
+
+`channel-discover` supports only bounded Cert Spotter CT and operator-configured query-bound JSON exports. `discovery-eval` and `asset-graph` are offline. Read `ops/discovery-optimization.md`; none establishes ownership or measurement authority.
+
 `tools/probe.sh` only wraps the Python probe. Do not recreate legacy classification or automatically replay calling-page headers.
 
 ## Decision contract
@@ -76,4 +80,4 @@ Use workflow states `candidate`, `ownership_pending`, `verification_pending`, `o
 
 Report observation-backed facts, controls, owner and severity, unknowns and resolution conditions, containment and due dates, recheck evidence, and omitted actions. Express coverage as exact scopes, channels, and completed pages. Never describe synthetic tests as deployed or live verification.
 
-Supporting files: `ops/discovery.md`, `ops/verify.md`, `ops/triage.md`, `ops/evidence.md`, `ops/remediate.md`, `surfaces/inventory.md`, `assets/ledger-template.md`.
+Supporting files: `ops/discovery.md`, `ops/discovery-optimization.md`, `ops/verify.md`, `ops/triage.md`, `ops/evidence.md`, `ops/remediate.md`, `ops/forensics.md`, `surfaces/inventory.md`, `assets/ledger-template.md`.

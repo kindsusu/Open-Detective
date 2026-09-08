@@ -1,0 +1,5 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,
+  "required":["version","dataset_id","input_sha256","synthetic","reproducibility","evaluation_split","results","limitations"],
+  "properties":{"version":{"const":1},"dataset_id":{"type":"string"},"input_sha256":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"synthetic":{"type":"boolean"},"reproducibility":{"type":"object"},"evaluation_split":{"const":"test"},"results":{"type":"object","required":["baseline","proposed"]},"limitations":{"type":"array","minItems":1,"items":{"type":"string"}}}
+}

@@ -1,0 +1,3 @@
+[
+  {"scope_id":"replace-with-scope-id","source_kind":"public_discovery","source_id":"public-source-1","source_record_id":"record-1","retrieved_at":"2026-01-01T00:00:00Z","locator_ref":"opaque:00000000000000000000000000000000","asset_id":"candidate-asset-1","alias_id":null,"relationship":"certificate_name","ownership_evidence":null,"coverage_state":"partial"}
+]

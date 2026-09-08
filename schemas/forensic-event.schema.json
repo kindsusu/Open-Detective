@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence-linked normalized forensic event",
+  "type": "object", "additionalProperties": false,
+  "required": ["event_id", "source_id", "evidence_id", "event_time", "ingest_time", "clock_uncertainty_ms", "actor_ref", "asset_ref", "source_record_ref", "activity"],
+  "properties": {
+    "event_id": {"type": "string", "pattern": "^evt_[0-9a-f]{32}$"},
+    "source_id": {"type": "string", "pattern": "^src_[0-9a-f]{32}$"},
+    "evidence_id": {"type": "string", "pattern": "^evd_[0-9a-f]{32}$"},
+    "event_time": {"type": "string", "format": "date-time"}, "ingest_time": {"type": "string", "format": "date-time"},
+    "clock_uncertainty_ms": {"type": "integer", "minimum": 0, "maximum": 86400000},
+    "actor_ref": {"type": "string", "pattern": "^opaque:[0-9a-f]{32}$"}, "asset_ref": {"type": "string", "pattern": "^opaque:[0-9a-f]{32}$"},
+    "source_record_ref": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "activity": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"}
+  }
+}

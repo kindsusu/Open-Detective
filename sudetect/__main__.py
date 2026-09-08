@@ -11,6 +11,8 @@ def main(argv=None):
         "ledger": "ledger", "analyze": "classifiers",
         "search-plan": "search_plan", "locators": "locators", "doctor": "doctor",
         "channels-doctor": "channel_health",
+        "forensics": "forensic_cli", "channel-discover": "discovery_channels",
+        "discovery-eval": "discovery_eval", "asset-graph": "asset_graph",
     }
     if not args or args[0] in ("-h", "--help"):
         print("usage: python -m sudetect {" + ",".join(commands) + "} [options]")
