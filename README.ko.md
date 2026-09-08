@@ -2,6 +2,14 @@
 
 ![Open-Detective 증거 조사 작업 공간](assets/hero.png)
 
+<p align="center">
+  <a href="https://github.com/kindsusu/Open-Detective/actions/workflows/tests.yml"><img alt="CI" src="https://github.com/kindsusu/Open-Detective/actions/workflows/tests.yml/badge.svg?branch=main"></a>
+  <a href="pyproject.toml"><img alt="version 2.0.0" src="https://img.shields.io/badge/version-2.0.0-0E6B5C"></a>
+  <a href="pyproject.toml"><img alt="Core: zero runtime dependencies; browser support is optional" src="https://img.shields.io/badge/core-zero%20dependencies-1A2B28"></a>
+  <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-0E6B5C"></a>
+  <a href="LICENSE"><img alt="License PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-A96A00"></a>
+</p>
+
 **조직의 공개 노출을 증거 중심으로 조사합니다.** Open-Detective는 외부에 공개된 자산을 찾고, 소유 관계를 확인할 수 있는 배포를 발견하며, 승인된 익명 접근을 관측하고, 우발적인 개인정보·기밀 콘텐츠 노출을 분류·격리·재측정하는 데 필요한 증거를 보존합니다.
 
 범위 경계, 소유 증거, 명시적인 커버리지 공백, 최소 수집, 포렌식에 연결할 수 있는 로컬 증거 흐름을 갖춰 조사 기록을 검토 가능하게 만듭니다. 취약점 스캐너가 아니며, 발견한 비밀로 인증하거나 통제를 우회하거나 인접 레코드를 열거하지 않고 인터넷 전체를 확인했다고 주장하지 않습니다.

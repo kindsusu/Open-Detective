@@ -2,6 +2,14 @@
 
 ![Open-Detective evidence investigation workspace](assets/hero.png)
 
+<p align="center">
+  <a href="https://github.com/kindsusu/Open-Detective/actions/workflows/tests.yml"><img alt="CI" src="https://github.com/kindsusu/Open-Detective/actions/workflows/tests.yml/badge.svg?branch=main"></a>
+  <a href="pyproject.toml"><img alt="version 2.0.0" src="https://img.shields.io/badge/version-2.0.0-0E6B5C"></a>
+  <a href="pyproject.toml"><img alt="Core: zero runtime dependencies; browser support is optional" src="https://img.shields.io/badge/core-zero%20dependencies-1A2B28"></a>
+  <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-0E6B5C"></a>
+  <a href="LICENSE"><img alt="License PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-A96A00"></a>
+</p>
+
 **Evidence-led public exposure investigation for organizations.** Open-Detective maps the public attack surface, discovers attributable deployments, observes approved anonymous access, and preserves the evidence needed to classify, contain, and recheck accidental data or confidential-content exposure.
 
 It is built for investigators who need a defensible record: bounded scope, ownership evidence, explicit coverage gaps, minimal collection, and forensic-ready local evidence workflows. It is not a vulnerability scanner. It does not authenticate with discovered secrets, bypass controls, enumerate adjacent records, or claim complete Internet coverage.
