@@ -6,8 +6,7 @@
   <meta name="generator" content="archify 2.17.0-dev.1">
   <title>Open-Detective Public Exposure Review Workflow Diagram</title>
   <script>
-    // Resolve the theme before first paint so light-preference users don't
-    // see a dark flash. The toolbar script below re-applies with UI state.
+    // Dark is the operating default. URL and stored reader choices still win.
     (function () {
       try {
         var theme = null;
@@ -25,7 +24,7 @@
           try { theme = localStorage.getItem('archify-theme'); } catch (_) {}
         }
         if (theme !== 'light' && theme !== 'dark') {
-          theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          theme = 'dark';
         }
         document.documentElement.setAttribute('data-theme', theme);
       } catch (_) {}
@@ -171,46 +170,46 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
        ========================================================== */
     :root,
     [data-theme="dark"] {
-      --bg: #020617;
-      --grid: #1e293b;
-      --text: #ffffff;
-      --text-muted: #94a3b8;
-      --text-dim: #475569;
+      --bg: #0d1117;
+      --grid: #21262d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --text-dim: #6e7681;
       /* UI chrome and menu hints need more contrast than SVG .t-dim accents */
-      --text-faint: #7d8da1;
+      --text-faint: #8b949e;
 
-      --panel: rgba(15, 23, 42, 0.5);
-      --panel-border: #1e293b;
-      --lane-fill: rgba(15, 23, 42, 0.22);
-      --lane-stroke: #334155;
+      --panel: #161b22;
+      --panel-border: #30363d;
+      --lane-fill: rgba(22, 27, 34, 0.78);
+      --lane-stroke: #30363d;
 
-      --arrow: #64748b;
-      --arrow-emphasis: #34d399;
+      --arrow: #8b949e;
+      --arrow-emphasis: #8cbdd9;
 
       /* Opaque mask color used behind semi-transparent component fills
          so the arrows drawn underneath are properly hidden. */
-      --mask: #0f172a;
+      --mask: #161b22;
 
-      --frontend-fill:    rgba(8, 51, 68, 0.4);
-      --frontend-stroke:  #22d3ee;
-      --backend-fill:     rgba(6, 78, 59, 0.4);
-      --backend-stroke:   #34d399;
-      --database-fill:    rgba(76, 29, 149, 0.4);
-      --database-stroke:  #a78bfa;
-      --cloud-fill:       rgba(120, 53, 15, 0.3);
-      --cloud-stroke:     #fbbf24;
-      --security-fill:    rgba(136, 19, 55, 0.4);
-      --security-stroke:  #fb7185;
-      --messagebus-fill:  rgba(251, 146, 60, 0.3);
-      --messagebus-stroke:#fb923c;
-      --external-fill:    rgba(30, 41, 59, 0.5);
-      --external-stroke:  #94a3b8;
+      --frontend-fill:    rgba(140, 189, 217, 0.16);
+      --frontend-stroke:  #8cbdd9;
+      --backend-fill:     rgba(111, 191, 150, 0.16);
+      --backend-stroke:   #6fbf96;
+      --database-fill:    rgba(178, 151, 214, 0.17);
+      --database-stroke:  #b297d6;
+      --cloud-fill:       rgba(197, 139, 97, 0.17);
+      --cloud-stroke:     #c58b61;
+      --security-fill:    rgba(220, 120, 125, 0.17);
+      --security-stroke:  #dc787d;
+      --messagebus-fill:  rgba(214, 167, 104, 0.17);
+      --messagebus-stroke:#d6a768;
+      --external-fill:    rgba(139, 148, 158, 0.16);
+      --external-stroke:  #8b949e;
 
-      --toolbar-bg:       rgba(15, 23, 42, 0.8);
-      --toolbar-border:   #334155;
-      --toolbar-text:     #e2e8f0;
-      --toolbar-hover:    rgba(15, 23, 42, 0.95);
-      --toolbar-menu-bg:  #0f172a;
+      --toolbar-bg:       rgba(22, 27, 34, 0.92);
+      --toolbar-border:   #30363d;
+      --toolbar-text:     #e6edf3;
+      --toolbar-hover:    #21262d;
+      --toolbar-menu-bg:  #161b22;
     }
 
     [data-theme="light"] {
@@ -5789,7 +5788,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     })();
 
     /* ============================================================
-       Theme toggle — persists to localStorage, respects system pref
+       Theme toggle — persists reader choices; operating default is dark.
        ============================================================ */
 
     Archify.theme = (function () {
@@ -5820,7 +5819,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         if (fromUrl) return fromUrl;
         var saved = readStored();
         if (saved === 'light' || saved === 'dark') return saved;
-        return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        return 'dark';
       }
 
       function apply(theme) {
@@ -5837,18 +5836,6 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
       apply(resolveInitial());
       btn.addEventListener('click', toggle);
-
-      // Follow live OS theme changes while the user has no explicit preference.
-      try {
-        var media = window.matchMedia('(prefers-color-scheme: light)');
-        var onChange = function (e) {
-          var saved = readStored();
-          if (urlOverride() || saved === 'light' || saved === 'dark') return;
-          apply(e.matches ? 'light' : 'dark');
-        };
-        if (media.addEventListener) media.addEventListener('change', onChange);
-        else if (media.addListener) media.addListener(onChange);
-      } catch (_) {}
 
       return { toggle: toggle };
     })();
@@ -7072,7 +7059,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
               toast(viewerText('viewer.export.downloadedShare'));
             })
           : format === 'svg'
-          ? Promise.resolve(serializeSvg(1, { autoTheme: true })).then(function (d) {
+          ? Promise.resolve(serializeSvg(1)).then(function (d) {
               var blob = new Blob([d.svgString], { type: 'image/svg+xml;charset=utf-8' });
               recordExportReceipt('svg', blob, d.canonicalStateClean);
               download(blob, base + '.svg');
