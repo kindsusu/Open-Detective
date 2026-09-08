@@ -5,7 +5,7 @@ Forensics is separate from anonymous measurement and from the operational SQLite
 Keep case files, source exports, acquired artifacts, manifests, custody chains, and timelines in an owner-controlled local directory. Do not commit them. A case declares its purpose and retention reference, time-bounded authorization references, approved read-only collectors, and exact allowed sources. Do not use this workflow to log in, reuse credentials, bypass controls, enumerate adjacent records, or acquire RAM/disk images. This implementation accepts only owner-provided `normalized_event_jsonl` exports; disk/RAM images and vendor-format imports are out of scope.
 
 ```bash
-python -m sudetect forensics acquire --case _local/case.json --source-id audit-export --export _local/export.jsonl --evidence-dir _local/evidence
+python -m sudetect forensics acquire --case _local/case.json --source-id src_00000000000000000000000000000005 --export _local/export.jsonl --evidence-dir _local/evidence
 python -m sudetect forensics verify --manifest _local/evidence/<evidence-id>/manifest.json --evidence-dir _local/evidence
 python -m sudetect forensics custody-add --case _local/case.json --chain _local/evidence/custody.jsonl --event _local/event.json --evidence-dir _local/evidence
 python -m sudetect forensics custody-verify --chain _local/evidence/custody.jsonl --expected-head "<approved saved head hash>"

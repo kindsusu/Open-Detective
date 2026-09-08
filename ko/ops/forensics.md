@@ -5,7 +5,7 @@
 case 파일, source export, 획득 artifact, manifest, custody chain, timeline은 소유자가 통제하는 로컬 디렉터리에 두고 commit하지 않는다. case에는 목적·보존 참조, 기간이 있는 authorization 참조, 승인된 read-only collector, 정확한 allowed source를 기록한다. 이 흐름으로 로그인, credential 재사용, 통제 우회, 인접 레코드 열거, RAM/disk image 획득을 하지 않는다. 이번 구현은 소유자가 제공한 `normalized_event_jsonl` export만 받으며 disk/RAM image와 vendor format import는 범위 밖이다.
 
 ```bash
-python -m sudetect forensics acquire --case _local/case.json --source-id audit-export --export _local/export.jsonl --evidence-dir _local/evidence
+python -m sudetect forensics acquire --case _local/case.json --source-id src_00000000000000000000000000000005 --export _local/export.jsonl --evidence-dir _local/evidence
 python -m sudetect forensics verify --manifest _local/evidence/<evidence-id>/manifest.json --evidence-dir _local/evidence
 python -m sudetect forensics custody-add --case _local/case.json --chain _local/evidence/custody.jsonl --event _local/event.json --evidence-dir _local/evidence
 python -m sudetect forensics custody-verify --chain _local/evidence/custody.jsonl --expected-head "<승인된 별도 보관 head hash>"
