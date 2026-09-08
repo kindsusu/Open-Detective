@@ -6,9 +6,15 @@
 
 It is built for investigators who need a defensible record: bounded scope, ownership evidence, explicit coverage gaps, minimal collection, and forensic-ready local evidence workflows. It is not a vulnerability scanner. It does not authenticate with discovered secrets, bypass controls, enumerate adjacent records, or claim complete Internet coverage.
 
-[Repository](https://github.com/kindsusu/Open-Detective) · [Korean documentation](README.ko.md) · [Forensic workflow](ops/forensics.md)
+[Repository](https://github.com/kindsusu/Open-Detective) · [Korean documentation](README.ko.md) · [Operating workflow](docs/WORKFLOW.md) · [Interactive workflow](docs/workflow/open-detective.workflow.html) · [Forensic workflow](ops/forensics.md)
 
 Implementation and rollout notes (Korean): [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
+
+## Operating workflow
+
+[![Open-Detective operating workflow](docs/workflow/open-detective.workflow.png)](docs/WORKFLOW.md)
+
+Read the [step-by-step guide](docs/WORKFLOW.md), or download the [interactive Archify diagram](docs/workflow/open-detective.workflow.html) and open it in a browser. The complete diagram scrolls vertically on some desktop screens.
 
 ## What it does
 

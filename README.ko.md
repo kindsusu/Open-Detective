@@ -6,7 +6,19 @@
 
 범위 경계, 소유 증거, 명시적인 커버리지 공백, 최소 수집, 포렌식에 연결할 수 있는 로컬 증거 흐름을 갖춰 조사 기록을 검토 가능하게 만듭니다. 취약점 스캐너가 아니며, 발견한 비밀로 인증하거나 통제를 우회하거나 인접 레코드를 열거하지 않고 인터넷 전체를 확인했다고 주장하지 않습니다.
 
-[저장소](https://github.com/kindsusu/Open-Detective) · [영문 문서](README.md) · [포렌식 흐름](ko/ops/forensics.md)
+[저장소](https://github.com/kindsusu/Open-Detective) · [영문 문서](README.md) · [운영 흐름](docs/WORKFLOW.md) · [인터랙티브 흐름도](docs/workflow/open-detective.workflow.html) · [포렌식 흐름](ko/ops/forensics.md)
+
+[![Open-Detective 작동 흐름](docs/workflow/open-detective.workflow.png)](docs/WORKFLOW.md)
+
+흐름도와 상세 문서는 영어로 제공합니다. HTML은 다운로드 후 브라우저에서 열 수 있으며, 일부 화면에서는 세로 스크롤이 필요합니다.
+
+| 단계 | 다음 단계로 가는 조건 |
+|---|---|
+| Intake → 식별자·검색 계획 | 경계·제외·소유/에스컬레이션 참조를 로컬에 기록한다. |
+| 계획 → control → 발견 | `doctor` parity와 필요한 fresh channel control을 확인한다. |
+| 발견 → 익명 관측 | 소유 증거, exact HTTPS origin/path, 만료 전 `--scope`를 승인한다. |
+| 관측 → 분류 → 격리 | 사람의 최소 증거 검토 뒤 소유자가 격리 조치를 결정하고 ledger에 기록한다. |
+| 재측정 → 종료 | 모든 locator/alias의 새 익명 관측이 있어야 하며, 잔여 공백은 `partially_closed`다. |
 
 수정본의 설치·적용 절차와 구현 범위: [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
 

@@ -1,0 +1,30 @@
+{
+  "diagram_type": "workflow",
+  "archify_revision": "10722002bb8777ecb639d93c49586fae4adf3ae4",
+  "artifact_checks": {
+    "passed": 9,
+    "composition_errors": 0,
+    "warnings": 0
+  },
+  "browser_evidence": "failed: vertical first-screen overflow",
+  "visual_review": "qualified: complete scrollable workflow and actual viewer exports inspected",
+  "correction_rounds": 2,
+  "files": {
+    "open-detective.workflow.json": {
+      "sha256": "9da75d5c76015678fd4b2dee5a9658141ba964b7350b4f136f2c9240ba6d42ae",
+      "bytes": 4693
+    },
+    "open-detective.workflow.html": {
+      "sha256": "417f2e651ed3879e51f1d8ba54ccc0b9eedde70eaf9097f348232d3a4ce61792",
+      "bytes": 818304
+    },
+    "open-detective.workflow.svg": {
+      "sha256": "7aa18838534f6b60aec9b1db8b81ad6cbcb66c4312ae2164ddefb60bf032a364",
+      "bytes": 161985
+    },
+    "open-detective.workflow.png": {
+      "sha256": "967fa872107d6bce050050c05b53844e6c9c83e82e7b0e8721e5d7f6219ef4c9",
+      "bytes": 800292
+    }
+  }
+}
