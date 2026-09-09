@@ -26,7 +26,7 @@ def _write(path, value):
 
 def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliases: Iterable[str]=(),
                 industry: Iterable[str]=(), functions: Iterable[str]=(), known_urls: Iterable[str]=(),
-                domains: Iterable[str]=(), query_budget: int=4, account_budget: int=4) -> dict[str,Any]:
+                domains: Iterable[str]=(), query_budget: int=4, account_budget: int=4, github_code: bool=False) -> dict[str,Any]:
     aliases=list(aliases); industry=list(industry); functions=list(functions); known_urls=list(known_urls); domains=list(domains)
     if not scope_id or not (company_ko or company_en or aliases): raise ValueError("company identity required")
     if not 1 <= query_budget <= 10 or not 1 <= account_budget <= 10: raise ValueError("invalid budget")
@@ -64,10 +64,14 @@ def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliase
     else:
         job("certificate_transparency","domain_seed_missing","","no-approved-domain-seed","not_applicable",0,
             not_applicable_reason="no_approved_domain_seed")
-    return {"schema_version":"1.0","coverage_version":2,"legacy_coverage_gap":False,
+    result = {"schema_version":"1.0","coverage_version":2,"legacy_coverage_gap":False,
             "plan_id":plan_id,"scope_id":scope_id,"created_at":_now(),
             "identity":identity,"required_channels":list(CHANNELS),"budgets":{"github_queries":query_budget,
             "github_accounts":account_budget},"jobs":jobs,"runs":[],"status":"PLANNED"}
+    if github_code:
+        from .github_code_search import enable_code_search
+        result = enable_code_search(result)
+    return result
 
 def _status(plan):
     jobs=plan["jobs"]; required=set(plan.get("required_channels",CHANNELS))
@@ -350,6 +354,8 @@ def import_results(plan: Mapping[str,Any], payload: Mapping[str,Any]) -> dict[st
         out["legacy_coverage_gap"]=True
     for row in payload.get("jobs",[]):
         if not isinstance(row,Mapping) or row.get("work_id") not in by_id: raise ValueError("unknown work id")
+        if by_id[row["work_id"]].get("channel") == "github_code":
+            raise ValueError("code jobs require the explicit code runner")
         state=row.get("state")
         if state not in {"completed","failed","not_applicable"}: raise ValueError("invalid import state")
         job=by_id[row["work_id"]]; job["state"]=state
@@ -405,6 +411,14 @@ def main(argv=None):
     create.add_argument("--company-ko",default=""); create.add_argument("--company-en",default=""); create.add_argument("--alias",action="append",default=[])
     create.add_argument("--industry",action="append",default=[]); create.add_argument("--function",action="append",default=[]); create.add_argument("--known-url",action="append",default=[]); create.add_argument("--domain",action="append",default=[])
     create.add_argument("--query-budget",type=int,default=4); create.add_argument("--account-budget",type=int,default=4)
+    create.add_argument("--github-code", action="store_true")
+    enable=sub.add_parser("enable-code"); enable.add_argument("--plan",required=True)
+    code=sub.add_parser("run-code"); code.add_argument("--plan",required=True)
+    code.add_argument("--token-env",required=True); code.add_argument("--control",required=True)
+    code.add_argument("--locator-store",required=True); code.add_argument("--output",required=True)
+    code.add_argument("--request-budget",type=int,default=10)
+    code.add_argument("--resume-query-budget",type=int,default=0)
+    code.add_argument("--retry-failed",action="store_true")
     for name in ("run","run-until-budget","status"):
         cmd=sub.add_parser(name); cmd.add_argument("--plan",required=True)
         if name in {"run","run-until-budget"}:
@@ -420,9 +434,26 @@ def main(argv=None):
     try:
         if args.command=="plan":
             plan=create_plan(scope_id=args.scope_id,company_ko=args.company_ko,company_en=args.company_en,aliases=args.alias,
-                 industry=args.industry,functions=args.function,known_urls=args.known_url,domains=args.domain,query_budget=args.query_budget,account_budget=args.account_budget); _write(args.output,plan)
+                 industry=args.industry,functions=args.function,known_urls=args.known_url,domains=args.domain,query_budget=args.query_budget,account_budget=args.account_budget,github_code=args.github_code); _write(args.output,plan)
         else:
             path=Path(args.plan); plan=json.loads(path.read_text(encoding="utf-8"))
+            if args.command == "enable-code":
+                from .github_code_search import enable_code_search
+                plan=enable_code_search(plan); _write(path,plan)
+            elif args.command == "run-code":
+                import os
+                from .github_code_search import run_code, export_report, _load
+                from .locators import LocatorStore
+                output=Path(args.output).absolute()
+                if output.exists() or not output.parent.is_dir() or any(p.is_symlink() for p in (output,*output.parents)):
+                    raise ValueError("unsafe output")
+                with LocatorStore(args.locator_store) as store:
+                    plan=run_code(plan,token_env=args.token_env,control=_load(args.control),locator_store=store,
+                                  request_budget=args.request_budget,resume_query_budget=args.resume_query_budget,
+                                  retry_failed=args.retry_failed,persist=lambda value:_write(path,value))
+                _write(path,plan)
+                with os.fdopen(os.open(output,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),"w",encoding="utf-8") as stream:
+                    json.dump(export_report(plan),stream,ensure_ascii=True,indent=2)
             if args.command in {"run","run-until-budget"}:
                 from .channel_health import load_health_report
                 health=load_health_report(args.channel_health)

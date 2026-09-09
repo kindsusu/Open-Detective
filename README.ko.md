@@ -1,5 +1,7 @@
 # Open-Detective
 
+[GitHub 코드 검색 어댑터](ops/github-code-search.md)는 기존 검색 계획의 검색어와 도메인을 재사용해 공개 파일 후보를 찾습니다. 기존 계획에는 `search-plan enable-code`로 추가하고, 검색 전용 토큰의 환경변수 이름과 실제 확인용 공개 파일을 지정해 `search-plan run-code`로 실행합니다. 같은 저장소·파일의 중복을 합치고 검색 근거와 페이지 재개 위치를 보존합니다. 기존 익명 계정 탐색·노출 검증은 유지하며 Agent-Reach 설치는 필요하지 않습니다.
+
 ![Open-Detective 증거 조사 작업 공간](assets/hero.png)
 
 <p align="center">

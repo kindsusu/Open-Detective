@@ -1,0 +1,7 @@
+{
+  "control_id": "replace-with-approved-public-code-control",
+  "query": "replace-with-benign-indexed-marker",
+  "repository": "replace-owner/replace-public-fixture",
+  "path": "README.md",
+  "expires_at": "2020-01-01T00:00:00Z"
+}
