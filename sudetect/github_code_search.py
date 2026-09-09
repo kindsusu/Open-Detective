@@ -21,7 +21,11 @@ MAX_ASSETS = 5000
 MAX_BODY = 2 * 1024 * 1024
 MAX_QUERY = 512
 _RESUMABLE_DEFERRED = {"REQUEST_BUDGET", "TIME_BUDGET", "BYTE_BUDGET", "RATE_LIMITED", "explicit_token_required"}
-_RETRYABLE_FAILED = _RESUMABLE_DEFERRED | {"SEARCH_INDEX_CHANGED", "SEARCH_RESULTS_OVERLAP"}
+# These failures can change after the operator explicitly asks to retry: a
+# replacement explicit token can fix authentication, a transport failure can
+# be transient, and the two cursor failures require a fresh cursor.  Never
+# promote scope, publicness, metadata, or provider-coverage failures.
+_RETRYABLE_FAILED = {"AUTH_FAILED", "REQUEST_FAILED", "SEARCH_INDEX_CHANGED", "SEARCH_RESULTS_OVERLAP"}
 LIMITATIONS = ["public_code_search_metadata_only", "default_branch_only",
                "indexed_files_smaller_than_384KB", "provider_max_1000_results_per_query",
                "index_freshness_and_unindexed_assets_unknown", "not_anonymous_target_observation",
@@ -464,18 +468,53 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
 
 def export_report(plan):
     jobs = [j for j in plan["jobs"] if j["channel"] == CHANNEL]
-    active = [j for j in jobs if j.get("repository") and j.get("deferred_reason") != "superseded_by_repository_scoped_jobs"]
-    refs = sorted(set((plan.get("code_repository_locator_refs") or {}).values()))
+    configured = {}
+    for value in plan.get("code_repositories", []):
+        try:
+            repository = _repository(value)
+        except ValueError:
+            continue
+        configured.setdefault(repository.casefold(), repository)
+
+    def valid_scoped_job(job):
+        try:
+            repository = _repository(job.get("repository"))
+            match = re.fullmatch(r'"[^"\\:\x00-\x1f]{1,180}" repo:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+) in:file',
+                                 str(job.get("value", "")))
+            if match is None or _repository(match.group(1)).casefold() != repository.casefold():
+                return None
+        except ValueError:
+            return None
+        return repository if repository.casefold() in configured else None
+
+    def configured_reference_key(value):
+        try:
+            return _repository(value).casefold() in configured
+        except ValueError:
+            return False
+
+    scoped = [(job, valid_scoped_job(job)) for job in jobs]
+    active = [job for job, repository in scoped if repository is not None]
+    scope_gap_jobs = sum(bool(repository is None and
+                               job.get("deferred_reason") != "superseded_by_repository_scoped_jobs")
+                         for job, repository in scoped)
+    raw_refs = plan.get("code_repository_locator_refs") or {}
+    refs = sorted({ref for repository, ref in raw_refs.items()
+                   if (isinstance(ref, str) and re.fullmatch(r"opaque:[0-9a-f]{32}", ref)
+                       and configured_reference_key(repository))})
     completed = sum(j.get("state") == "completed" for j in active)
+    active_repositories = {valid_scoped_job(job).casefold() for job in active}
     return {"schema_version": "1.0", "scope_id": plan["scope_id"], "plan_id": plan["plan_id"],
             "assets": plan.get("code_assets", []), "runs": plan.get("code_runs", []),
             "jobs": [{k: j.get(k) for k in ("work_id", "state", "result_count", "pages", "end_condition", "error_code", "deferred_reason")}
                      for j in jobs],
-            "selected_repository_scope": {"repository_count": len({j.get("repository").casefold() for j in active}),
-                                          "repository_locator_refs": refs,
-                                          "attempted_repository_count": len({j.get("repository").casefold() for j in active if j.get("attempts")})},
+            "selected_repository_scope": {"repository_count": len(configured),
+                                           "repository_locator_refs": refs,
+                                           "attempted_repository_count": len({j.get("repository").casefold() for j in active if j.get("attempts")})},
             "job_counts": {"completed": completed, "pending": sum(j.get("state") != "completed" for j in active),
-                           "legacy_superseded": sum(j.get("deferred_reason") == "superseded_by_repository_scoped_jobs" for j in jobs)},
+                           "legacy_superseded": sum(j.get("deferred_reason") == "superseded_by_repository_scoped_jobs" for j in jobs),
+                           "scope_gap": scope_gap_jobs},
             "global_search_performed": False,
             "limitations": LIMITATIONS,
-            "coverage": "selected_scope_complete" if active and all(j["state"] == "completed" for j in active) else "partial"}
+            "coverage": "selected_scope_complete" if (not scope_gap_jobs and configured and set(configured) <= active_repositories
+                                                          and all(j["state"] == "completed" for j in active)) else "partial"}

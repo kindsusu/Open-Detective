@@ -172,6 +172,34 @@ class CodeSearchTests(unittest.TestCase):
             self.assertEqual(4, len(fake.calls))
             self.assertIn(code, result["code_runs"][-1]["errors"])
 
+    def test_explicit_retry_recovers_auth_and_transient_request_failures_only(self):
+        for failure in ("AUTH_FAILED", "REQUEST_FAILED"):
+            def failing_fetch(url, headers, *, _failure=failure):
+                parsed = urlsplit(url)
+                query = parse_qs(parsed.query).get("q", [""])[0]
+                if parsed.path == "/search/code" and "repo:fixture/control" not in query:
+                    if _failure == "AUTH_FAILED":
+                        return (401, {}, {})
+                    raise OSError("synthetic transient failure")
+                return Fake()(url, headers)
+
+            first = self.run_code(fake=failing_fetch)
+            first_job = next(job for job in first["jobs"] if job["channel"] == "github_code" and
+                             job.get("error_code") == failure)
+            self.assertEqual("failed", first_job["state"])
+            not_retried = self.run_code(first, Fake())
+            self.assertEqual([], not_retried["code_runs"][-1]["errors"])
+            self.assertEqual("failed", next(job for job in not_retried["jobs"] if job["work_id"] == first_job["work_id"])["state"])
+            recovered = self.run_code(first, Fake(), retry_failed=True)
+            self.assertEqual("completed", next(job for job in recovered["jobs"] if job["work_id"] == first_job["work_id"])["state"])
+
+        first = self.run_code(fake=Fake({1: payload([item()], incomplete=True)}))
+        incomplete = next(job for job in first["jobs"] if job["channel"] == "github_code" and
+                          job.get("error_code") == "SEARCH_INCOMPLETE")
+        blocked = self.run_code(first, Fake(), retry_failed=True)
+        self.assertEqual("failed", next(job for job in blocked["jobs"] if job["work_id"] == incomplete["work_id"])["state"])
+        self.assertEqual(0, blocked["code_runs"][-1]["requests"])
+
     def test_report_resolves_existing_private_export(self):
         from sudetect.asset_locations import export_locations
         result = self.run_code()
@@ -292,6 +320,49 @@ class CodeSearchTests(unittest.TestCase):
         self.assertEqual(1, len(report["selected_repository_scope"]["repository_locator_refs"]))
         self.assertEqual(1, report["job_counts"]["completed"])
         self.assertEqual("partial", report["coverage"])
+
+    def test_scoped_report_uses_configured_scope_and_keeps_invalid_jobs_as_gaps(self):
+        source = plan()
+        invalid = next(job for job in source["jobs"] if job["channel"] == "github_code" and job["state"] == "planned")
+        invalid.update(repository="other/repository", value='"Fixture Motors" repo:other/repository in:file')
+        source["code_repository_locator_refs"] = {
+            "unrelated/app": self.store.put("team", "https://github.com/unrelated/app"),
+            "other/repository": self.store.put("team", "https://github.com/other/repository"),
+        }
+        result = self.run_code(source, Fake())
+        report = export_report(result)
+        self.assertEqual(1, report["selected_repository_scope"]["repository_count"])
+        self.assertEqual(1, len(report["selected_repository_scope"]["repository_locator_refs"]))
+        self.assertEqual(0, report["selected_repository_scope"]["attempted_repository_count"])
+        self.assertEqual(1, report["job_counts"]["scope_gap"])
+        self.assertEqual("partial", report["coverage"])
+
+    def test_selected_repository_without_a_matching_job_stays_partial(self):
+        source = plan()
+        source["code_repositories"].append("other/repository")
+        report = export_report(source)
+        self.assertEqual(2, report["selected_repository_scope"]["repository_count"])
+        self.assertEqual("partial", report["coverage"])
+
+    def test_missing_repository_job_is_a_scope_gap_and_refs_must_be_opaque(self):
+        source = plan()
+        missing = next(job for job in source["jobs"] if job["channel"] == "github_code" and job["state"] == "planned")
+        missing.pop("repository")
+        missing.update(state="deferred", deferred_reason="repository_scope_required")
+        source["code_repository_locator_refs"] = {"unrelated/app": "https://not-an-opaque-reference.example"}
+        report = export_report(source)
+        self.assertEqual(1, report["job_counts"]["scope_gap"])
+        self.assertEqual([], report["selected_repository_scope"]["repository_locator_refs"])
+        self.assertEqual("partial", report["coverage"])
+
+    def test_legacy_superseded_job_is_not_a_scope_gap(self):
+        source = plan()
+        legacy = next(job for job in source["jobs"] if job["channel"] == "github_code")
+        legacy.pop("repository")
+        legacy.update(state="deferred", deferred_reason="superseded_by_repository_scoped_jobs")
+        report = export_report(source)
+        self.assertEqual(1, report["job_counts"]["legacy_superseded"])
+        self.assertEqual(0, report["job_counts"]["scope_gap"])
 
     def test_case_variant_repository_reenable_is_idempotent(self):
         source = create_plan(scope_id="team", company_en="Fixture Motors", query_budget=1)
