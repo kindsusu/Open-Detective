@@ -142,6 +142,8 @@ class Analysis:
 
 
 def analyze(body: bytes, content_type="", base_url="", *, synthetic_markers=()) -> Analysis:
+    from .asset_profile import profile_content
+    asset_profile = profile_content(body[:MAX_ANALYSIS_BYTES], content_type)
     truncated = len(body) > MAX_ANALYSIS_BYTES
     text = body[:MAX_ANALYSIS_BYTES].decode("utf-8", errors="replace")
     signals = []
@@ -248,7 +250,8 @@ def analyze(body: bytes, content_type="", base_url="", *, synthetic_markers=()) 
         signal("CHALLENGE_PAGE_INDICATOR")
     return Analysis({"classifier_version": "2.0.0", "content": content, "signals": signals,
                      "structure": stats, "analysis_complete": not truncated,
-                     "linked_candidates": len(unique), "automated_sensitivity_is_provisional": True}, unique)
+                     "linked_candidates": len(unique), "automated_sensitivity_is_provisional": True,
+                     "asset_profile": asset_profile}, unique)
 
 
 def main(argv=None):

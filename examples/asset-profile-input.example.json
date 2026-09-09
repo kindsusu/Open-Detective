@@ -1,0 +1,6 @@
+{
+  "assets": [
+    {"asset_id": "public-site", "kind": "website", "locator_ref": "opaque:00000000000000000000000000000000"},
+    {"asset_id": "pricing-export", "parent_asset_id": "public-site", "content_type": "application/json", "local_file": "captured-pricing.json"}
+  ]
+}

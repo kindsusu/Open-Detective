@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added offline `asset-profile` for bounded, value-free structural review of already captured local content, including parent asset relationships, native inventory coverage context, and provisional business-data categories. Added `asset-locations` to resolve opaque asset references into a separate private-local URL mapping without network access. Neither command establishes ownership, reachability, sensitive content, or severity.
+
 - Rebranded the project and installed skill as Open-Detective. Documentation now uses the `open-detective` CLI.
 
 - Added separate approved-local forensic case commands and documentation for read-only export acquisition, custody verification, and evidence-linked timelines. Case authority remains distinct from anonymous measurement scope; hashes support integrity checks but do not establish legal admissibility or artifact authenticity.

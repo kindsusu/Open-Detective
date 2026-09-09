@@ -60,7 +60,7 @@ open-detective --help
 
 The primary command is `open-detective`. The existing `su-detect` and `python -m sudetect` entry points remain supported and invoke the same CLI.
 
-The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 ```bash
 open-detective probe --scope scope.json https://app.example.test/
@@ -74,12 +74,18 @@ open-detective channels-doctor --config _local/channels.json --scope _local/cont
 open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
 open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
+open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 open-detective probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 open-detective ledger --db audit.sqlite due
 ```
 
 `forensics` is a separate private-local workflow for an approved case and owner-authorized read-only exports; its `--case` authorization is not a measurement `--scope`. See [ops/forensics.md](ops/forensics.md). It does not authenticate, acquire images, establish legal admissibility, or infer exfiltration from an absent log.
+
+`asset-profile` is also offline: it examines bounded, already captured local bytes and emits value-free structural hints and candidate business-data categories. It never fetches a locator, establishes public reachability, assigns severity, or confirms sensitive content. Read [ops/asset-profile.md](ops/asset-profile.md) for the manifest and interpretation rules.
+
+`asset-locations` joins opaque references from a profile or inventory report with the existing local locator store in one `--scope-id`. It writes exact URLs only to a new private-local mapping, makes no network request, and does not inspect an index or file body. The mapping can contain sensitive URL components; do not publish it. See [ops/asset-profile.md](ops/asset-profile.md).
 
 `channel-discover` is limited to Cert Spotter CT and operator-configured query-bound JSON exports; `discovery-eval` and `asset-graph` are offline. See [ops/discovery-optimization.md](ops/discovery-optimization.md). None confirms ownership or turns a candidate into a measurement target.
 
@@ -143,6 +149,9 @@ Bind each GitHub control to its `api.github.com` family: repository detail or `/
 | [ops/evidence.md](ops/evidence.md) | Evidence hygiene and provenance |
 | [ops/remediate.md](ops/remediate.md) | Containment and recheck |
 | [ops/forensics.md](ops/forensics.md) | Authorized local evidence workflow |
+| [ops/asset-profile.md](ops/asset-profile.md) | Offline, value-free local asset profiling |
+| [examples/asset-profile-input.example.json](examples/asset-profile-input.example.json) | Minimal asset-profile input |
+| [schemas/asset-profile-input.schema.json](schemas/asset-profile-input.schema.json) | Asset-profile input shape |
 | [ops/discovery-optimization.md](ops/discovery-optimization.md) | Bounded adapters, offline evaluation, and asset graph |
 | [surfaces/inventory.md](surfaces/inventory.md) | Coverage checklist |
 | [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json) | Local pre-discovery intake shape |

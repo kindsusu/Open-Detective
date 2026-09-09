@@ -66,7 +66,7 @@ open-detective --help
 
 기본 명령은 `open-detective`입니다. 기존 `su-detect`와 `python -m sudetect` 진입점도 계속 지원하며 같은 CLI를 실행합니다.
 
-루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
+루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 ```bash
 open-detective probe --scope scope.json https://app.example.test/
@@ -80,12 +80,18 @@ open-detective channels-doctor --config _local/channels.json --scope _local/cont
 open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
 open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
+open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 open-detective probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 open-detective ledger --db audit.sqlite due
 ```
 
 `forensics`는 승인된 private local case와 소유자가 허가한 read-only export를 위한 별도 흐름이다. 이 `--case` authorization은 측정 `--scope`가 아니다. [ko/ops/forensics.md](ko/ops/forensics.md)를 읽는다. 인증·image 획득·법적 증거능력 판단을 하지 않으며, 없는 log에서 exfiltration 부재를 추론하지 않는다.
+
+`asset-profile`도 오프라인 명령이다. 이미 승인된 로컬 capture의 제한된 bytes만 읽어 값 없이 구조 힌트와 후보 사업 데이터 범주를 만든다. locator를 가져오거나 공개 도달 가능성을 확정하거나 심각도를 부여하거나 민감 콘텐츠를 확정하지 않는다. manifest와 해석 규칙은 [ops/asset-profile.md](ops/asset-profile.md)를 본다.
+
+`asset-locations`는 profile 또는 inventory report의 opaque 참조를 같은 `--scope-id`의 기존 로컬 locator store와 연결한다. exact URL은 새 private-local mapping에만 기록하고 네트워크 요청·index/file body 검사는 하지 않는다. 이 mapping에는 민감한 URL 구성 요소가 있을 수 있으므로 공개하지 않는다. [ops/asset-profile.md](ops/asset-profile.md)를 본다.
 
 `channel-discover`는 Cert Spotter CT와 수행자 지정 query-bound JSON export로 제한되며, `discovery-eval`과 `asset-graph`는 오프라인이다. [ko/ops/discovery-optimization.md](ko/ops/discovery-optimization.md)를 본다. 어느 것도 소유를 확정하거나 후보를 측정 target으로 바꾸지 않는다.
 
@@ -149,6 +155,9 @@ GitHub control은 `api.github.com` family에 맞춘다. 차례로 repository det
 | [ko/ops/evidence.md](ko/ops/evidence.md) | 증거 위생과 provenance |
 | [ko/ops/remediate.md](ko/ops/remediate.md) | 격리와 재측정 |
 | [ko/ops/forensics.md](ko/ops/forensics.md) | 승인된 로컬 증거 흐름 |
+| [ops/asset-profile.md](ops/asset-profile.md) | 값 없이 수행하는 오프라인 로컬 자산 프로파일링 |
+| [examples/asset-profile-input.example.json](examples/asset-profile-input.example.json) | 최소 asset-profile 입력 예시 |
+| [schemas/asset-profile-input.schema.json](schemas/asset-profile-input.schema.json) | asset-profile 입력 형식 |
 | [ko/ops/discovery-optimization.md](ko/ops/discovery-optimization.md) | 제한된 adapter, 오프라인 평가, asset graph |
 | [ko/surfaces/inventory.md](ko/surfaces/inventory.md) | 커버리지 체크리스트 |
 | [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json) | 발견 전 로컬 intake 형식 |
