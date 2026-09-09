@@ -19,6 +19,9 @@ CHANNEL = "github_code"
 MAX_REQUESTS = 10
 MAX_ASSETS = 5000
 MAX_BODY = 2 * 1024 * 1024
+MAX_QUERY = 512
+_RESUMABLE_DEFERRED = {"REQUEST_BUDGET", "TIME_BUDGET", "BYTE_BUDGET", "RATE_LIMITED", "explicit_token_required"}
+_RETRYABLE_FAILED = _RESUMABLE_DEFERRED | {"SEARCH_INDEX_CHANGED", "SEARCH_RESULTS_OVERLAP"}
 LIMITATIONS = ["public_code_search_metadata_only", "default_branch_only",
                "indexed_files_smaller_than_384KB", "provider_max_1000_results_per_query",
                "index_freshness_and_unindexed_assets_unknown", "not_anonymous_target_observation",
@@ -49,8 +52,18 @@ def _term(value):
     return '"' + " ".join(value.split()) + '"'
 
 
-def enable_code_search(plan):
-    """Add jobs from the existing identity/query plan, leaving old work untouched."""
+def _repository(value):
+    if not isinstance(value, str) or value.count("/") != 1:
+        raise ValueError("invalid_repository")
+    owner, name = value.split("/")
+    slug = _repo_slug(owner, name)
+    if slug is None or slug != value:
+        raise ValueError("invalid_repository")
+    return slug
+
+
+def enable_code_search(plan, repositories=()):
+    """Add repository-scoped jobs and quarantine legacy unscoped jobs."""
     from .search_plan import _id, _status
     out = json.loads(json.dumps(plan))
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", out.get("scope_id", "")):
@@ -58,27 +71,43 @@ def enable_code_search(plan):
     jobs = out["jobs"]
     if len(jobs) > 10000:
         raise ValueError("too_many_jobs")
+    requested = [_repository(value) for value in repositories]
+    configured = [_repository(value) for value in out.get("code_repositories", [])]
+    repository_by_key = {}
+    for value in configured + requested:
+        repository_by_key.setdefault(value.casefold(), value)
+    repositories = list(repository_by_key.values())
+    out["code_repositories"] = repositories
     existing = {j["work_id"] for j in jobs}
+    for job in jobs:
+        if job.get("channel") == CHANNEL and not job.get("repository"):
+            job["state"] = "deferred"
+            job["deferred_reason"] = ("superseded_by_repository_scoped_jobs" if repositories
+                                      else "repository_scope_required")
     seeds = [(d, "operator-domain-seed") for d in out.get("identity", {}).get("domains", [])]
     seeds += [(j["value"], j.get("generation_rationale", "existing-query"))
               for j in jobs if j.get("channel") == "github" and j.get("kind") == "search_query"]
     budget = out.get("budgets", {}).get("github_queries", 4)
     count = 0
     seen = set()
-    for value, rationale in seeds:
-        query = _term(value) + " in:file is:public"
-        if query.casefold() in seen:
-            continue
-        seen.add(query.casefold())
-        jid = _id("wrk", out["plan_id"], CHANNEL, "search_query", query)
-        if jid not in existing:
-            jobs.append({"work_id": jid, "channel": CHANNEL, "kind": "search_query", "value": query,
-                         "generation_rationale": rationale, "state": "planned" if count < budget else "deferred",
-                         "deferred_reason": "explicit_code_runner_required" if count < budget else "query_budget_exceeded",
-                         "request_budget": 1, "result_count": None, "pages": None,
-                         "end_condition": None, "error_code": None})
-            existing.add(jid)
-        count += 1
+    for repository in repositories:
+        for value, rationale in seeds:
+            query = _term(value) + " repo:" + repository + " in:file"
+            if query.casefold() in seen:
+                continue
+            seen.add(query.casefold())
+            jid = _id("wrk", out["plan_id"], CHANNEL, "search_query", query)
+            if jid not in existing:
+                if len(jobs) >= 10000:
+                    raise ValueError("too_many_jobs")
+                jobs.append({"work_id": jid, "channel": CHANNEL, "kind": "search_query", "value": query,
+                             "repository": repository, "generation_rationale": rationale,
+                             "state": "planned" if count < budget else "deferred",
+                             "deferred_reason": "explicit_code_runner_required" if count < budget else "query_budget_exceeded",
+                             "request_budget": 1, "result_count": None, "pages": None,
+                             "end_condition": None, "error_code": None})
+                existing.add(jid)
+            count += 1
     if CHANNEL not in out["required_channels"]:
         out["required_channels"].append(CHANNEL)
     out["status"] = _status(out)
@@ -99,12 +128,10 @@ class Broker:
         self.bytes = 0
         self.deadline = time.monotonic() + 60
         self.retry_at = None
+        self.public_preflights = 0
+        self.public_repositories = set()
 
-    def get(self, query, page):
-        if not isinstance(query, str) or len(query) > 256 or not re.fullmatch(r'"[^"\\:\x00-\x1f]{1,180}"(?: repo:[A-Za-z0-9._/-]+)? in:file is:public', query):
-            raise CodeError("QUERY_INVALID")
-        if type(page) is not int or not 1 <= page <= 10:
-            raise CodeError("PAGE_LIMIT")
+    def _request(self, url, headers):
         if self.requests >= self.limit:
             raise CodeError("REQUEST_BUDGET")
         remaining = self.deadline - time.monotonic()
@@ -112,9 +139,6 @@ class Broker:
             raise CodeError("TIME_BUDGET")
         if self.bytes >= 8 * 1024 * 1024:
             raise CodeError("BYTE_BUDGET")
-        url = "https://api.github.com/search/code?" + urllib.parse.urlencode({"q": query, "per_page": 100, "page": page})
-        headers = {"Accept": "application/vnd.github+json", "Authorization": "Bearer " + self.token,
-                   "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "open-detective-code-search/1"}
         self.requests += 1
         try:
             if self.fetcher is not None:
@@ -155,6 +179,44 @@ class Broker:
             raise CodeError("AUTH_FAILED")
         if 300 <= status < 400:
             raise CodeError("REDIRECT_BLOCKED")
+        return status, payload
+
+    def preflight(self, repository):
+        repository = _repository(repository)
+        key = repository.casefold()
+        if key in self.public_repositories:
+            return
+        url = "https://api.github.com/repos/" + urllib.parse.quote(repository, safe="/")
+        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+                   "User-Agent": "open-detective-code-search/1"}
+        before = self.requests
+        try:
+            status, payload = self._request(url, headers)
+        finally:
+            if self.requests > before:
+                self.public_preflights += 1
+        if (status != 200 or not isinstance(payload, dict) or payload.get("private") is not False
+                or payload.get("visibility", "public") != "public"
+                or not isinstance(payload.get("full_name"), str)
+                or payload["full_name"].casefold() != key):
+            raise CodeError("REPOSITORY_NOT_PUBLIC")
+        self.public_repositories.add(key)
+
+    def get(self, query, page):
+        match = re.fullmatch(r'"[^"\\:\x00-\x1f]{1,180}" repo:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+) in:file', query) if isinstance(query, str) and len(query) <= MAX_QUERY else None
+        if match is None:
+            raise CodeError("QUERY_INVALID")
+        try:
+            repository = _repository(match.group(1))
+        except ValueError:
+            raise CodeError("QUERY_INVALID") from None
+        if type(page) is not int or not 1 <= page <= 10:
+            raise CodeError("PAGE_LIMIT")
+        self.preflight(repository)
+        url = "https://api.github.com/search/code?" + urllib.parse.urlencode({"q": query, "per_page": 100, "page": page})
+        headers = {"Accept": "application/vnd.github+json", "Authorization": "Bearer " + self.token,
+                   "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "open-detective-code-search/1"}
+        status, payload = self._request(url, headers)
         if status != 200:
             raise CodeError("SEARCH_FAILED")
         if (not isinstance(payload, dict) or type(payload.get("total_count")) is not int or payload["total_count"] < 0
@@ -206,7 +268,7 @@ def _control(value):
     expiry = datetime.fromisoformat(value["expires_at"].replace("Z", "+00:00"))
     if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
         raise ValueError("expired_code_control")
-    return _term(value["query"]) + " repo:" + value["repository"] + " in:file is:public"
+    return _term(value["query"]) + " repo:" + _repository(value["repository"]) + " in:file"
 
 
 def run_code(plan, *, token_env, control, locator_store, request_budget=10,
@@ -223,24 +285,42 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
         raise ValueError("invalid_scope")
     if CHANNEL not in out.get("required_channels", []):
         raise ValueError("code_channel_not_enabled")
-    control_query = _control(control)
     jobs = [j for j in out["jobs"] if j.get("channel") == CHANNEL]
+    configured_repositories = {_repository(value).casefold() for value in out.get("code_repositories", [])}
+    runnable = []
+    scope_gap = False
     for job in jobs:
-        if retry_failed and job["state"] == "failed":
+        if retry_failed and job["state"] == "failed" and job.get("error_code") in _RETRYABLE_FAILED:
             if job.get("error_code") in {"SEARCH_INDEX_CHANGED", "SEARCH_RESULTS_OVERLAP"}:
                 job.pop("code_cursor", None)
             job["state"] = "planned"
-        if job["state"] == "deferred" and (job.get("deferred_reason") != "query_budget_exceeded" or resume_query_budget):
+        if (job["state"] == "deferred" and job.get("repository") and
+                (job.get("deferred_reason") in _RESUMABLE_DEFERRED or
+                 (job.get("deferred_reason") == "query_budget_exceeded" and resume_query_budget))):
             if job.get("deferred_reason") == "query_budget_exceeded":
                 resume_query_budget -= 1
             job["state"] = "planned"
+        if job.get("state") != "planned":
+            continue
+        repository = job.get("repository")
+        try:
+            scoped_repository = _repository(repository)
+            match = re.fullmatch(r'"[^"\\:\x00-\x1f]{1,180}" repo:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+) in:file', str(job.get("value", "")))
+            if (match is None or _repository(match.group(1)).casefold() != scoped_repository.casefold()
+                    or scoped_repository.casefold() not in configured_repositories):
+                raise ValueError("invalid_scope")
+        except ValueError:
+            job.update(state="deferred", deferred_reason="repository_scope_required")
+            scope_gap = True
+            continue
+        job["repository"] = scoped_repository
+        runnable.append(job)
     run = {"run_id": "code_" + uuid.uuid4().hex, "observed_at": stamp(), "source_ref": "github_api:explicit_code_search",
-           "status": "PARTIAL", "requests": 0, "bytes": 0, "errors": [], "control": {"control_id": control["control_id"], "state": "NOT_CHECKED"},
+           "status": "PARTIAL", "requests": 0, "bytes": 0, "public_preflights": 0, "errors": [], "control": {"control_id": control["control_id"], "state": "NOT_CHECKED"},
            "synthetic": fetcher is not None}
     out.setdefault("code_runs", []).append(run)
     assets = out.setdefault("code_assets", [])
     scope_id = out["scope_id"]
-    token = os.environ.get(token_env)
     def finish(error=None):
         if error and error not in run["errors"]:
             run["errors"].append(error)
@@ -250,14 +330,20 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
         if persist:
             persist(out)
         return out
+    if not runnable:
+        run["status"] = "NO_RUNNABLE_WORK"
+        return finish("REPOSITORY_SCOPE_REQUIRED" if scope_gap else None)
+    token = os.environ.get(token_env)
     if not token or len(token) > 1024 or any(ord(c) < 33 or ord(c) > 126 for c in token):
         for job in jobs:
             if job["state"] == "planned":
                 job.update(state="deferred", deferred_reason="explicit_token_required")
         return finish("EXPLICIT_TOKEN_REQUIRED")
-    if not any(j["state"] == "planned" for j in jobs):
-        run["status"] = "NO_RUNNABLE_WORK"
-        return finish()
+    control_query = _control(control)
+    out["code_repository_locator_refs"] = {
+        repository: locator_store.put(scope_id, "https://github.com/" + repository)
+        for repository in sorted({_repository(value) for value in out.get("code_repositories", [])}, key=str.casefold)
+    }
     # A persisted per-plan window prevents immediate resume from resetting its budget.
     now = time.time()
     window = out.get("code_rate_window", {}) if fetcher is None else {}
@@ -269,7 +355,7 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
         return finish("RATE_WINDOW_EXHAUSTED")
     broker = Broker(token, limit=allowance, fetcher=fetcher)
     def checkpoint():
-        run.update(requests=broker.requests, bytes=broker.bytes)
+        run.update(requests=broker.requests, bytes=broker.bytes, public_preflights=broker.public_preflights)
         if fetcher is None:
             out["code_rate_window"] = {"started": window["started"], "used": window["used"] + broker.requests}
         if persist:
@@ -278,7 +364,8 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
         check = broker.get(control_query, 1)
         checkpoint()
         matches = [_file(item) for item in check["items"]]
-        if check["incomplete_results"] or not any(x[1].casefold() == control["repository"].casefold() and x[2] == control["path"] for x in matches):
+        if (check["incomplete_results"] or any(x[1].casefold() != control["repository"].casefold() for x in matches)
+                or not any(x[2] == control["path"] for x in matches)):
             raise CodeError("CONTROL_EXPECTATION_FAILED")
         run["control"].update(state="SYNTHETIC_OK" if fetcher else "OK", observed_at=stamp())
     except (CodeError, ValueError, TypeError, AttributeError) as exc:
@@ -289,10 +376,9 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
         if broker.retry_at:
             run["retry_after_epoch"] = broker.retry_at
         return finish("CODE_CONTROL_FAILED")
-    for job in jobs:
-        if job["state"] != "planned":
-            continue
+    for job in runnable:
         query = job["value"]
+        repository = job["repository"]
         digest = hashlib.sha256(query.encode()).hexdigest()
         cursor = job.setdefault("code_cursor", {"query_sha256": digest, "next_page": 1, "items": 0, "pages": 0})
         if cursor["query_sha256"] != digest:
@@ -307,14 +393,21 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
                 if "total_count" in cursor and cursor["total_count"] != payload["total_count"]:
                     raise CodeError("SEARCH_INDEX_CHANGED")
                 cursor["total_count"] = payload["total_count"]
-                invalid = False
+                invalid = None
                 page_assets = []
+                accepted = []
                 for item in payload["items"]:
                     try:
                         repo_id, slug, path, sha, url, immutable = _file(item)
-                    except (CodeError, ValueError, AttributeError, TypeError):
-                        invalid = True
+                        if slug.casefold() != repository.casefold():
+                            raise CodeError("OFF_SCOPE_REPOSITORY")
+                    except (CodeError, ValueError, AttributeError, TypeError) as exc:
+                        invalid = "OFF_SCOPE_REPOSITORY" if str(exc) == "OFF_SCOPE_REPOSITORY" else "INVALID_OR_NONPUBLIC_ITEMS"
                         continue
+                    accepted.append((repo_id, slug, path, sha, url, immutable))
+                if invalid:
+                    raise CodeError(invalid)
+                for repo_id, slug, path, sha, url, immutable in accepted:
                     repo_ref = locator_store.put(scope_id, "https://github.com/" + slug)
                     asset_id = "file_" + uuid.uuid5(uuid.UUID(repo_ref.split(":")[1]), str(repo_id) + "/" + path).hex
                     if asset_id in cursor.get("seen_assets", []) or asset_id in page_assets:
@@ -336,8 +429,6 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
                     evidence = {"work_id": job["work_id"], "run_id": run["run_id"], "page": page}
                     if evidence not in asset["evidence_refs"]:
                         asset["evidence_refs"].append(evidence)
-                if invalid:
-                    raise CodeError("INVALID_OR_NONPUBLIC_ITEMS")
                 if payload["incomplete_results"]:
                     raise CodeError("SEARCH_INCOMPLETE")
                 cursor.setdefault("seen_assets", []).extend(page_assets)
@@ -373,9 +464,18 @@ def run_code(plan, *, token_env, control, locator_store, request_budget=10,
 
 def export_report(plan):
     jobs = [j for j in plan["jobs"] if j["channel"] == CHANNEL]
+    active = [j for j in jobs if j.get("repository") and j.get("deferred_reason") != "superseded_by_repository_scoped_jobs"]
+    refs = sorted(set((plan.get("code_repository_locator_refs") or {}).values()))
+    completed = sum(j.get("state") == "completed" for j in active)
     return {"schema_version": "1.0", "scope_id": plan["scope_id"], "plan_id": plan["plan_id"],
             "assets": plan.get("code_assets", []), "runs": plan.get("code_runs", []),
             "jobs": [{k: j.get(k) for k in ("work_id", "state", "result_count", "pages", "end_condition", "error_code", "deferred_reason")}
                      for j in jobs],
+            "selected_repository_scope": {"repository_count": len({j.get("repository").casefold() for j in active}),
+                                          "repository_locator_refs": refs,
+                                          "attempted_repository_count": len({j.get("repository").casefold() for j in active if j.get("attempts")})},
+            "job_counts": {"completed": completed, "pending": sum(j.get("state") != "completed" for j in active),
+                           "legacy_superseded": sum(j.get("deferred_reason") == "superseded_by_repository_scoped_jobs" for j in jobs)},
+            "global_search_performed": False,
             "limitations": LIMITATIONS,
-            "coverage": "complete" if jobs and all(j["state"] == "completed" for j in jobs) else "partial"}
+            "coverage": "selected_scope_complete" if active and all(j["state"] == "completed" for j in active) else "partial"}

@@ -26,7 +26,8 @@ def _write(path, value):
 
 def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliases: Iterable[str]=(),
                 industry: Iterable[str]=(), functions: Iterable[str]=(), known_urls: Iterable[str]=(),
-                domains: Iterable[str]=(), query_budget: int=4, account_budget: int=4, github_code: bool=False) -> dict[str,Any]:
+                domains: Iterable[str]=(), query_budget: int=4, account_budget: int=4, github_code: bool=False,
+                repositories: Iterable[str]=()) -> dict[str,Any]:
     aliases=list(aliases); industry=list(industry); functions=list(functions); known_urls=list(known_urls); domains=list(domains)
     if not scope_id or not (company_ko or company_en or aliases): raise ValueError("company identity required")
     if not 1 <= query_budget <= 10 or not 1 <= account_budget <= 10: raise ValueError("invalid budget")
@@ -70,7 +71,7 @@ def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliase
             "github_accounts":account_budget},"jobs":jobs,"runs":[],"status":"PLANNED"}
     if github_code:
         from .github_code_search import enable_code_search
-        result = enable_code_search(result)
+        result = enable_code_search(result, repositories)
     return result
 
 def _status(plan):
@@ -411,8 +412,8 @@ def main(argv=None):
     create.add_argument("--company-ko",default=""); create.add_argument("--company-en",default=""); create.add_argument("--alias",action="append",default=[])
     create.add_argument("--industry",action="append",default=[]); create.add_argument("--function",action="append",default=[]); create.add_argument("--known-url",action="append",default=[]); create.add_argument("--domain",action="append",default=[])
     create.add_argument("--query-budget",type=int,default=4); create.add_argument("--account-budget",type=int,default=4)
-    create.add_argument("--github-code", action="store_true")
-    enable=sub.add_parser("enable-code"); enable.add_argument("--plan",required=True)
+    create.add_argument("--github-code", action="store_true"); create.add_argument("--repository",action="append",default=[])
+    enable=sub.add_parser("enable-code"); enable.add_argument("--plan",required=True); enable.add_argument("--repository",action="append",default=[])
     code=sub.add_parser("run-code"); code.add_argument("--plan",required=True)
     code.add_argument("--token-env",required=True); code.add_argument("--control",required=True)
     code.add_argument("--locator-store",required=True); code.add_argument("--output",required=True)
@@ -434,12 +435,13 @@ def main(argv=None):
     try:
         if args.command=="plan":
             plan=create_plan(scope_id=args.scope_id,company_ko=args.company_ko,company_en=args.company_en,aliases=args.alias,
-                 industry=args.industry,functions=args.function,known_urls=args.known_url,domains=args.domain,query_budget=args.query_budget,account_budget=args.account_budget,github_code=args.github_code); _write(args.output,plan)
+                 industry=args.industry,functions=args.function,known_urls=args.known_url,domains=args.domain,query_budget=args.query_budget,
+                 account_budget=args.account_budget,github_code=args.github_code,repositories=args.repository); _write(args.output,plan)
         else:
             path=Path(args.plan); plan=json.loads(path.read_text(encoding="utf-8"))
             if args.command == "enable-code":
                 from .github_code_search import enable_code_search
-                plan=enable_code_search(plan); _write(path,plan)
+                plan=enable_code_search(plan,args.repository); _write(path,plan)
             elif args.command == "run-code":
                 import os
                 from .github_code_search import run_code, export_report, _load
