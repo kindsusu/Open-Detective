@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `trace-assets`, an explicitly invoked scope-bound anonymous GET trace for explicit HTML script and JavaScript fetch references. It enforces aggregate request, byte, duration, depth, and deduplication bounds; records asset-linked content-profile hints and gaps; retains only opaque report locators; and stops early on a sensitive-content candidate. It does not execute JavaScript, render a DOM, guess dynamic endpoints, authenticate, or alter `probe` or `browser`.
+
 - Added offline `asset-profile` for bounded, value-free structural review of already captured local content, including parent asset relationships, native inventory coverage context, and provisional business-data categories. Added `asset-locations` to resolve opaque asset references into a separate private-local URL mapping without network access. Neither command establishes ownership, reachability, sensitive content, or severity.
 
 - Rebranded the project and installed skill as Open-Detective. Documentation now uses the `open-detective` CLI.

@@ -18,6 +18,7 @@ Owner inventory may use explicitly authorized read credentials. Keep its credent
 ```bash
 open-detective probe --scope scope.json <url>
 open-detective browser <url> --scope scope.json --duration 3
+open-detective trace-assets --scope _local/scope.json --url https://app.example.test/public/ --output _local/case/asset-trace.json
 open-detective inventory --provider import --scope-id TEAM --input inventory.json
 open-detective discover --input candidates.json --scope-id TEAM
 open-detective search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<operator input>"
@@ -37,6 +38,8 @@ open-detective ledger --db audit.sqlite due
 `asset-profile` is separate offline local analysis of already captured bytes. It never fetches a locator or proves public/anonymous reachability, and its value-free category hints never confirm sensitive content or severity. Read `ops/asset-profile.md` for its manifest, bounds, and interpretation.
 
 `asset-locations` resolves profile or inventory `locator_ref` values only against the existing local locator store in one `--scope-id`. It makes no network requests and writes exact locations only to a new private-local mapping. That mapping may contain sensitive URL components; never publish it. It does not inspect an index/file body or establish ownership, access, reachability, or exposure. Read `ops/asset-profile.md`.
+
+After a bounded `probe` of an owned page, invoke `trace-assets` separately only when its related static files need checking. It is a scope-bound anonymous GET trace from one public HTML URL. Follow only explicit HTML `script` references and explicit GET JavaScript `fetch(...)` references that the unexpired scope authorizes. Keep aggregate request, byte, duration, depth, and deduplication bounds; do not execute JavaScript, render DOM, infer dynamic endpoints, authenticate, or mutate DOM gates. A sensitive-content candidate stops the trace early; an inline client password literal can therefore stop it before a later JSON fetch, which does not establish complete thin-gate tracing. It leaves `probe` and `browser` unchanged and they never invoke it automatically. The report contains asset links, content-profile hints, and gaps rather than source material; paired `--locator-store` and `--scope-id` retain final redirect locations locally while shared output keeps opaque references. Read `ops/asset-trace.md`.
 
 `channel-discover` supports only bounded Cert Spotter CT and operator-configured query-bound JSON exports. `discovery-eval` and `asset-graph` are offline. Read `ops/discovery-optimization.md`; none establishes ownership or measurement authority.
 
@@ -88,4 +91,4 @@ Use workflow states `candidate`, `ownership_pending`, `verification_pending`, `o
 
 Report observation-backed facts, controls, owner and severity, unknowns and resolution conditions, containment and due dates, recheck evidence, and omitted actions. Express coverage as exact scopes, channels, and completed pages. Never describe synthetic tests as deployed or live verification.
 
-Supporting files: `ops/discovery.md`, `ops/discovery-optimization.md`, `ops/verify.md`, `ops/triage.md`, `ops/evidence.md`, `ops/remediate.md`, `ops/forensics.md`, `ops/asset-profile.md`, `surfaces/inventory.md`, `assets/ledger-template.md`.
+Supporting files: `ops/discovery.md`, `ops/discovery-optimization.md`, `ops/verify.md`, `ops/triage.md`, `ops/evidence.md`, `ops/remediate.md`, `ops/forensics.md`, `ops/asset-profile.md`, `ops/asset-trace.md`, `surfaces/inventory.md`, `assets/ledger-template.md`.

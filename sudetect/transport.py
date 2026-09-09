@@ -202,6 +202,7 @@ def fetch(
     resolver: Resolver | None = None,
     connection_factory: ConnectionFactory | None = None,
     max_bytes: int | None = None,
+    timeout: float | None = None,
 ) -> FetchResult:
     """Fetch one authorized HTTPS URL with every network hop pre-authorized.
 
@@ -217,10 +218,16 @@ def fetch(
         raise ValueError("invalid max_bytes")
     else:
         body_limit = min(scope.max_bytes, max_bytes)
+    if timeout is None:
+        request_timeout = float(scope.timeout)
+    elif isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
+        raise ValueError("invalid timeout")
+    else:
+        request_timeout = min(float(scope.timeout), float(timeout))
     observation = _observation(scope, url)
     redirects: list[dict[str, object]] = []
     current = url
-    deadline = time.monotonic() + scope.timeout
+    deadline = time.monotonic() + request_timeout
 
     for redirect_number in range(scope.max_redirects + 1):
         try:
