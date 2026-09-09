@@ -26,11 +26,17 @@ open-detective channels-doctor --config _local/channels.json --scope _local/cont
 open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
 open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
+open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 open-detective ledger --db audit.sqlite due
 ```
 
 `forensics` is separate private-local work for an approved `--case` and owner-authorized read-only exports. Its case authorization is not a network measurement `--scope`. Read `ops/forensics.md`; do not authenticate, reuse credentials, acquire RAM/disk images, or infer no exfiltration from a missing log.
+
+`asset-profile` is separate offline local analysis of already captured bytes. It never fetches a locator or proves public/anonymous reachability, and its value-free category hints never confirm sensitive content or severity. Read `ops/asset-profile.md` for its manifest, bounds, and interpretation.
+
+`asset-locations` resolves profile or inventory `locator_ref` values only against the existing local locator store in one `--scope-id`. It makes no network requests and writes exact locations only to a new private-local mapping. That mapping may contain sensitive URL components; never publish it. It does not inspect an index/file body or establish ownership, access, reachability, or exposure. Read `ops/asset-profile.md`.
 
 `channel-discover` supports only bounded Cert Spotter CT and operator-configured query-bound JSON exports. `discovery-eval` and `asset-graph` are offline. Read `ops/discovery-optimization.md`; none establishes ownership or measurement authority.
 
@@ -82,4 +88,4 @@ Use workflow states `candidate`, `ownership_pending`, `verification_pending`, `o
 
 Report observation-backed facts, controls, owner and severity, unknowns and resolution conditions, containment and due dates, recheck evidence, and omitted actions. Express coverage as exact scopes, channels, and completed pages. Never describe synthetic tests as deployed or live verification.
 
-Supporting files: `ops/discovery.md`, `ops/discovery-optimization.md`, `ops/verify.md`, `ops/triage.md`, `ops/evidence.md`, `ops/remediate.md`, `ops/forensics.md`, `surfaces/inventory.md`, `assets/ledger-template.md`.
+Supporting files: `ops/discovery.md`, `ops/discovery-optimization.md`, `ops/verify.md`, `ops/triage.md`, `ops/evidence.md`, `ops/remediate.md`, `ops/forensics.md`, `ops/asset-profile.md`, `surfaces/inventory.md`, `assets/ledger-template.md`.

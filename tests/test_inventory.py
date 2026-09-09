@@ -195,6 +195,156 @@ class InventoryTests(unittest.TestCase):
         self.assertIn("token_visibility_only", report["coverage"]["repositories"]["coverage_limitations"])
         self.assertIn("zero_items_is_a_bounded_observation", report["coverage"]["repositories"]["coverage_limitations"])
 
+    def test_github_tree_emits_masked_file_assets_with_local_exact_locators(self):
+        from sudetect.locators import LocatorStore
+
+        sha = "a" * 40
+        def fetch(url, _headers):
+            parsed = urlsplit(url)
+            if parsed.path == "/user":
+                return {"login": "someone-else"}
+            if parsed.path.startswith("/orgs/"):
+                return [{
+                    "id": 17, "full_name": "acme/public-repo", "private": False,
+                    "visibility": "public", "default_branch": "main",
+                }]
+            if "/git/trees/" in parsed.path:
+                return {"tree": [
+                    {"path": "reports/가격 data.json", "type": "blob", "sha": sha, "size": 878509},
+                    {"path": "reports", "type": "tree", "sha": "b" * 40},
+                ], "truncated": False}
+            raise AssertionError(url)
+
+        with tempfile.TemporaryDirectory() as td, LocatorStore(Path(td) / "locators.db") as store:
+            report = inventory.collect_github(
+                "acme", "secret", fetch=fetch, include_trees=True, locator_store=store,
+            )
+            repository = next(asset for asset in report["assets"] if asset["kind"] == "repository")
+            file_asset = next(asset for asset in report["assets"] if asset["kind"] == "repository_file")
+            self.assertEqual("COMPLETE", report["status"])
+            self.assertEqual("data_file", file_asset["candidate_kind"])
+            self.assertEqual("json", file_asset["extension"])
+            self.assertEqual(878509, file_asset["byte_size"])
+            self.assertEqual(sha, file_asset["git_object_sha"])
+            self.assertEqual("public", file_asset["visibility"])
+            self.assertEqual("not_measured", file_asset["public_exposure"])
+            self.assertEqual("branch_ref_mutable", file_asset["locator_mutability"])
+            self.assertEqual(repository["asset_id"], file_asset["repository_asset_id"])
+            self.assertTrue(any(
+                edge["source_asset_id"] == repository["asset_id"]
+                and edge["target_asset_id"] == file_asset["asset_id"]
+                and edge["relationship"] == "contains"
+                for edge in report["edges"]
+            ))
+            self.assertEqual(
+                "https://github.com/acme/public-repo/blob/main/reports/%EA%B0%80%EA%B2%A9%20data.json",
+                store.get("acme", file_asset["locator_ref"]),
+            )
+            encoded = json.dumps(report, ensure_ascii=False)
+            self.assertNotIn("가격 data.json", encoded)
+            self.assertNotIn("public-repo", encoded)
+
+    def test_github_tree_file_asset_cap_is_explicitly_partial(self):
+        rows = [
+            {"path": f"data/file-{index}.json", "type": "blob", "sha": f"{index:040x}", "size": index}
+            for index in range(inventory.MAX_GITHUB_TREE_FILES_PER_REPOSITORY + 1)
+        ]
+
+        def fetch(url, _headers):
+            parsed = urlsplit(url)
+            if parsed.path == "/user":
+                return {"login": "someone-else"}
+            if parsed.path.startswith("/orgs/"):
+                return [{
+                    "id": 18, "full_name": "acme/large-public-repo", "private": False,
+                    "default_branch": "main",
+                }]
+            return {"tree": rows, "truncated": False}
+
+        report = inventory.collect_github("acme", "secret", fetch=fetch, include_trees=True)
+        file_assets = [asset for asset in report["assets"] if asset["kind"] == "repository_file"]
+        tree_coverage = next(value for key, value in report["coverage"].items() if key.startswith("tree:"))
+        self.assertEqual("PARTIAL", report["status"])
+        self.assertIn("TREE_TRUNCATED", report["errors"])
+        self.assertEqual(inventory.MAX_GITHUB_TREE_FILES_PER_REPOSITORY, len(file_assets))
+        self.assertEqual(inventory.MAX_GITHUB_TREE_FILES_PER_REPOSITORY, tree_coverage["file_assets_emitted"])
+        self.assertTrue(tree_coverage["file_assets_truncated"])
+
+    def test_github_tree_file_ids_follow_private_paths_not_blob_content_or_order(self):
+        tree_rows = [
+            {"path": "data/first.json", "type": "blob", "sha": "a" * 40, "size": 10},
+            {"path": "data/second.json", "type": "blob", "sha": "a" * 40, "size": 10},
+            {"path": "data/private.SECRET_NAME", "type": "blob", "sha": "b" * 40, "size": 20},
+        ]
+
+        def collect(rows):
+            def fetch(url, _headers):
+                parsed = urlsplit(url)
+                if parsed.path == "/user":
+                    return {"login": "someone-else"}
+                if parsed.path.startswith("/orgs/"):
+                    return [{
+                        "id": 19, "full_name": "acme/stable-repo", "private": False,
+                        "default_branch": "main",
+                    }]
+                return {"tree": rows, "truncated": False}
+            return inventory.collect_github("acme", "secret", fetch=fetch, include_trees=True)
+
+        first = collect(tree_rows)
+        changed = [dict(row) for row in reversed(tree_rows)]
+        changed[2]["sha"] = "c" * 40
+        second = collect(changed)
+        first_assets = {asset["asset_id"]: asset for asset in first["assets"] if asset["kind"] == "repository_file"}
+        second_assets = {asset["asset_id"]: asset for asset in second["assets"] if asset["kind"] == "repository_file"}
+        self.assertEqual(set(first_assets), set(second_assets))
+        self.assertEqual(3, len(first_assets))
+        self.assertEqual(3, len({asset["asset_id"] for asset in first_assets.values()}))
+        unknown = next(asset for asset in first_assets.values() if asset["git_object_sha"] == "b" * 40)
+        self.assertIsNone(unknown.get("extension"))
+        self.assertEqual("other", unknown["candidate_kind"])
+        self.assertNotIn("SECRET_NAME", json.dumps(first))
+
+    def test_github_tree_inventory_profiles_and_privately_resolves_file_asset(self):
+        from sudetect.asset_locations import export_locations
+        from sudetect.asset_profile import build_asset_profile
+        from sudetect.locators import LocatorStore
+
+        def fetch(url, _headers):
+            parsed = urlsplit(url)
+            if parsed.path == "/user":
+                return {"login": "someone-else"}
+            if parsed.path.startswith("/orgs/"):
+                return [{
+                    "id": 20, "full_name": "acme/integration-repo", "private": False,
+                    "visibility": "public", "default_branch": "main",
+                }]
+            return {"tree": [{
+                "path": "exports/pricing.json", "type": "blob", "sha": "d" * 40, "size": 42,
+            }], "truncated": False}
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            store_path = root / "locators.db"
+            with LocatorStore(store_path) as store:
+                inventory_report = inventory.collect_github(
+                    "acme", "secret", fetch=fetch, include_trees=True, locator_store=store,
+                )
+            inventory_path = root / "inventory.json"
+            inventory_path.write_text(json.dumps(inventory_report), encoding="utf-8")
+            profile = build_asset_profile(inventory_path)
+            profile_path = root / "profile.json"
+            profile_path.write_text(json.dumps(profile), encoding="utf-8")
+            locations = export_locations(profile_path, store_path, "acme")
+
+        file_profile = next(asset for asset in profile["assets"] if asset["declared_kind"] == "data_file")
+        file_location = next(asset for asset in locations["assets"] if asset["asset_id"] == file_profile["asset_id"])
+        self.assertEqual("NOT_INSPECTED", file_profile["inspection_state"])
+        self.assertEqual("NOT_ESTABLISHED_BY_LOCAL_ANALYSIS", file_profile["exposure"])
+        self.assertEqual("json", file_profile["asset_metadata"]["extension"])
+        self.assertEqual(42, file_profile["asset_metadata"]["byte_size"])
+        self.assertEqual("RESOLVED", file_location["location_state"])
+        self.assertIn("/exports/pricing.json", file_location["private_location"])
+
     def test_github_account_scope_uses_authenticated_private_listing(self):
         calls = []
 

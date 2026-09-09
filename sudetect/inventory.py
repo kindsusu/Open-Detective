@@ -47,6 +47,21 @@ _SAFE_ERROR_CODES = {
     "TREE_TRUNCATED",
 }
 _NAMESPACE = uuid.UUID("28cc46c4-1cee-49ec-9957-8615f7fdbe10")
+MAX_GITHUB_TREE_FILES_PER_REPOSITORY = 1000
+MAX_GITHUB_TREE_FILES_PER_REPORT = 5000
+
+_TREE_FILE_CANDIDATE_KINDS = {
+    "data_file": frozenset({
+        "csv", "db", "json", "jsonl", "ndjson", "parquet", "sqlite", "sql", "tsv", "xls", "xlsx",
+    }),
+    "document": frozenset({"doc", "docx", "md", "pdf", "ppt", "pptx", "rtf", "txt"}),
+    "source_code": frozenset({
+        "c", "cc", "cpp", "cs", "css", "go", "h", "hpp", "html", "java", "js", "jsx", "kt", "php",
+        "py", "rb", "rs", "sh", "swift", "ts", "tsx", "vue",
+    }),
+    "config": frozenset({"cfg", "conf", "env", "ini", "properties", "toml", "yaml", "yml"}),
+}
+_SAFE_TREE_FILE_EXTENSIONS = frozenset().union(*_TREE_FILE_CANDIDATE_KINDS.values())
 
 
 class InventoryError(RuntimeError):
@@ -246,6 +261,28 @@ def _locator_ref(locator: str) -> str:
 def _stable_id(prefix: str, *parts: object) -> str:
     identity = "\x1f".join(str(part) for part in parts)
     return f"{prefix}_{uuid.uuid5(_NAMESPACE, identity).hex}"
+
+
+def _github_tree_file(path: Any) -> tuple[str, str | None, str] | None:
+    """Return a safely encoded blob path and report-safe file type hints."""
+    if not isinstance(path, str) or not path or len(path) > 4096 or path.startswith(("/", "\\")):
+        return None
+    parts = path.split("/")
+    if any(not part or part in {".", ".."} or "\\" in part
+           or any(ord(char) < 32 or ord(char) == 127 for char in part) for part in parts):
+        return None
+    encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in parts)
+    basename = parts[-1]
+    suffix = basename.rsplit(".", 1)[1].casefold() if "." in basename else None
+    if suffix not in _SAFE_TREE_FILE_EXTENSIONS:
+        suffix = None
+    candidate_kind = "other"
+    if suffix is not None:
+        for kind, extensions in _TREE_FILE_CANDIDATE_KINDS.items():
+            if suffix in extensions:
+                candidate_kind = kind
+                break
+    return encoded_path, suffix, candidate_kind
 
 
 def _public_origin(locator: str) -> str | None:
@@ -743,6 +780,7 @@ def collect_github(
         ],
     }
     successes = 1 if repos or (pages and not report["errors"]) else 0
+    emitted_tree_files = 0
     for repo in repos:
         repo_id = repo.get("id")
         full_name = repo.get("full_name")
@@ -752,12 +790,13 @@ def collect_github(
         if full_name.split("/", 1)[0].casefold() != scope_id.casefold():
             report["errors"].append("PERMISSION_DENIED")
             continue
+        visibility = str(repo.get("visibility") or ("private" if repo.get("private") else "public"))
         asset = _asset(
             "github", scope_id, "repository", f"https://github.com/{full_name}",
             owner_evidence=owner_evidence,
             identity=str(repo_id),
             locator_store=locator_store,
-            visibility=str(repo.get("visibility") or ("private" if repo.get("private") else "public")),
+            visibility=visibility,
             archived=bool(repo.get("archived")),
         )
         # Repository existence and policy metadata only: do not emit its name or raw API response.
@@ -767,6 +806,8 @@ def collect_github(
         branch = repo.get("default_branch")
         tree_state = "FAILED"
         item_count = 0
+        emitted_for_repository = 0
+        file_assets_truncated = False
         if isinstance(branch, str) and branch:
             api_name = "/".join(urllib.parse.quote(part, safe="") for part in full_name.split("/", 1))
             try:
@@ -775,9 +816,64 @@ def collect_github(
                 ).payload
                 if not isinstance(response, Mapping) or not isinstance(response.get("tree"), list):
                     raise InventoryError("MALFORMED_RESPONSE")
-                item_count = len(response["tree"])
-                if response.get("truncated") is True:
+                tree_rows = response["tree"]
+                item_count = len(tree_rows)
+                malformed_rows = any(not isinstance(row, Mapping) for row in tree_rows)
+                blob_rows = [row for row in tree_rows
+                             if isinstance(row, Mapping) and row.get("type") == "blob"]
+                seen_file_paths: set[str] = set()
+                for row in blob_rows:
+                    parsed_file = _github_tree_file(row.get("path"))
+                    blob_sha = row.get("sha")
+                    if (parsed_file is None or not isinstance(blob_sha, str)
+                            or re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", blob_sha) is None):
+                        malformed_rows = True
+                        continue
+                    if (emitted_for_repository >= MAX_GITHUB_TREE_FILES_PER_REPOSITORY
+                            or emitted_tree_files >= MAX_GITHUB_TREE_FILES_PER_REPORT):
+                        file_assets_truncated = True
+                        continue
+                    encoded_path, extension, candidate_kind = parsed_file
+                    if encoded_path in seen_file_paths:
+                        malformed_rows = True
+                        continue
+                    seen_file_paths.add(encoded_path)
+                    size = row.get("size")
+                    if size is not None and (isinstance(size, bool) or not isinstance(size, int) or size < 0):
+                        malformed_rows = True
+                        size = None
+                    normalized_sha = blob_sha.lower()
+                    blob_url = (
+                        f"https://github.com/{api_name}/blob/"
+                        f"{urllib.parse.quote(branch, safe='')}/{encoded_path}"
+                    )
+                    file_asset = _asset(
+                        "github", scope_id, "repository_file", blob_url,
+                        owner_evidence=owner_evidence,
+                        identity=f"{repo_id}:{encoded_path}",
+                        locator_store=locator_store,
+                        repository_asset_id=asset["asset_id"],
+                        visibility=visibility,
+                        candidate_kind=candidate_kind,
+                        extension=extension,
+                        byte_size=size,
+                        git_object_sha=normalized_sha,
+                        locator_mutability="branch_ref_mutable",
+                        public_exposure="not_measured",
+                    )
+                    report["assets"].append(file_asset)
+                    report["edges"].append(_edge(
+                        asset["asset_id"], file_asset["asset_id"], "contains", observed_at,
+                        "github_authenticated_tree_inventory",
+                    ))
+                    emitted_for_repository += 1
+                    emitted_tree_files += 1
+                if malformed_rows:
+                    report["errors"].append("MALFORMED_RESPONSE")
+                if response.get("truncated") is True or file_assets_truncated:
                     report["errors"].append("TREE_TRUNCATED")
+                    tree_state = "PARTIAL"
+                elif malformed_rows:
                     tree_state = "PARTIAL"
                 else:
                     tree_state = "COMPLETE"
@@ -790,6 +886,10 @@ def collect_github(
             "state": tree_state,
             "items": item_count,
             "content_retained": False,
+            "file_assets_emitted": emitted_for_repository,
+            "file_asset_limit_per_repository": MAX_GITHUB_TREE_FILES_PER_REPOSITORY,
+            "file_asset_limit_per_report": MAX_GITHUB_TREE_FILES_PER_REPORT,
+            "file_assets_truncated": file_assets_truncated,
         }
     return _finish(report, attempted=True, successes=successes)
 
