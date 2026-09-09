@@ -34,7 +34,8 @@ def check(skill_root=None, reference=None, require_browser=False):
                 "sudetect/forensic_cli.py", "sudetect/discovery_channels.py",
                 "sudetect/discovery_eval.py", "sudetect/asset_graph.py",
                 "sudetect/asset_profile.py", "sudetect/asset_locations.py",
-                "sudetect/asset_trace.py", "ops/asset-profile.md", "ops/asset-trace.md")
+                "sudetect/asset_trace.py", "ops/asset-profile.md", "ops/asset-trace.md",
+                "sudetect/github_code_search.py", "ops/github-code-search.md")
     missing = [name for name in required if not (root / name).is_file()]
     if missing:
         failures.append("RUNTIME_FILES_MISSING")

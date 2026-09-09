@@ -18,6 +18,8 @@ It is built for investigators who need a defensible record: bounded scope, owner
 
 Implementation and rollout notes (Korean): [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
 
+Optional [GitHub code search](ops/github-code-search.md) reuses an existing search plan to find public file candidates. Enable it with `search-plan enable-code` and execute `search-plan run-code` with an explicitly selected search token and a fresh fixture control. It preserves per-query evidence, deduplicates repository/path hits, and resumes page checkpoints without changing anonymous account discovery or target verification. Agent-Reach is not required.
+
 ## Operating workflow
 
 [![Open-Detective operating workflow](docs/workflow/open-detective.workflow.png)](docs/WORKFLOW.md)
