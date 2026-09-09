@@ -28,22 +28,27 @@ def payload(items=(), *, total=None, incomplete=False):
 
 
 class Fake:
-    def __init__(self, pages=None, control=None):
+    def __init__(self, pages=None, control=None, repositories=None):
         self.calls = []
         self.pages = pages or {}
         self.control = payload([item("README.md", repo="fixture/control")]) if control is None else control
+        self.repositories = repositories or {}
 
     def __call__(self, url, headers):
         parsed = urlsplit(url)
+        self.calls.append((parsed, parse_qs(parsed.query), headers))
+        if parsed.path.startswith("/repos/"):
+            slug = parsed.path.removeprefix("/repos/")
+            return self.repositories.get(slug, {"full_name": slug, "private": False, "visibility": "public"})
         query = parse_qs(parsed.query)
-        self.calls.append((parsed, query, headers))
         if "repo:fixture/control" in query["q"][0]:
             return self.control
         return self.pages.get(int(query["page"][0]), payload([item()]))
 
 
 def plan():
-    result = create_plan(scope_id="team", company_en="Fixture Motors", query_budget=1, account_budget=1, github_code=True)
+    result = create_plan(scope_id="team", company_en="Fixture Motors", query_budget=1, account_budget=1,
+                         github_code=True, repositories=["unrelated/app"])
     return result
 
 
@@ -67,23 +72,26 @@ class CodeSearchTests(unittest.TestCase):
     def test_opt_in_upgrade_is_idempotent_and_preserves_existing_work(self):
         old = create_plan(scope_id="team", company_en="Fixture Motors", domains=["fixture.example"])
         self.assertNotIn("github_code", old["required_channels"])
-        upgraded = enable_code_search(old)
+        upgraded = enable_code_search(old, ["unrelated/app"])
         self.assertEqual(old["jobs"], upgraded["jobs"][:len(old["jobs"])])
-        self.assertEqual(upgraded, enable_code_search(upgraded))
+        self.assertEqual(upgraded, enable_code_search(upgraded, ["unrelated/app"]))
         jobs = [j for j in upgraded["jobs"] if j["channel"] == "github_code"]
-        self.assertEqual('"fixture.example" in:file is:public', jobs[0]["value"])
+        self.assertEqual('"fixture.example" repo:unrelated/app in:file', jobs[0]["value"])
 
     def test_only_fixed_search_endpoint_explicit_auth_no_snippets(self):
         fake = Fake()
         result = self.run_code(fake=fake)
-        self.assertEqual(2, len(fake.calls))
+        self.assertEqual(4, len(fake.calls))
         for parsed, query, headers in fake.calls:
             self.assertEqual("api.github.com", parsed.netloc)
+            if parsed.path.startswith("/repos/"):
+                self.assertNotIn("Authorization", headers)
+                continue
             self.assertEqual("/search/code", parsed.path)
             self.assertEqual("Bearer synthetic-token-not-real", headers["Authorization"])
             self.assertNotIn("text-match", headers["Accept"])
             self.assertFalse({"Cookie", "Origin", "Referer"} & set(headers))
-            self.assertTrue(query["q"][0].endswith("is:public"))
+            self.assertRegex(query["q"][0], r'^".+" repo:[^ ]+/[^ ]+ in:file$')
         report = export_report(result)
         encoded = json.dumps(report)
         for secret in ("synthetic-token-not-real", "pricing.json", "unrelated/app", "Fixture Motors"):
@@ -102,12 +110,14 @@ class CodeSearchTests(unittest.TestCase):
         self.assertEqual([], fake.calls)
         self.assertIn("EXPLICIT_TOKEN_REQUIRED", result["code_runs"][-1]["errors"])
         self.assertTrue(any(j["state"] == "deferred" for j in result["jobs"] if j["channel"] == "github_code"))
+        resumed = self.run_code(result, Fake())
+        self.assertTrue(any(job["state"] == "completed" for job in resumed["jobs"] if job["channel"] == "github_code"))
 
     def test_bad_control_prevents_search_and_zero_result_confirmation(self):
         for control in (payload(), payload([item("README.md", repo="fixture/control")], incomplete=True), (401, {}, {})):
             fake = Fake(control=control)
             result = self.run_code(fake=fake)
-            self.assertEqual(1, len(fake.calls))
+            self.assertEqual(2, len(fake.calls))
             self.assertEqual([], result["code_assets"])
             self.assertIn("CODE_CONTROL_FAILED", result["code_runs"][-1]["errors"])
 
@@ -127,12 +137,12 @@ class CodeSearchTests(unittest.TestCase):
     def test_pages_resume_without_replaying_first_page(self):
         pages = {1: payload([item(f"file-{i}.json") for i in range(100)], total=101),
                  2: payload([item("last.json")], total=101)}
-        first = self.run_code(fake=Fake(pages), request_budget=2)
+        first = self.run_code(fake=Fake(pages), request_budget=4)
         job = next(j for j in first["jobs"] if j["channel"] == "github_code" and "code_cursor" in j)
         self.assertEqual(2, job["code_cursor"]["next_page"])
         second_fake = Fake(pages)
-        second = self.run_code(first, second_fake, request_budget=2)
-        self.assertEqual([1, 2], [int(q["page"][0]) for _, q, _ in second_fake.calls])
+        second = self.run_code(first, second_fake, request_budget=4)
+        self.assertEqual([1, 2], [int(q["page"][0]) for parsed, q, _ in second_fake.calls if parsed.path == "/search/code"])
         self.assertEqual(101, len(second["code_assets"]))
 
     def test_same_file_multiple_queries_deduplicates_and_preserves_evidence(self):
@@ -159,7 +169,7 @@ class CodeSearchTests(unittest.TestCase):
                                ((302, {}, {"location": "https://evil.example"}), "REDIRECT_BLOCKED")):
             fake = Fake({1: response})
             result = self.run_code(fake=fake)
-            self.assertEqual(2, len(fake.calls))
+            self.assertEqual(4, len(fake.calls))
             self.assertIn(code, result["code_runs"][-1]["errors"])
 
     def test_report_resolves_existing_private_export(self):
@@ -167,7 +177,9 @@ class CodeSearchTests(unittest.TestCase):
         result = self.run_code()
         path = self.root / "report.json"
         path.write_text(json.dumps(export_report(result)), encoding="utf-8")
-        self.assertEqual("RESOLVED", export_locations(path, self.root / "locations.db", "team")["assets"][0]["location_state"])
+        mapping = export_locations(path, self.root / "locations.db", "team")["assets"][0]
+        self.assertEqual("RESOLVED", mapping["location_state"])
+        self.assertTrue(mapping["private_location"].endswith("data/pricing.json"))
         with self.assertRaises(ValueError):
             export_locations(path, self.root / "locations.db", "wrong")
 
@@ -178,7 +190,7 @@ class CodeSearchTests(unittest.TestCase):
             import_results(source, {"jobs": [{"work_id": job["work_id"], "state": "completed"}]})
 
     def test_query_qualifiers_cannot_be_injected(self):
-        for query in ('"abc" in:file is:private is:public', 'abc is:public', '"abc" repo:other/repo is:public'):
+        for query in ('"abc" in:file', 'abc repo:other/repo in:file', '"abc" repo:other/repo in:file is:public'):
             fake = Fake()
             with self.assertRaises(CodeError):
                 Broker("fixture", fetcher=fake).get(query, 1)
@@ -190,7 +202,7 @@ class CodeSearchTests(unittest.TestCase):
         plan_path.write_text(json.dumps(source), encoding="utf-8")
         control_path.write_text(json.dumps(CONTROL), encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(0, main(["enable-code", "--plan", str(plan_path)]))
+            self.assertEqual(0, main(["enable-code", "--plan", str(plan_path), "--repository", "unrelated/app"]))
         # Network is deliberately not invoked by this CLI test: missing explicit token.
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(0, main(["run-code", "--plan", str(plan_path), "--token-env", "OD_MISSING_TEST_TOKEN",
@@ -215,7 +227,100 @@ class CodeSearchTests(unittest.TestCase):
         fake = Fake({10: payload([item(f"last-{i}.json") for i in range(100)], total=1001)})
         result = self.run_code(source, fake)
         self.assertIn("PROVIDER_RESULT_CAP", result["code_runs"][-1]["errors"])
+        self.assertEqual(4, len(fake.calls))
+
+    def test_invalid_or_mismatched_scoped_job_never_reaches_control(self):
+        source = plan()
+        job = next(job for job in source["jobs"] if job["channel"] == "github_code")
+        work_id = job["work_id"]
+        job["value"] = '"Fixture Motors" repo:other/repository in:file'
+        fake = Fake()
+        result = self.run_code(source, fake)
+        self.assertEqual([], fake.calls)
+        current = next(item for item in result["jobs"] if item["work_id"] == job["work_id"])
+        self.assertEqual("deferred", current["state"])
+        self.assertEqual("repository_scope_required", current["deferred_reason"])
+        self.assertIn("REPOSITORY_SCOPE_REQUIRED", result["code_runs"][-1]["errors"])
+
+    def test_legacy_unscoped_job_stays_deferred_without_control(self):
+        source = plan()
+        legacy = next(job for job in source["jobs"] if job["channel"] == "github_code")
+        legacy.pop("repository")
+        legacy["value"] = '"Fixture Motors" in:file is:public'
+        source["code_repositories"] = []
+        fake = Fake()
+        result = self.run_code(source, fake)
+        self.assertEqual([], fake.calls)
+        self.assertEqual("NO_RUNNABLE_WORK", result["code_runs"][-1]["status"])
+        self.assertIn("REPOSITORY_SCOPE_REQUIRED", result["code_runs"][-1]["errors"])
+
+    def test_completed_scope_rerun_and_unknown_deferred_work_do_not_make_requests(self):
+        complete = self.run_code(fake=Fake())
+        rerun_fake = Fake()
+        rerun = self.run_code(complete, rerun_fake)
+        self.assertEqual([], rerun_fake.calls)
+        self.assertEqual("NO_RUNNABLE_WORK", rerun["code_runs"][-1]["status"])
+        self.assertEqual([], rerun["code_runs"][-1]["errors"])
+        expired = dict(CONTROL, expires_at="2000-01-01T00:00:00Z")
+        no_token = run_code(complete, token_env="MISSING_NOOP_TOKEN", control=expired,
+                            locator_store=self.store, fetcher=Fake())
+        self.assertEqual([], no_token["code_runs"][-1]["errors"])
+        deferred = plan()
+        job = next(job for job in deferred["jobs"] if job["channel"] == "github_code")
+        job.update(state="deferred", deferred_reason="fixture_non_target_deferred")
+        result = self.run_code(deferred, Fake())
+        self.assertEqual([], result["code_runs"][-1]["errors"])
+
+    def test_budget_deferred_job_requires_explicit_resume_budget(self):
+        source = plan()
+        job = next(job for job in source["jobs"] if job["channel"] == "github_code")
+        work_id = job["work_id"]
+        job.update(state="deferred", deferred_reason="query_budget_exceeded")
+        blocked = self.run_code(source, Fake())
+        self.assertEqual([], blocked["code_runs"][-1]["errors"])
+        resumed = self.run_code(source, Fake(), resume_query_budget=1)
+        self.assertEqual("completed", next(job for job in resumed["jobs"] if job["work_id"] == work_id)["state"])
+
+    def test_scoped_report_excludes_repository_and_query_text_but_keeps_scope_contract(self):
+        result = self.run_code(fake=Fake())
+        report = export_report(result)
+        encoded = json.dumps(report)
+        self.assertNotIn("unrelated/app", encoded)
+        self.assertNotIn("Fixture Motors", encoded)
+        self.assertFalse(report["global_search_performed"])
+        self.assertEqual(1, report["selected_repository_scope"]["repository_count"])
+        self.assertEqual(1, len(report["selected_repository_scope"]["repository_locator_refs"]))
+        self.assertEqual(1, report["job_counts"]["completed"])
+        self.assertEqual("partial", report["coverage"])
+
+    def test_case_variant_repository_reenable_is_idempotent(self):
+        source = create_plan(scope_id="team", company_en="Fixture Motors", query_budget=1)
+        first = enable_code_search(source, ["Owner/Repository"])
+        second = enable_code_search(first, ["owner/repository"])
+        self.assertEqual(1, len(second["code_repositories"]))
+        self.assertEqual(len([job for job in first["jobs"] if job["channel"] == "github_code"]),
+                         len([job for job in second["jobs"] if job["channel"] == "github_code"]))
+
+    def test_preflight_failure_counts_the_attempt_and_blocks_authenticated_search(self):
+        source = plan()
+        fake = Fake(repositories={"fixture/control": {"full_name": "fixture/control", "private": True, "visibility": "private"}})
+        result = self.run_code(source, fake)
+        self.assertEqual(1, len(fake.calls))
+        self.assertEqual(1, result["code_runs"][-1]["requests"])
+        self.assertEqual(1, result["code_runs"][-1]["public_preflights"])
+        self.assertEqual("REPOSITORY_NOT_PUBLIC", result["code_runs"][-1]["control"]["error_code"])
+
+    def test_long_valid_scoped_query_and_failed_preflight_keep_exact_request_counts(self):
+        repository = "a" * 39 + "/" + "b" * 100
+        query = '"' + "x" * 180 + '" repo:' + repository + " in:file"
+        fake = Fake()
+        Broker("fixture", fetcher=fake).get(query, 1)
         self.assertEqual(2, len(fake.calls))
+        exhausted = Broker("fixture", limit=0, fetcher=Fake())
+        with self.assertRaisesRegex(CodeError, "REQUEST_BUDGET"):
+            exhausted.preflight("fixture/control")
+        self.assertEqual(0, exhausted.requests)
+        self.assertEqual(0, exhausted.public_preflights)
 
     def test_private_repositories_do_not_become_assets_even_with_text_match(self):
         value = item(private=True)
@@ -242,7 +347,7 @@ class CodeSearchTests(unittest.TestCase):
                 raise urllib.error.HTTPError(request.full_url, 302, "ignored-secret", {"Location": "https://outside.example"}, None)
         with patch("sudetect.github_code_search.urllib.request.build_opener", return_value=Opener()) as builder:
             with self.assertRaisesRegex(CodeError, "REDIRECT_BLOCKED"):
-                Broker("only-explicit-token").get('"fixture" in:file is:public', 1)
+                Broker("only-explicit-token").get('"fixture" repo:fixture/control in:file', 1)
         handlers = builder.call_args.args
         self.assertEqual({}, handlers[0].proxies)
         self.assertEqual("_NoRedirect", type(handlers[1]).__name__)

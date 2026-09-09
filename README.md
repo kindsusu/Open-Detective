@@ -18,7 +18,7 @@ It is built for investigators who need a defensible record: bounded scope, owner
 
 Implementation and rollout notes (Korean): [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
 
-Optional [GitHub code search](ops/github-code-search.md) reuses an existing search plan to find public file candidates. Enable it with `search-plan enable-code` and execute `search-plan run-code` with an explicitly selected search token and a fresh fixture control. It preserves per-query evidence, deduplicates repository/path hits, and resumes page checkpoints without changing anonymous account discovery or target verification. Agent-Reach is not required.
+Optional [GitHub code search](ops/github-code-search.md) reuses an existing search plan only after anonymous discovery identifies a public repository. Enable it with repeated `search-plan enable-code --repository OWNER/REPO`, then execute `search-plan run-code` with an explicitly selected search token and a fresh benign fixture control. Every token-authenticated query is restricted to one explicitly selected repository; the runner does not perform global code search. It preserves per-query evidence, deduplicates repository/path hits, and resumes page checkpoints without changing anonymous account discovery or target verification. Agent-Reach is not required.
 
 ## Operating workflow
 
