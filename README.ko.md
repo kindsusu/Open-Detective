@@ -66,11 +66,12 @@ open-detective --help
 
 기본 명령은 `open-detective`입니다. 기존 `su-detect`와 `python -m sudetect` 진입점도 계속 지원하며 같은 CLI를 실행합니다.
 
-루트 CLI는 `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
+루트 CLI는 `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 ```bash
 open-detective probe --scope scope.json https://app.example.test/
 open-detective browser https://app.example.test/ --scope scope.json --duration 3
+open-detective trace-assets --scope _local/scope.json --url https://app.example.test/public/ --output _local/case/asset-trace.json
 open-detective inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
 open-detective inventory --provider import --scope-id TEAM --input inventory.json
 open-detective discover --input candidates.json --scope-id TEAM
@@ -92,6 +93,8 @@ open-detective ledger --db audit.sqlite due
 `asset-profile`도 오프라인 명령이다. 이미 승인된 로컬 capture의 제한된 bytes만 읽어 값 없이 구조 힌트와 후보 사업 데이터 범주를 만든다. locator를 가져오거나 공개 도달 가능성을 확정하거나 심각도를 부여하거나 민감 콘텐츠를 확정하지 않는다. manifest와 해석 규칙은 [ops/asset-profile.md](ops/asset-profile.md)를 본다.
 
 `asset-locations`는 profile 또는 inventory report의 opaque 참조를 같은 `--scope-id`의 기존 로컬 locator store와 연결한다. exact URL은 새 private-local mapping에만 기록하고 네트워크 요청·index/file body 검사는 하지 않는다. 이 mapping에는 민감한 URL 구성 요소가 있을 수 있으므로 공개하지 않는다. [ops/asset-profile.md](ops/asset-profile.md)를 본다.
+
+소유한 페이지를 제한된 `probe`로 관측한 뒤 관련 정적 파일도 확인해야 하면 `trace-assets`를 별도로 실행한다. 한 공개 HTML URL에서 시작하는 scope-bound 익명 GET 추적으로, scope가 허용한 명시적 HTML `script`와 명시적 GET JavaScript `fetch(...)` 참조만 따르며 전체 request·byte·duration·depth 예산과 중복 제거를 적용한다. JavaScript 실행, DOM 렌더링, 동적 endpoint 추측, 인증을 하지 않고 기존 `probe`나 `browser`의 동작도 바꾸지 않는다. 민감 콘텐츠 후보가 보이면 즉시 멈춘다. 따라서 inline client password literal 때문에 이후 JSON fetch 전에 중단될 수 있으며, 그 결과를 thin gate 전체를 추적한 것으로 말하면 안 된다. 결과는 content-profile 힌트와 coverage gap을 포함한 asset-linked report이며, `--locator-store`와 `--scope-id`를 함께 지정하면 최종 redirect의 exact location은 로컬에만 보관하고 report에는 opaque 참조만 남긴다. 자세한 규칙은 [ops/asset-trace.md](ops/asset-trace.md)를 본다.
 
 `channel-discover`는 Cert Spotter CT와 수행자 지정 query-bound JSON export로 제한되며, `discovery-eval`과 `asset-graph`는 오프라인이다. [ko/ops/discovery-optimization.md](ko/ops/discovery-optimization.md)를 본다. 어느 것도 소유를 확정하거나 후보를 측정 target으로 바꾸지 않는다.
 
@@ -156,6 +159,7 @@ GitHub control은 `api.github.com` family에 맞춘다. 차례로 repository det
 | [ko/ops/remediate.md](ko/ops/remediate.md) | 격리와 재측정 |
 | [ko/ops/forensics.md](ko/ops/forensics.md) | 승인된 로컬 증거 흐름 |
 | [ops/asset-profile.md](ops/asset-profile.md) | 값 없이 수행하는 오프라인 로컬 자산 프로파일링 |
+| [ops/asset-trace.md](ops/asset-trace.md) | 제한된 정적 공개 자산 추적 |
 | [examples/asset-profile-input.example.json](examples/asset-profile-input.example.json) | 최소 asset-profile 입력 예시 |
 | [schemas/asset-profile-input.schema.json](schemas/asset-profile-input.schema.json) | asset-profile 입력 형식 |
 | [ko/ops/discovery-optimization.md](ko/ops/discovery-optimization.md) | 제한된 adapter, 오프라인 평가, asset graph |

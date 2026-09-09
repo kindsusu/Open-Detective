@@ -60,11 +60,12 @@ open-detective --help
 
 The primary command is `open-detective`. The existing `su-detect` and `python -m sudetect` entry points remain supported and invoke the same CLI.
 
-The root CLI provides `probe`, `browser`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 ```bash
 open-detective probe --scope scope.json https://app.example.test/
 open-detective browser https://app.example.test/ --scope scope.json --duration 3
+open-detective trace-assets --scope _local/scope.json --url https://app.example.test/public/ --output _local/case/asset-trace.json
 open-detective inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
 open-detective inventory --provider import --scope-id TEAM --input inventory.json
 open-detective discover --input candidates.json --scope-id TEAM
@@ -86,6 +87,8 @@ open-detective ledger --db audit.sqlite due
 `asset-profile` is also offline: it examines bounded, already captured local bytes and emits value-free structural hints and candidate business-data categories. It never fetches a locator, establishes public reachability, assigns severity, or confirms sensitive content. Read [ops/asset-profile.md](ops/asset-profile.md) for the manifest and interpretation rules.
 
 `asset-locations` joins opaque references from a profile or inventory report with the existing local locator store in one `--scope-id`. It writes exact URLs only to a new private-local mapping, makes no network request, and does not inspect an index or file body. The mapping can contain sensitive URL components; do not publish it. See [ops/asset-profile.md](ops/asset-profile.md).
+
+After a bounded `probe` of an owned page, invoke `trace-assets` separately when its related static files need checking. It is a scope-bound anonymous GET trace from one public HTML URL that follows only explicit HTML `script` and explicit GET JavaScript `fetch(...)` references the scope authorizes, with aggregate request, byte, duration, depth, and deduplication bounds. It never executes JavaScript, renders a DOM, guesses dynamic endpoints, authenticates, or changes `probe` or `browser`. A sensitive-content candidate stops the trace early, so an inline client password literal can stop it before a later JSON fetch; that result does not trace a thin gate completely. Its asset-linked report contains content-profile hints and coverage gaps; optional paired `--locator-store` and `--scope-id` retain exact final redirect locations locally while the report keeps opaque references. Read [ops/asset-trace.md](ops/asset-trace.md).
 
 `channel-discover` is limited to Cert Spotter CT and operator-configured query-bound JSON exports; `discovery-eval` and `asset-graph` are offline. See [ops/discovery-optimization.md](ops/discovery-optimization.md). None confirms ownership or turns a candidate into a measurement target.
 
@@ -150,6 +153,7 @@ Bind each GitHub control to its `api.github.com` family: repository detail or `/
 | [ops/remediate.md](ops/remediate.md) | Containment and recheck |
 | [ops/forensics.md](ops/forensics.md) | Authorized local evidence workflow |
 | [ops/asset-profile.md](ops/asset-profile.md) | Offline, value-free local asset profiling |
+| [ops/asset-trace.md](ops/asset-trace.md) | Bounded static public asset tracing |
 | [examples/asset-profile-input.example.json](examples/asset-profile-input.example.json) | Minimal asset-profile input |
 | [schemas/asset-profile-input.schema.json](schemas/asset-profile-input.schema.json) | Asset-profile input shape |
 | [ops/discovery-optimization.md](ops/discovery-optimization.md) | Bounded adapters, offline evaluation, and asset graph |

@@ -13,6 +13,7 @@ def main(argv=None):
         "channels-doctor": "channel_health",
         "forensics": "forensic_cli", "channel-discover": "discovery_channels",
         "discovery-eval": "discovery_eval", "asset-graph": "asset_graph", "asset-profile": "asset_profile", "asset-locations": "asset_locations",
+        "trace-assets": "asset_trace",
     }
     if not args or args[0] in ("-h", "--help"):
         print("usage: open-detective {" + ",".join(commands) + "} [options]")
