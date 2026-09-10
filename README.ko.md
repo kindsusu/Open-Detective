@@ -160,15 +160,15 @@ open-detective ledger --db audit.sqlite due
 ## 작업 흐름
 
 1. 발견 전에 로컬 audit intake에 제외와 증거, 조직 식별자, 관계사 경계, 제3자 상태, owner/escalation 참조, 추가 승인 행위를 기록한다. [examples/audit-intake.example.json](examples/audit-intake.example.json)과 [schemas/audit-intake.schema.json](schemas/audit-intake.schema.json)을 쓴다. 이는 실행 scope가 아니며 네트워크 권한을 주지 않는다. `third_parties.status="unknown"`은 기록된 공백이고, 제3자를 추측해 소유로 올리지 않는다.
-2. 계약·자산·처리자/수탁자 대장의 관리자 export를 받고, 실행 scope를 승인한 다음 candidate를 import한다. owner-inventory 자격증명은 별도 권한 경로로 둔다.
-3. intake에서 identifier와 오프라인 `search-plan`을 만든다.
-4. `doctor --reference .`로 명령이 실제로 불러온 runtime root를 확인하고 검수한 `.` source tree와 비교한다.
-5. `channels-doctor`로 승인된 fresh positive control을 실행한 뒤에만 `github-discover` 또는 `search-plan`을 실행한다. 대조군 성공은 회사 전체 발견 완료가 아니다.
-6. 측정 전에 소유를 확증한다. 비공개 저장소의 공개 배포는 계속 남을 수 있다.
+2. intake에서 identifier와 오프라인 `search-plan`을 만든다. 이것은 deployment 요청을 허가하지 않는다.
+3. `doctor --reference .`로 명령이 실제로 불러온 runtime root를 확인하고 검수한 `.` source tree와 비교한다.
+4. 자체 executable control scope 아래에서 `channels-doctor`로 fresh control을 실행한 뒤에만 별도 `scope_id`와 channel-health 계약 아래 `github-discover` 또는 `search-plan`을 실행한다. control 성공은 회사 발견이나 deployment target을 승인하지 않는다.
+5. public-metadata candidate를 검토하고 계약·자산·처리자/수탁자 대장의 administrator export를 받는다. 그 export의 candidate는 import 전에 executable target scope를 승인한다. owner-inventory 자격증명은 별도 권한 경로로 둔다.
+6. target 요청 전에 소유를 확인하고 정확한 target scope를 승인한 뒤 locator를 asset에 바인딩한다. 비공개 저장소의 공개 배포는 계속 남을 수 있다.
 7. 제한된 익명 probe를 실행한다. 실패와 부분 캡처는 `INDETERMINATE`다.
 8. 정적 HTML로 내용 질문에 답할 수 없을 때만 브라우저를 쓴다. `brokered_anonymous_browser`는 새 context와 정책 제한 transport broker로 승인된 GET document/script/stylesheet/XHR/fetch를 처리한다. browser credential, cookie, auth, referrer를 제거하고 Service Worker를 끈다. WebSocket server 연결을 막고 message는 local sink에서 버리며 popup을 닫고 download를 거부한다. 앞선 DOM 검토에서 candidate가 없을 때만 제한된 live `input`, `textarea`, `select` 값을 검사한다. canvas pixel, serialized snapshot 밖의 shadow DOM, JavaScript heap, interaction 이후 상태와 미지원 동작은 측정하지 않는다. password input은 `LOGIN_FORM_INDICATOR`일 뿐 `PUBLIC_UI`, 보호, 민감으로 자동 판정하지 않는다. dead proxy와 blocked host resolving으로 Chromium을 실행해 지원되는 page request가 broker를 거치게 한다. 이 통제는 observer 경계이며 OS firewall이나 전체 egress 보장이 아니다.
-9. 최소 증거로만 내용을 확정한다. 개인정보나 사용 가능한 비밀이 보이면 중단한다. 승인된 소유자 측 확인 전까지 비밀의 실제 유효성은 unknown이다.
-10. 긴급 격리, 로그 보존, 비밀 회전, 서비스 연속성을 함께 판단한다. SSO 뒤에서도 애플리케이션 권한 검사를 유지한다.
+9. 최소 증거로만 내용을 확정한다. 개인정보나 사용 가능한 비밀이 보이면 중단한다. 승인된 소유자 측 확인 전까지 비밀의 실제 유효성은 unknown이다. `asset-profile`은 owner가 허가한 로컬 bytes를 따로 오프라인 분석하며, sanitize된 probe report는 그 bytes를 제공하지 않는다.
+10. active exposure에서는 final classification 전에라도 accountable owner가 harm을 기준으로 정확한 deployment를 isolate하고 log를 보존할 수 있다. continuity, secret rotation, owner-side validity check는 따로 계획한다. SSO 뒤에서도 애플리케이션 권한 검사를 유지한다.
 11. 원 URL과 알려진 모든 alias의 새 익명 observation, 대조군, 선언한 잔존 범위의 증거가 완료 조건을 충족할 때 종결한다. ledger asset과 alias를 opaque locator `target_id`, `policy_id`에 바인딩하고 불일치를 거부한다. 잔존을 확인하지 못했으면 `partially_closed`다. 종결 뒤 현재 `BODY_SERVED`, unknown/incomplete 결과, 같은 시각의 충돌 관측은 finding을 재개하거나 재검토 상태로 돌린다.
 
 소유자 API는 모든 cursor를 끝까지 처리하고 권한·rate limit·truncation·시간 범위 공백을 기록한다. 정규화 JSON 가져오기는 source, retrieval time, owner scope, completeness를 보존한다. 채널 실패로 0행이 나온 것은 자산 0건이 아니다.

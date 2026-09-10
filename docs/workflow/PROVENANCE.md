@@ -21,3 +21,7 @@ The complete exported PNG was visually inspected. It requires vertical scrolling
 ## Attribution
 
 Archify viewer code remains under MIT ([ARCHIFY-LICENSE.txt](ARCHIFY-LICENSE.txt)); the embedded JetBrains Mono font remains under SIL OFL ([JetBrainsMono-OFL.txt](JetBrainsMono-OFL.txt)).
+
+## Ordering correction
+
+Public discovery produces metadata candidates. Code-search locations return to owner review before scope approval and binding. The measurement edge states approve then bind. Asset profiling takes separately approved local files and a manifest, not a probe report or automatic source export. Urgent owner action can branch from an observation before final classification; evidence review and fresh rechecks remain necessary. These are operator decisions, not automatic API calls. Current topology and PNG were reviewed after regeneration.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Corrected workflow ordering: target-scope approval precedes locator binding, public metadata discovery is distinct from administrator-export import, file locations return to ownership review, local profiling takes separately authorized bytes, and urgent owner containment can precede final classification.
+
 - Documented current optional code search, private file-location export, offline profiling, and scoped static tracing; refreshed English/Korean onboarding, synthetic result examples, and the dark workflow diagram.
 - Fixed explicit retries for authentication and request failures, and corrected selected-repository counts, scope gaps, and opaque scope-reference filtering.
 
