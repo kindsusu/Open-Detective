@@ -1,4 +1,4 @@
-<svg viewBox="0 0 1102 900" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" style="" width="1102" height="900" xmlns="http://www.w3.org/2000/svg"><style>
+<svg viewBox="0 0 1183 1086" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="showcase" style="" width="1183" height="1086" xmlns="http://www.w3.org/2000/svg"><style>
 /*
 JetBrains Mono variable WOFF2 subsets from Google Fonts service revision v24.
 These fixed bytes are shared by the viewer and its SVG/raster exports.
@@ -436,49 +436,58 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
         <rect width="100%" height="100%" fill="url(#grid)"/>
 
         <!-- Swimlanes -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="1046" height="166" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-0" x="40" y="52" width="1127" height="166" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="74" class="t-dim" font-size="10" font-weight="600">01 / Asset Owner + Investigator</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="238" width="1046" height="166" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-1" x="40" y="238" width="1127" height="166" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="260" class="t-dim" font-size="10" font-weight="600">02 / Public Asset Review</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="424" width="1046" height="166" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-2" x="40" y="424" width="1127" height="166" rx="10" class="c-lane" stroke-width="1"/>
         <text x="54" y="446" class="t-dim" font-size="10" font-weight="600">03 / Evidence + Response</text>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="610" width="1046" height="166" rx="10" class="c-lane" stroke-width="1"/>
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-3-exception" x="46" y="616" width="1034" height="154" rx="8" class="c-security-group" stroke-width="1"/>
-        <text x="54" y="632" class="t-security" font-size="10" font-weight="600">EX / Authorized Local Forensics</text>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-3" x="40" y="610" width="1127" height="166" rx="10" class="c-lane" stroke-width="1"/>
+        <text x="54" y="632" class="t-dim" font-size="10" font-weight="600">04 / Optional Steps — Explicit Invocation</text>
+
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="lane" data-composition-frame-id="lane-4" x="40" y="796" width="1127" height="166" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="exception-lane" data-composition-frame-id="lane-4-exception" x="46" y="802" width="1115" height="154" rx="8" class="c-security-group" stroke-width="1"/>
+        <text x="54" y="818" class="t-security" font-size="10" font-weight="600">EX / Authorized Local Forensics</text>
 
         <!-- Phase headers -->
-        <line x1="67" y1="35" x2="387.6" y2="35" class="a-default" stroke-width="1.1"/>
-        <rect x="67" y="27" width="320.6" height="16" rx="4" class="c-mask"/>
-        <text x="227.3" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Intake + Prepare</text>
-        <line x1="440.6" y1="35" x2="679.1" y2="35" class="a-emphasis" stroke-width="1.1"/>
-        <rect x="440.6" y="27" width="238.5" height="16" rx="4" class="c-mask"/>
-        <text x="559.85" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Bounded Observation</text>
-        <line x1="707.0999999999999" y1="35" x2="1053.1" y2="35" class="a-security" stroke-width="1.1"/>
-        <rect x="707.0999999999999" y="27" width="345.9999999999999" height="16" rx="4" class="c-mask"/>
-        <text x="880.0999999999999" y="39" class="t-security" font-size="8" font-weight="600" text-anchor="middle">Classify + Respond + Recheck</text>
+        <line x1="67" y1="35" x2="334.8" y2="35" class="a-default" stroke-width="1.1"/>
+        <rect x="67" y="27" width="267.8" height="16" rx="4" class="c-mask"/>
+        <text x="200.9" y="39" class="t-muted" font-size="8" font-weight="600" text-anchor="middle">Intake + Prepare</text>
+        <line x1="387.79999999999995" y1="35" x2="691" y2="35" class="a-emphasis" stroke-width="1.1"/>
+        <rect x="387.79999999999995" y="27" width="303.2" height="16" rx="4" class="c-mask"/>
+        <text x="539.4" y="39" class="t-backend" font-size="8" font-weight="600" text-anchor="middle">Bounded Observation</text>
+        <line x1="817.1000000000001" y1="35" x2="1134.3000000000002" y2="35" class="a-security" stroke-width="1.1"/>
+        <rect x="817.1000000000001" y="27" width="317.19999999999993" height="16" rx="4" class="c-mask"/>
+        <text x="975.7" y="39" class="t-security" font-size="8" font-weight="600" text-anchor="middle">Classify + Respond + Recheck</text>
 
         <!-- Workflow groups -->
 
 
         <!-- Edge paths -->
-        <path data-edge-from="anonymousProbe" data-edge-to="classification" data-edge-label="minimum observation" data-edge-key="0" data-composition-points="633.1,370;633.1,414;753.1,414;753.1,488" d="M 633.1 370 L 633.1 414 L 753.1 414 L 753.1 488" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="classification" data-edge-to="ledgerContainment" data-edge-label="human-approved class" data-edge-key="1" data-composition-points="824.1,522;938.1,522" d="M 824.1 522 L 938.1 522" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="controls" data-edge-to="discovery" data-edge-label="controlled run" data-edge-key="2" data-composition-points="341.6,400;341.6,420;486.6,420;486.6,370" d="M 341.6 400 L 341.6 420 L 486.6 420 L 486.6 370" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="discovery" data-edge-to="ownershipGate" data-edge-label="candidate records" data-edge-key="3" data-composition-points="486.6,302;486.6,184" d="M 486.6 302 L 486.6 184" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="ledgerContainment" data-edge-to="freshRecheck" data-edge-label="after owner action" data-edge-key="4" data-composition-points="1007.1,488;1007.1,370" d="M 1007.1 488 L 1007.1 370" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="localAcquire" data-edge-to="localCustody" data-edge-label="read-only copy" data-edge-key="5" data-composition-points="409.6,708;566.1,708" d="M 409.6 708 L 566.1 708" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="localCustody" data-edge-to="localTimeline" data-edge-label="custody record" data-edge-key="6" data-composition-points="700.1,708;937.1,708" d="M 700.1 708 L 937.1 708" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="ownershipGate" data-edge-to="anonymousProbe" data-edge-label="exact measurements authorized" data-edge-key="7" data-composition-points="559.1,150;575.1,150;575.1,228;633.1,228;633.1,302" d="M 559.1 150 L 575.1 150 L 575.1 228 L 633.1 228 L 633.1 302" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
-        <path data-edge-from="scope" data-edge-to="localAcquire" data-edge-label="separate local-forensics approval" data-edge-key="8" data-composition-points="48,150;32,150;32,414;257.6,414;257.6,708;273.6,708" d="M 48 150 L 32 150 L 32 414 L 257.6 414 L 257.6 708 L 273.6 708" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <path data-edge-from="scope" data-edge-to="searchPlan" data-edge-label="authorized intake" data-edge-key="9" data-composition-points="178,150;277.6,150" d="M 178 150 L 277.6 150" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
-        <path data-edge-from="searchPlan" data-edge-to="controls" data-edge-label="observation plan" data-edge-key="10" data-composition-points="341.6,184;341.6,228;259.6,228;259.6,366;275.6,366" d="M 341.6 184 L 341.6 228 L 259.6 228 L 259.6 366 L 275.6 366" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="anonymousProbe" data-edge-to="classification" data-edge-label="observation" data-edge-key="0" data-composition-points="645,370;645,522;792.1,522" d="M 645 370 L 645 522 L 792.1 522" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="anonymousProbe" data-edge-to="profile" data-edge-label="local capture" data-edge-key="1" data-composition-points="645,302;645,222;772.1,222;772.1,708;788.1,708" d="M 645 302 L 645 222 L 772.1 222 L 772.1 708 L 788.1 708" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="anonymousProbe" data-edge-to="trace" data-edge-label="invoke trace" data-edge-key="2" data-composition-points="712.5,336;787.8,336;787.8,286;863.1,286;863.1,302" d="M 712.5 336 L 787.8 336 L 787.8 286 L 863.1 286 L 863.1 302" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="classification" data-edge-to="ledgerContainment" data-edge-label="reviewed class" data-edge-key="3" data-composition-points="934.1,522;1019.3,522" d="M 934.1 522 L 1019.3 522" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="codeSearch" data-edge-to="locations" data-edge-label="file refs" data-edge-key="4" data-composition-points="433.8,742;433.8,758;645,758;645,742" d="M 433.8 742 L 433.8 758 L 645 758 L 645 742" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="controls" data-edge-to="discovery" data-edge-label="controls pass" data-edge-key="5" data-composition-points="288.8,400;288.8,420;426.8,420;426.8,370" d="M 288.8 400 L 288.8 420 L 426.8 420 L 426.8 370" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="discovery" data-edge-to="codeSearch" data-edge-label="select repo" data-edge-key="6" data-composition-points="433.8,370;433.8,507;342.8,507;342.8,708;358.8,708" d="M 433.8 370 L 433.8 507 L 342.8 507 L 342.8 708 L 358.8 708" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="discovery" data-edge-to="ownershipGate" data-edge-label="candidates" data-edge-key="7" data-composition-points="433.8,302;433.8,184" d="M 433.8 302 L 433.8 184" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="ledgerContainment" data-edge-to="freshRecheck" data-edge-label="owner action" data-edge-key="8" data-composition-points="1088.3,488;1088.3,370" d="M 1088.3 488 L 1088.3 370" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="localAcquire" data-edge-to="localCustody" data-edge-label="local copy" data-edge-key="9" data-composition-points="356.8,894;578,894" d="M 356.8 894 L 578 894" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="localCustody" data-edge-to="localTimeline" data-edge-label="custody" data-edge-key="10" data-composition-points="712,894;1018.3,894" d="M 712 894 L 1018.3 894" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="ownershipGate" data-edge-to="anonymousProbe" data-edge-label="scope approved" data-edge-key="11" data-composition-points="506.3,150;645,150;645,302" d="M 506.3 150 L 645 150 L 645 302" class="a-security" stroke-width="1.4" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="profile" data-edge-to="classification" data-edge-label="hints" data-edge-key="12" data-composition-points="863.1,674;863.1,556" d="M 863.1 674 L 863.1 556" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="scope" data-edge-to="localAcquire" data-edge-label="case approval" data-edge-key="13" data-composition-points="48,150;20,150;20,894;220.8,894" d="M 48 150 L 20 150 L 20 894 L 220.8 894" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="scope" data-edge-to="searchPlan" data-edge-label="intake" data-edge-key="14" data-composition-points="178,150;224.8,150" d="M 178 150 L 224.8 150" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="searchPlan" data-edge-to="controls" data-edge-label="plan" data-edge-key="15" data-composition-points="288.8,184;288.8,228;206.8,228;206.8,366;222.8,366" d="M 288.8 184 L 288.8 228 L 206.8 228 L 206.8 366 L 222.8 366" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="trace" data-edge-to="classification" data-edge-label="trace gaps" data-edge-key="16" data-composition-points="938.1,336;954.1,336;954.1,414;863.1,414;863.1,488" d="M 938.1 336 L 954.1 336 L 954.1 414 L 863.1 414 L 863.1 488" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Nodes -->
-        <g id="node-scope" data-node-id="scope" data-node-label="Intake" tabindex="0" role="button" aria-label="Focus Intake, authority + source bounds, Asset Owner + Investigator › Intake + Prepare" aria-pressed="false" data-node-kind="security" data-node-sublabel="authority + source bounds" data-node-tag="HUMAN" data-node-context="Asset Owner + Investigator › Intake + Prepare">
-          <title>Intake · authority + source bounds · Asset Owner + Investigator › Intake + Prepare · HUMAN</title>
+        <g id="node-scope" data-node-id="scope" data-node-label="Intake" tabindex="0" role="button" aria-label="Focus Intake, scope + sources, Asset Owner + Investigator › Intake + Prepare" aria-pressed="false" data-node-kind="security" data-node-sublabel="scope + sources" data-node-tag="HUMAN" data-node-context="Asset Owner + Investigator › Intake + Prepare">
+          <title>Intake · scope + sources · Asset Owner + Investigator › Intake + Prepare · HUMAN</title>
           <rect x="48" y="116" width="130" height="68" rx="6" class="c-mask"/>
           <rect x="48" y="116" width="130" height="68" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(54 122) scale(0.6875)">
@@ -486,224 +495,301 @@ svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { ani
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
           <text data-node-label="" x="113" y="137" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Intake</text>
-          <text x="113" y="154" class="t-muted" font-size="8" text-anchor="middle">authority + source bounds</text>
+          <text x="113" y="154" class="t-muted" font-size="8" text-anchor="middle">scope + sources</text>
         <text x="113" y="172" class="t-security" font-size="7" text-anchor="middle">HUMAN</text>
         </g>
 
-        <g id="node-searchPlan" data-node-id="searchPlan" data-node-label="Search Plan" tabindex="0" role="button" aria-label="Focus Search Plan, sources + query terms, Asset Owner + Investigator › Intake + Prepare" aria-pressed="false" data-node-kind="backend" data-node-sublabel="sources + query terms" data-node-tag="HUMAN + TOOL" data-node-context="Asset Owner + Investigator › Intake + Prepare">
-          <title>Search Plan · sources + query terms · Asset Owner + Investigator › Intake + Prepare · HUMAN + TOOL</title>
-          <rect x="277.6" y="116" width="128" height="68" rx="6" class="c-mask"/>
-          <rect x="277.6" y="116" width="128" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(283.6 122) scale(0.6875)">
+        <g id="node-searchPlan" data-node-id="searchPlan" data-node-label="Search Plan" tabindex="0" role="button" aria-label="Focus Search Plan, aliases + terms, Asset Owner + Investigator › Intake + Prepare" aria-pressed="false" data-node-kind="backend" data-node-sublabel="aliases + terms" data-node-tag="HUMAN + TOOL" data-node-context="Asset Owner + Investigator › Intake + Prepare">
+          <title>Search Plan · aliases + terms · Asset Owner + Investigator › Intake + Prepare · HUMAN + TOOL</title>
+          <rect x="224.8" y="116" width="128" height="68" rx="6" class="c-mask"/>
+          <rect x="224.8" y="116" width="128" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(230.8 122) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" x="341.6" y="137" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Search Plan</text>
-          <text x="341.6" y="154" class="t-muted" font-size="8" text-anchor="middle">sources + query terms</text>
-        <text x="341.6" y="172" class="t-backend" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
+          <text data-node-label="" x="288.8" y="137" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Search Plan</text>
+          <text x="288.8" y="154" class="t-muted" font-size="8" text-anchor="middle">aliases + terms</text>
+        <text x="288.8" y="172" class="t-backend" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
         </g>
 
-        <g id="node-ownershipGate" data-node-id="ownershipGate" data-node-label="Authorize" tabindex="0" role="button" aria-label="Focus Authorize, ownership + exact scope, Asset Owner + Investigator › Bounded Observation" aria-pressed="false" data-node-kind="security" data-node-sublabel="ownership + exact scope" data-node-tag="HUMAN DECISION" data-node-context="Asset Owner + Investigator › Bounded Observation">
-          <title>Authorize · ownership + exact scope · Asset Owner + Investigator › Bounded Observation · HUMAN DECISION</title>
-          <rect x="414.1" y="116" width="145" height="68" rx="6" class="c-mask"/>
-          <rect x="414.1" y="116" width="145" height="68" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(420.1 122) scale(0.6875)">
+        <g id="node-ownershipGate" data-node-id="ownershipGate" data-node-label="Authorize" tabindex="0" role="button" aria-label="Focus Authorize, owner + scope, Asset Owner + Investigator › Bounded Observation" aria-pressed="false" data-node-kind="security" data-node-sublabel="owner + scope" data-node-tag="HUMAN DECISION" data-node-context="Asset Owner + Investigator › Bounded Observation">
+          <title>Authorize · owner + scope · Asset Owner + Investigator › Bounded Observation · HUMAN DECISION</title>
+          <rect x="361.3" y="116" width="145" height="68" rx="6" class="c-mask"/>
+          <rect x="361.3" y="116" width="145" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(367.3 122) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" x="486.6" y="137" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Authorize</text>
-          <text x="486.6" y="154" class="t-muted" font-size="8" text-anchor="middle">ownership + exact scope</text>
-        <text x="486.6" y="172" class="t-security" font-size="7" text-anchor="middle">HUMAN DECISION</text>
+          <text data-node-label="" x="433.8" y="137" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Authorize</text>
+          <text x="433.8" y="154" class="t-muted" font-size="8" text-anchor="middle">owner + scope</text>
+        <text x="433.8" y="172" class="t-security" font-size="7" text-anchor="middle">HUMAN DECISION</text>
         </g>
 
-        <g id="node-controls" data-node-id="controls" data-node-label="Runtime Checks" tabindex="0" role="button" aria-label="Focus Runtime Checks, positive control baseline, Public Asset Review › Intake + Prepare" aria-pressed="false" data-node-kind="security" data-node-sublabel="positive control baseline" data-node-tag="HUMAN + TOOL" data-node-context="Public Asset Review › Intake + Prepare">
-          <title>Runtime Checks · positive control baseline · Public Asset Review › Intake + Prepare · HUMAN + TOOL</title>
-          <rect x="275.6" y="332" width="132" height="68" rx="6" class="c-mask"/>
-          <rect x="275.6" y="332" width="132" height="68" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(281.6 338) scale(0.6875)">
+        <g id="node-controls" data-node-id="controls" data-node-label="Runtime Checks" tabindex="0" role="button" aria-label="Focus Runtime Checks, fresh controls, Public Asset Review › Intake + Prepare" aria-pressed="false" data-node-kind="security" data-node-sublabel="fresh controls" data-node-tag="HUMAN + TOOL" data-node-context="Public Asset Review › Intake + Prepare">
+          <title>Runtime Checks · fresh controls · Public Asset Review › Intake + Prepare · HUMAN + TOOL</title>
+          <rect x="222.8" y="332" width="132" height="68" rx="6" class="c-mask"/>
+          <rect x="222.8" y="332" width="132" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(228.8 338) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" x="341.6" y="353" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Runtime Checks</text>
-          <text x="341.6" y="370" class="t-muted" font-size="8" text-anchor="middle">positive control baseline</text>
-        <text x="341.6" y="388" class="t-security" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
+          <text data-node-label="" x="288.8" y="353" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Runtime Checks</text>
+          <text x="288.8" y="370" class="t-muted" font-size="8" text-anchor="middle">fresh controls</text>
+        <text x="288.8" y="388" class="t-security" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
         </g>
 
-        <g id="node-discovery" data-node-id="discovery" data-node-label="Discover + Import" tabindex="0" role="button" aria-label="Focus Discover + Import, bounded GitHub + CT, Public Asset Review › Bounded Observation" aria-pressed="false" data-node-kind="external" data-node-sublabel="bounded GitHub + CT" data-node-tag="AUTOMATED" data-node-context="Public Asset Review › Bounded Observation">
-          <title>Discover + Import · bounded GitHub + CT · Public Asset Review › Bounded Observation · AUTOMATED</title>
-          <rect x="415.6" y="302" width="142" height="68" rx="6" class="c-mask"/>
-          <rect x="415.6" y="302" width="142" height="68" rx="6" class="c-external" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(421.6 308) scale(0.6875)">
+        <g id="node-discovery" data-node-id="discovery" data-node-label="Discover + Import" tabindex="0" role="button" aria-label="Focus Discover + Import, GitHub + CT, Public Asset Review › Bounded Observation" aria-pressed="false" data-node-kind="external" data-node-sublabel="GitHub + CT" data-node-tag="AUTOMATED" data-node-context="Public Asset Review › Bounded Observation">
+          <title>Discover + Import · GitHub + CT · Public Asset Review › Bounded Observation · AUTOMATED</title>
+          <rect x="362.8" y="302" width="142" height="68" rx="6" class="c-mask"/>
+          <rect x="362.8" y="302" width="142" height="68" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(368.8 308) scale(0.6875)">
             <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
             <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
           </g>
-          <text data-node-label="" x="486.6" y="323" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Discover + Import</text>
-          <text x="486.6" y="340" class="t-muted" font-size="8" text-anchor="middle">bounded GitHub + CT</text>
-        <text x="486.6" y="358" class="t-external" font-size="7" text-anchor="middle">AUTOMATED</text>
+          <text data-node-label="" x="433.8" y="323" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Discover + Import</text>
+          <text x="433.8" y="340" class="t-muted" font-size="8" text-anchor="middle">GitHub + CT</text>
+        <text x="433.8" y="358" class="t-external" font-size="7" text-anchor="middle">AUTOMATED</text>
         </g>
 
-        <g id="node-anonymousProbe" data-node-id="anonymousProbe" data-node-label="Observe" tabindex="0" role="button" aria-label="Focus Observe, anonymous probe + browser, Public Asset Review › Bounded Observation" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="anonymous probe + browser" data-node-tag="HUMAN + TOOL" data-node-context="Public Asset Review › Bounded Observation">
-          <title>Observe · anonymous probe + browser · Public Asset Review › Bounded Observation · HUMAN + TOOL</title>
-          <rect x="565.6" y="302" width="135" height="68" rx="6" class="c-mask"/>
-          <rect x="565.6" y="302" width="135" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(571.6 308) scale(0.6875)">
+        <g id="node-anonymousProbe" data-node-id="anonymousProbe" data-node-label="Observe" tabindex="0" role="button" aria-label="Focus Observe, probe / browser, Public Asset Review › Bounded Observation" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="probe / browser" data-node-tag="HUMAN + TOOL" data-node-context="Public Asset Review › Bounded Observation">
+          <title>Observe · probe / browser · Public Asset Review › Bounded Observation · HUMAN + TOOL</title>
+          <rect x="577.5" y="302" width="135" height="68" rx="6" class="c-mask"/>
+          <rect x="577.5" y="302" width="135" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(583.5 308) scale(0.6875)">
             <rect x="2" y="3" width="12" height="10" rx="2"/>
             <path d="M2 6.5h12"/>
             <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
             <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
           </g>
-          <text data-node-label="" x="633.1" y="323" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Observe</text>
-          <text x="633.1" y="340" class="t-muted" font-size="8" text-anchor="middle">anonymous probe + browser</text>
-        <text x="633.1" y="358" class="t-frontend" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
+          <text data-node-label="" x="645" y="323" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Observe</text>
+          <text x="645" y="340" class="t-muted" font-size="8" text-anchor="middle">probe / browser</text>
+        <text x="645" y="358" class="t-frontend" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
         </g>
 
-        <g id="node-freshRecheck" data-node-id="freshRecheck" data-node-label="Recheck" tabindex="0" role="button" aria-label="Focus Recheck, fresh anonymous session, Public Asset Review › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="fresh anonymous session" data-node-tag="HUMAN + TOOL" data-node-context="Public Asset Review › Classify + Respond + Recheck">
-          <title>Recheck · fresh anonymous session · Public Asset Review › Classify + Respond + Recheck · HUMAN + TOOL</title>
-          <rect x="938.1" y="302" width="138" height="68" rx="6" class="c-mask"/>
-          <rect x="938.1" y="302" width="138" height="68" rx="6" class="c-cloud" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(944.1 308) scale(0.6875)">
+        <g id="node-trace" data-node-id="trace" data-node-label="Static Trace" tabindex="0" role="button" aria-label="Focus Static Trace, scoped GET refs, Public Asset Review › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="scoped GET refs" data-node-tag="OPTIONAL / BOUNDED" data-node-context="Public Asset Review › Classify + Respond + Recheck">
+          <title>Static Trace · scoped GET refs · Public Asset Review › Classify + Respond + Recheck · OPTIONAL / BOUNDED</title>
+          <rect x="788.1" y="302" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="788.1" y="302" width="150" height="68" rx="6" class="c-frontend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(794.1 308) scale(0.6875)">
+            <rect x="2" y="3" width="12" height="10" rx="2"/>
+            <path d="M2 6.5h12"/>
+            <circle cx="4.1" cy="4.8" r=".7" class="sigil-fill"/>
+            <circle cx="6.3" cy="4.8" r=".7" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" x="863.1" y="323" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Static Trace</text>
+          <text x="863.1" y="340" class="t-muted" font-size="8" text-anchor="middle">scoped GET refs</text>
+        <text x="863.1" y="358" class="t-frontend" font-size="7" text-anchor="middle">OPTIONAL / BOUNDED</text>
+        </g>
+
+        <g id="node-freshRecheck" data-node-id="freshRecheck" data-node-label="Recheck" tabindex="0" role="button" aria-label="Focus Recheck, fresh observation, Public Asset Review › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="fresh observation" data-node-tag="HUMAN + TOOL" data-node-context="Public Asset Review › Classify + Respond + Recheck">
+          <title>Recheck · fresh observation · Public Asset Review › Classify + Respond + Recheck · HUMAN + TOOL</title>
+          <rect x="1019.3" y="302" width="138" height="68" rx="6" class="c-mask"/>
+          <rect x="1019.3" y="302" width="138" height="68" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1025.3 308) scale(0.6875)">
             <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
           </g>
-          <text data-node-label="" x="1007.1" y="323" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Recheck</text>
-          <text x="1007.1" y="340" class="t-muted" font-size="8" text-anchor="middle">fresh anonymous session</text>
-        <text x="1007.1" y="358" class="t-cloud" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
+          <text data-node-label="" x="1088.3" y="323" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Recheck</text>
+          <text x="1088.3" y="340" class="t-muted" font-size="8" text-anchor="middle">fresh observation</text>
+        <text x="1088.3" y="358" class="t-cloud" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
         </g>
 
-        <g id="node-classification" data-node-id="classification" data-node-label="Review Evidence" tabindex="0" role="button" aria-label="Focus Review Evidence, minimum capture + class, Evidence + Response › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="security" data-node-sublabel="minimum capture + class" data-node-tag="HUMAN REVIEW" data-node-context="Evidence + Response › Classify + Respond + Recheck">
-          <title>Review Evidence · minimum capture + class · Evidence + Response › Classify + Respond + Recheck · HUMAN REVIEW</title>
-          <rect x="682.1" y="488" width="142" height="68" rx="6" class="c-mask"/>
-          <rect x="682.1" y="488" width="142" height="68" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(688.1 494) scale(0.6875)">
+        <g id="node-classification" data-node-id="classification" data-node-label="Review Evidence" tabindex="0" role="button" aria-label="Focus Review Evidence, minimum evidence, Evidence + Response › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="security" data-node-sublabel="minimum evidence" data-node-tag="HUMAN REVIEW" data-node-context="Evidence + Response › Classify + Respond + Recheck">
+          <title>Review Evidence · minimum evidence · Evidence + Response › Classify + Respond + Recheck · HUMAN REVIEW</title>
+          <rect x="792.1" y="488" width="142" height="68" rx="6" class="c-mask"/>
+          <rect x="792.1" y="488" width="142" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(798.1 494) scale(0.6875)">
             <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
             <path d="m5.8 8 1.5 1.5 3-3"/>
           </g>
-          <text data-node-label="" x="753.1" y="509" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Review Evidence</text>
-          <text x="753.1" y="526" class="t-muted" font-size="8" text-anchor="middle">minimum capture + class</text>
-        <text x="753.1" y="544" class="t-security" font-size="7" text-anchor="middle">HUMAN REVIEW</text>
+          <text data-node-label="" x="863.1" y="509" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Review Evidence</text>
+          <text x="863.1" y="526" class="t-muted" font-size="8" text-anchor="middle">minimum evidence</text>
+        <text x="863.1" y="544" class="t-security" font-size="7" text-anchor="middle">HUMAN REVIEW</text>
         </g>
 
-        <g id="node-ledgerContainment" data-node-id="ledgerContainment" data-node-label="Track Response" tabindex="0" role="button" aria-label="Focus Track Response, ledger + owner action, Evidence + Response › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="database" data-node-sublabel="ledger + owner action" data-node-tag="HUMAN + TOOL" data-node-context="Evidence + Response › Classify + Respond + Recheck">
-          <title>Track Response · ledger + owner action · Evidence + Response › Classify + Respond + Recheck · HUMAN + TOOL</title>
-          <rect x="938.1" y="488" width="138" height="68" rx="6" class="c-mask"/>
-          <rect x="938.1" y="488" width="138" height="68" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(944.1 494) scale(0.6875)">
+        <g id="node-ledgerContainment" data-node-id="ledgerContainment" data-node-label="Track Response" tabindex="0" role="button" aria-label="Focus Track Response, ledger + owner, Evidence + Response › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="database" data-node-sublabel="ledger + owner" data-node-tag="HUMAN + TOOL" data-node-context="Evidence + Response › Classify + Respond + Recheck">
+          <title>Track Response · ledger + owner · Evidence + Response › Classify + Respond + Recheck · HUMAN + TOOL</title>
+          <rect x="1019.3" y="488" width="138" height="68" rx="6" class="c-mask"/>
+          <rect x="1019.3" y="488" width="138" height="68" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1025.3 494) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" x="1007.1" y="509" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Track Response</text>
-          <text x="1007.1" y="526" class="t-muted" font-size="8" text-anchor="middle">ledger + owner action</text>
-        <text x="1007.1" y="544" class="t-database" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
+          <text data-node-label="" x="1088.3" y="509" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Track Response</text>
+          <text x="1088.3" y="526" class="t-muted" font-size="8" text-anchor="middle">ledger + owner</text>
+        <text x="1088.3" y="544" class="t-database" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
         </g>
 
-        <g id="node-localAcquire" data-node-id="localAcquire" data-node-label="Acquire" tabindex="0" role="button" aria-label="Focus Acquire, authorized local copy, Authorized Local Forensics › Intake + Prepare" aria-pressed="false" data-node-kind="database" data-node-sublabel="authorized local copy" data-node-tag="OWNER + TOOL" data-node-context="Authorized Local Forensics › Intake + Prepare">
-          <title>Acquire · authorized local copy · Authorized Local Forensics › Intake + Prepare · OWNER + TOOL</title>
-          <rect x="273.6" y="674" width="136" height="68" rx="6" class="c-mask"/>
-          <rect x="273.6" y="674" width="136" height="68" rx="6" class="c-database" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(279.6 680) scale(0.6875)">
+        <g id="node-codeSearch" data-node-id="codeSearch" data-node-label="Code Search" tabindex="0" role="button" aria-label="Focus Code Search, repo + control, Optional Steps — Explicit Invocation › Bounded Observation" aria-pressed="false" data-node-kind="external" data-node-sublabel="repo + control" data-node-tag="METADATA ONLY" data-node-context="Optional Steps — Explicit Invocation › Bounded Observation">
+          <title>Code Search · repo + control · Optional Steps — Explicit Invocation › Bounded Observation · METADATA ONLY</title>
+          <rect x="358.8" y="674" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="358.8" y="674" width="150" height="68" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(364.8 680) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" x="433.8" y="695" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Code Search</text>
+          <text x="433.8" y="712" class="t-muted" font-size="8" text-anchor="middle">repo + control</text>
+        <text x="433.8" y="730" class="t-external" font-size="7" text-anchor="middle">METADATA ONLY</text>
+        </g>
+
+        <g id="node-locations" data-node-id="locations" data-node-label="File Locations" tabindex="0" role="button" aria-label="Focus File Locations, private refs, Optional Steps — Explicit Invocation › Bounded Observation" aria-pressed="false" data-node-kind="database" data-node-sublabel="private refs" data-node-tag="NO CONTENT FETCH" data-node-context="Optional Steps — Explicit Invocation › Bounded Observation">
+          <title>File Locations · private refs · Optional Steps — Explicit Invocation › Bounded Observation · NO CONTENT FETCH</title>
+          <rect x="570" y="674" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="570" y="674" width="150" height="68" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(576 680) scale(0.6875)">
             <ellipse cx="8" cy="4" rx="5" ry="2"/>
             <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
           </g>
-          <text data-node-label="" x="341.6" y="695" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Acquire</text>
-          <text x="341.6" y="712" class="t-muted" font-size="8" text-anchor="middle">authorized local copy</text>
-        <text x="341.6" y="730" class="t-database" font-size="7" text-anchor="middle">OWNER + TOOL</text>
+          <text data-node-label="" x="645" y="695" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">File Locations</text>
+          <text x="645" y="712" class="t-muted" font-size="8" text-anchor="middle">private refs</text>
+        <text x="645" y="730" class="t-database" font-size="7" text-anchor="middle">NO CONTENT FETCH</text>
         </g>
 
-        <g id="node-localCustody" data-node-id="localCustody" data-node-label="Preserve" tabindex="0" role="button" aria-label="Focus Preserve, custody + integrity, Authorized Local Forensics › Bounded Observation" aria-pressed="false" data-node-kind="security" data-node-sublabel="custody + integrity" data-node-tag="HUMAN + TOOL" data-node-context="Authorized Local Forensics › Bounded Observation">
-          <title>Preserve · custody + integrity · Authorized Local Forensics › Bounded Observation · HUMAN + TOOL</title>
-          <rect x="566.1" y="674" width="134" height="68" rx="6" class="c-mask"/>
-          <rect x="566.1" y="674" width="134" height="68" rx="6" class="c-security" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(572.1 680) scale(0.6875)">
-            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
-            <path d="m5.8 8 1.5 1.5 3-3"/>
-          </g>
-          <text data-node-label="" x="633.1" y="695" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Preserve</text>
-          <text x="633.1" y="712" class="t-muted" font-size="8" text-anchor="middle">custody + integrity</text>
-        <text x="633.1" y="730" class="t-security" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
-        </g>
-
-        <g id="node-localTimeline" data-node-id="localTimeline" data-node-label="Export Timeline" tabindex="0" role="button" aria-label="Focus Export Timeline, never delays containment, Authorized Local Forensics › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="backend" data-node-sublabel="never delays containment" data-node-tag="TOOL ASSISTED" data-node-context="Authorized Local Forensics › Classify + Respond + Recheck">
-          <title>Export Timeline · never delays containment · Authorized Local Forensics › Classify + Respond + Recheck · TOOL ASSISTED</title>
-          <rect x="937.1" y="674" width="140" height="68" rx="6" class="c-mask"/>
-          <rect x="937.1" y="674" width="140" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
-          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(943.1 680) scale(0.6875)">
+        <g id="node-profile" data-node-id="profile" data-node-label="Asset Profile" tabindex="0" role="button" aria-label="Focus Asset Profile, local bytes only, Optional Steps — Explicit Invocation › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="backend" data-node-sublabel="local bytes only" data-node-tag="OFFLINE HINTS" data-node-context="Optional Steps — Explicit Invocation › Classify + Respond + Recheck">
+          <title>Asset Profile · local bytes only · Optional Steps — Explicit Invocation › Classify + Respond + Recheck · OFFLINE HINTS</title>
+          <rect x="788.1" y="674" width="150" height="68" rx="6" class="c-mask"/>
+          <rect x="788.1" y="674" width="150" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(794.1 680) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" x="1007.1" y="695" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Export Timeline</text>
-          <text x="1007.1" y="712" class="t-muted" font-size="8" text-anchor="middle">never delays containment</text>
-        <text x="1007.1" y="730" class="t-backend" font-size="7" text-anchor="middle">TOOL ASSISTED</text>
+          <text data-node-label="" x="863.1" y="695" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Asset Profile</text>
+          <text x="863.1" y="712" class="t-muted" font-size="8" text-anchor="middle">local bytes only</text>
+        <text x="863.1" y="730" class="t-backend" font-size="7" text-anchor="middle">OFFLINE HINTS</text>
+        </g>
+
+        <g id="node-localAcquire" data-node-id="localAcquire" data-node-label="Acquire" tabindex="0" role="button" aria-label="Focus Acquire, approved copy, Authorized Local Forensics › Intake + Prepare" aria-pressed="false" data-node-kind="database" data-node-sublabel="approved copy" data-node-tag="OWNER + TOOL" data-node-context="Authorized Local Forensics › Intake + Prepare">
+          <title>Acquire · approved copy · Authorized Local Forensics › Intake + Prepare · OWNER + TOOL</title>
+          <rect x="220.8" y="860" width="136" height="68" rx="6" class="c-mask"/>
+          <rect x="220.8" y="860" width="136" height="68" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(226.8 866) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="288.8" y="881" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Acquire</text>
+          <text x="288.8" y="898" class="t-muted" font-size="8" text-anchor="middle">approved copy</text>
+        <text x="288.8" y="916" class="t-database" font-size="7" text-anchor="middle">OWNER + TOOL</text>
+        </g>
+
+        <g id="node-localCustody" data-node-id="localCustody" data-node-label="Preserve" tabindex="0" role="button" aria-label="Focus Preserve, custody + hashes, Authorized Local Forensics › Bounded Observation" aria-pressed="false" data-node-kind="security" data-node-sublabel="custody + hashes" data-node-tag="HUMAN + TOOL" data-node-context="Authorized Local Forensics › Bounded Observation">
+          <title>Preserve · custody + hashes · Authorized Local Forensics › Bounded Observation · HUMAN + TOOL</title>
+          <rect x="578" y="860" width="134" height="68" rx="6" class="c-mask"/>
+          <rect x="578" y="860" width="134" height="68" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(584 866) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" x="645" y="881" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Preserve</text>
+          <text x="645" y="898" class="t-muted" font-size="8" text-anchor="middle">custody + hashes</text>
+        <text x="645" y="916" class="t-security" font-size="7" text-anchor="middle">HUMAN + TOOL</text>
+        </g>
+
+        <g id="node-localTimeline" data-node-id="localTimeline" data-node-label="Export Timeline" tabindex="0" role="button" aria-label="Focus Export Timeline, local exports, Authorized Local Forensics › Classify + Respond + Recheck" aria-pressed="false" data-node-kind="backend" data-node-sublabel="local exports" data-node-tag="TOOL ASSISTED" data-node-context="Authorized Local Forensics › Classify + Respond + Recheck">
+          <title>Export Timeline · local exports · Authorized Local Forensics › Classify + Respond + Recheck · TOOL ASSISTED</title>
+          <rect x="1018.3" y="860" width="140" height="68" rx="6" class="c-mask"/>
+          <rect x="1018.3" y="860" width="140" height="68" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1024.3 866) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="1088.3" y="881" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Export Timeline</text>
+          <text x="1088.3" y="898" class="t-muted" font-size="8" text-anchor="middle">local exports</text>
+        <text x="1088.3" y="916" class="t-backend" font-size="7" text-anchor="middle">TOOL ASSISTED</text>
         </g>
 
         <!-- Edge labels -->
-        <g data-edge-from="anonymousProbe" data-edge-to="classification" data-edge-label="minimum observation" data-edge-key="0">
-          <rect x="642.5" y="394" width="101.2" height="14" rx="3" class="c-mask"/>
-          <text x="693.1" y="404" class="t-muted" font-size="8" text-anchor="middle">minimum observation</text>
+        <g data-edge-from="anonymousProbe" data-edge-to="classification" data-edge-label="observation" data-edge-key="0">
+          <rect x="687.15" y="502" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="718.55" y="512" class="t-muted" font-size="8" text-anchor="middle">observation</text>
         </g>
-        <g data-edge-from="classification" data-edge-to="ledgerContainment" data-edge-label="human-approved class" data-edge-key="1">
-          <rect x="828.1" y="502" width="106" height="14" rx="3" class="c-mask"/>
-          <text x="881.1" y="512" class="t-security" font-size="8" text-anchor="middle">human-approved class</text>
+        <g data-edge-from="anonymousProbe" data-edge-to="profile" data-edge-label="local capture" data-edge-key="1">
+          <rect x="672.3499999999999" y="202" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="708.55" y="212" class="t-database" font-size="8" text-anchor="middle">local capture</text>
         </g>
-        <g data-edge-from="controls" data-edge-to="discovery" data-edge-label="controlled run" data-edge-key="2">
-          <rect x="375.5" y="400" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="414.1" y="410" class="t-muted" font-size="8" text-anchor="middle">controlled run</text>
+        <g data-edge-from="anonymousProbe" data-edge-to="trace" data-edge-label="invoke trace" data-edge-key="2">
+          <rect x="791.6500000000001" y="266" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="825.45" y="276" class="t-database" font-size="8" text-anchor="middle">invoke trace</text>
         </g>
-        <g data-edge-from="discovery" data-edge-to="ownershipGate" data-edge-label="candidate records" data-edge-key="3">
-          <rect x="440.8" y="282" width="91.6" height="14" rx="3" class="c-mask"/>
-          <text x="486.6" y="292" class="t-muted" font-size="8" text-anchor="middle">candidate records</text>
+        <g data-edge-from="classification" data-edge-to="ledgerContainment" data-edge-label="reviewed class" data-edge-key="3">
+          <rect x="938.1" y="502" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="976.7" y="512" class="t-security" font-size="8" text-anchor="middle">reviewed class</text>
         </g>
-        <g data-edge-from="ledgerContainment" data-edge-to="freshRecheck" data-edge-label="after owner action" data-edge-key="4">
-          <rect x="958.9" y="468" width="96.39999999999999" height="14" rx="3" class="c-mask"/>
-          <text x="1007.1" y="478" class="t-backend" font-size="8" text-anchor="middle">after owner action</text>
+        <g data-edge-from="codeSearch" data-edge-to="locations" data-edge-label="file refs" data-edge-key="4">
+          <rect x="512.8" y="738" width="53.199999999999996" height="14" rx="3" class="c-mask"/>
+          <text x="539.4" y="748" class="t-database" font-size="8" text-anchor="middle">file refs</text>
         </g>
-        <g data-edge-from="localAcquire" data-edge-to="localCustody" data-edge-label="read-only copy" data-edge-key="5">
-          <rect x="449.25" y="688" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="487.85" y="698" class="t-database" font-size="8" text-anchor="middle">read-only copy</text>
+        <g data-edge-from="controls" data-edge-to="discovery" data-edge-label="controls pass" data-edge-key="5">
+          <rect x="321.6" y="400" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="357.8" y="410" class="t-muted" font-size="8" text-anchor="middle">controls pass</text>
         </g>
-        <g data-edge-from="localCustody" data-edge-to="localTimeline" data-edge-label="custody record" data-edge-key="6">
-          <rect x="780" y="688" width="77.2" height="14" rx="3" class="c-mask"/>
-          <text x="818.6" y="698" class="t-database" font-size="8" text-anchor="middle">custody record</text>
+        <g data-edge-from="discovery" data-edge-to="codeSearch" data-edge-label="select repo" data-edge-key="6">
+          <rect x="356.90000000000003" y="487" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="388.3" y="497" class="t-database" font-size="8" text-anchor="middle">select repo</text>
         </g>
-        <g data-edge-from="ownershipGate" data-edge-to="anonymousProbe" data-edge-label="exact measurements authorized" data-edge-key="7">
-          <rect x="529.5" y="208" width="149.2" height="14" rx="3" class="c-mask"/>
-          <text x="604.1" y="218" class="t-security" font-size="8" text-anchor="middle">exact measurements authorized</text>
+        <g data-edge-from="discovery" data-edge-to="ownershipGate" data-edge-label="candidates" data-edge-key="7">
+          <rect x="404.8" y="282" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="433.8" y="292" class="t-muted" font-size="8" text-anchor="middle">candidates</text>
         </g>
-        <g data-edge-from="scope" data-edge-to="localAcquire" data-edge-label="separate local-forensics approval" data-edge-key="8">
-          <rect x="60.60000000000001" y="394" width="168.4" height="14" rx="3" class="c-mask"/>
-          <text x="144.8" y="404" class="t-database" font-size="8" text-anchor="middle">separate local-forensics approval</text>
+        <g data-edge-from="ledgerContainment" data-edge-to="freshRecheck" data-edge-label="owner action" data-edge-key="8">
+          <rect x="1054.5" y="468" width="67.6" height="14" rx="3" class="c-mask"/>
+          <text x="1088.3" y="478" class="t-backend" font-size="8" text-anchor="middle">owner action</text>
         </g>
-        <g data-edge-from="scope" data-edge-to="searchPlan" data-edge-label="authorized intake" data-edge-key="9">
-          <rect x="182" y="130" width="91.6" height="14" rx="3" class="c-mask"/>
-          <text x="227.8" y="140" class="t-backend" font-size="8" text-anchor="middle">authorized intake</text>
+        <g data-edge-from="localAcquire" data-edge-to="localCustody" data-edge-label="local copy" data-edge-key="9">
+          <rect x="438.4" y="874" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="467.4" y="884" class="t-database" font-size="8" text-anchor="middle">local copy</text>
         </g>
-        <g data-edge-from="searchPlan" data-edge-to="controls" data-edge-label="observation plan" data-edge-key="10">
-          <rect x="257.20000000000005" y="208" width="86.8" height="14" rx="3" class="c-mask"/>
-          <text x="300.6" y="218" class="t-muted" font-size="8" text-anchor="middle">observation plan</text>
+        <g data-edge-from="localCustody" data-edge-to="localTimeline" data-edge-label="custody" data-edge-key="10">
+          <rect x="843.35" y="874" width="43.6" height="14" rx="3" class="c-mask"/>
+          <text x="865.15" y="884" class="t-database" font-size="8" text-anchor="middle">custody</text>
+        </g>
+        <g data-edge-from="ownershipGate" data-edge-to="anonymousProbe" data-edge-label="scope approved" data-edge-key="11">
+          <rect x="537.05" y="130" width="77.2" height="14" rx="3" class="c-mask"/>
+          <text x="575.65" y="140" class="t-security" font-size="8" text-anchor="middle">scope approved</text>
+        </g>
+        <g data-edge-from="profile" data-edge-to="classification" data-edge-label="hints" data-edge-key="12">
+          <rect x="846.1" y="654" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="863.1" y="664" class="t-database" font-size="8" text-anchor="middle">hints</text>
+        </g>
+        <g data-edge-from="scope" data-edge-to="localAcquire" data-edge-label="case approval" data-edge-key="13">
+          <rect x="84.2" y="874" width="72.4" height="14" rx="3" class="c-mask"/>
+          <text x="120.4" y="884" class="t-database" font-size="8" text-anchor="middle">case approval</text>
+        </g>
+        <g data-edge-from="scope" data-edge-to="searchPlan" data-edge-label="intake" data-edge-key="14">
+          <rect x="182" y="130" width="38.8" height="14" rx="3" class="c-mask"/>
+          <text x="201.4" y="140" class="t-backend" font-size="8" text-anchor="middle">intake</text>
+        </g>
+        <g data-edge-from="searchPlan" data-edge-to="controls" data-edge-label="plan" data-edge-key="15">
+          <rect x="232.8" y="208" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="247.8" y="218" class="t-muted" font-size="8" text-anchor="middle">plan</text>
+        </g>
+        <g data-edge-from="trace" data-edge-to="classification" data-edge-label="trace gaps" data-edge-key="16">
+          <rect x="879.6" y="394" width="58" height="14" rx="3" class="c-mask"/>
+          <text x="908.6" y="404" class="t-database" font-size="8" text-anchor="middle">trace gaps</text>
         </g>
 
         <!-- Legend -->
         <g data-legend="">
-          <text x="20" y="800" class="t-primary" font-size="12" font-weight="650">Legend</text>
-          <g data-legend-semantic-kind="frontend" data-legend-x="20" data-legend-baseline="820" data-legend-width="74">
-            <rect x="20" y="812" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
-            <text x="42" y="820" class="t-muted" font-size="7.5" font-weight="500">User UI</text>
+          <text x="20" y="986" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="frontend" data-legend-x="20" data-legend-baseline="1006" data-legend-width="74">
+            <rect x="20" y="998" width="14" height="9" rx="2" class="c-frontend" stroke-width="1"/>
+            <text x="42" y="1006" class="t-muted" font-size="7.5" font-weight="500">User UI</text>
           </g>
-          <g data-legend-semantic-kind="backend" data-legend-x="101" data-legend-baseline="820" data-legend-width="91">
-            <rect x="101" y="812" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
-            <text x="123" y="820" class="t-muted" font-size="7.5" font-weight="500">Agent logic</text>
+          <g data-legend-semantic-kind="backend" data-legend-x="101" data-legend-baseline="1006" data-legend-width="91">
+            <rect x="101" y="998" width="14" height="9" rx="2" class="c-backend" stroke-width="1"/>
+            <text x="123" y="1006" class="t-muted" font-size="7.5" font-weight="500">Agent logic</text>
           </g>
-          <g data-legend-semantic-kind="security" data-legend-x="199" data-legend-baseline="820" data-legend-width="70">
-            <rect x="199" y="812" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
-            <text x="221" y="820" class="t-muted" font-size="7.5" font-weight="500">Policy</text>
+          <g data-legend-semantic-kind="security" data-legend-x="199" data-legend-baseline="1006" data-legend-width="70">
+            <rect x="199" y="998" width="14" height="9" rx="2" class="c-security" stroke-width="1"/>
+            <text x="221" y="1006" class="t-muted" font-size="7.5" font-weight="500">Policy</text>
           </g>
-          <g data-legend-semantic-kind="database" data-legend-x="276" data-legend-baseline="820" data-legend-width="109">
-            <rect x="276" y="812" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
-            <text x="298" y="820" class="t-muted" font-size="7.5" font-weight="500">Context / trace</text>
+          <g data-legend-semantic-kind="database" data-legend-x="276" data-legend-baseline="1006" data-legend-width="109">
+            <rect x="276" y="998" width="14" height="9" rx="2" class="c-database" stroke-width="1"/>
+            <text x="298" y="1006" class="t-muted" font-size="7.5" font-weight="500">Context / trace</text>
           </g>
-          <g data-legend-semantic-kind="cloud" data-legend-x="392" data-legend-baseline="820" data-legend-width="100">
-            <rect x="392" y="812" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
-            <text x="414" y="820" class="t-muted" font-size="7.5" font-weight="500">Cloud service</text>
+          <g data-legend-semantic-kind="cloud" data-legend-x="392" data-legend-baseline="1006" data-legend-width="100">
+            <rect x="392" y="998" width="14" height="9" rx="2" class="c-cloud" stroke-width="1"/>
+            <text x="414" y="1006" class="t-muted" font-size="7.5" font-weight="500">Cloud service</text>
           </g>
-          <g data-legend-semantic-kind="external" data-legend-x="499" data-legend-baseline="820" data-legend-width="109">
-            <rect x="499" y="812" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
-            <text x="521" y="820" class="t-muted" font-size="7.5" font-weight="500">External system</text>
+          <g data-legend-semantic-kind="external" data-legend-x="499" data-legend-baseline="1006" data-legend-width="109">
+            <rect x="499" y="998" width="14" height="9" rx="2" class="c-external" stroke-width="1"/>
+            <text x="521" y="1006" class="t-muted" font-size="7.5" font-weight="500">External system</text>
           </g>
         </g>
       </svg>

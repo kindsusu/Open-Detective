@@ -8,50 +8,359 @@
     "quality_profile": "showcase"
   },
   "lanes": [
-    { "id": "owner", "label": "Asset Owner + Investigator" },
-    { "id": "public", "label": "Public Asset Review" },
-    { "id": "response", "label": "Evidence + Response" },
-    { "id": "forensics", "label": "Authorized Local Forensics", "variant": "exception" }
+    {
+      "id": "owner",
+      "label": "Asset Owner + Investigator"
+    },
+    {
+      "id": "public",
+      "label": "Public Asset Review"
+    },
+    {
+      "id": "response",
+      "label": "Evidence + Response"
+    },
+    {
+      "id": "optional",
+      "label": "Optional Steps \u2014 Explicit Invocation"
+    },
+    {
+      "id": "forensics",
+      "label": "Authorized Local Forensics",
+      "variant": "exception"
+    }
   ],
   "phases": [
-    { "id": "prepare", "label": "Intake + Prepare", "fromCol": 0, "toCol": 1 },
-    { "id": "observe", "label": "Bounded Observation", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
-    { "id": "respond", "label": "Classify + Respond + Recheck", "fromCol": 4, "toCol": 5, "variant": "security" }
+    {
+      "id": "prepare",
+      "label": "Intake + Prepare",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "observe",
+      "label": "Bounded Observation",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "respond",
+      "label": "Classify + Respond + Recheck",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "security"
+    }
   ],
-  "mainPath": ["scope", "searchPlan", "controls", "discovery", "ownershipGate", "anonymousProbe", "classification", "ledgerContainment", "freshRecheck"],
+  "mainPath": [
+    "scope",
+    "searchPlan",
+    "controls",
+    "discovery",
+    "ownershipGate",
+    "anonymousProbe",
+    "classification",
+    "ledgerContainment",
+    "freshRecheck"
+  ],
   "semanticChecks": {
-    "allowedRoots": ["scope"],
-    "allowedTerminals": ["freshRecheck", "localTimeline"],
+    "allowedRoots": [
+      "scope"
+    ],
+    "allowedTerminals": [
+      "freshRecheck",
+      "localTimeline",
+      "locations"
+    ],
     "requiredPaths": [
-      { "from": "scope", "to": "freshRecheck" },
-      { "from": "scope", "to": "localTimeline" }
+      {
+        "from": "scope",
+        "to": "freshRecheck"
+      },
+      {
+        "from": "scope",
+        "to": "localTimeline"
+      }
     ]
   },
   "nodes": [
-    { "id": "scope", "lane": "owner", "col": 0, "width": 130, "type": "security", "label": "Intake", "sublabel": "authority + source bounds", "tag": "HUMAN" },
-    { "id": "searchPlan", "lane": "owner", "col": 1, "width": 128, "type": "backend", "label": "Search Plan", "sublabel": "sources + query terms", "tag": "HUMAN + TOOL" },
-    { "id": "controls", "lane": "public", "col": 1, "width": 132, "yOffset": 30, "type": "security", "label": "Runtime Checks", "sublabel": "positive control baseline", "tag": "HUMAN + TOOL" },
-    { "id": "discovery", "lane": "public", "col": 2, "width": 142, "type": "external", "label": "Discover + Import", "sublabel": "bounded GitHub + CT", "tag": "AUTOMATED" },
-    { "id": "ownershipGate", "lane": "owner", "col": 2, "width": 145, "type": "security", "label": "Authorize", "sublabel": "ownership + exact scope", "tag": "HUMAN DECISION" },
-    { "id": "anonymousProbe", "lane": "public", "col": 3, "width": 135, "type": "frontend", "label": "Observe", "sublabel": "anonymous probe + browser", "tag": "HUMAN + TOOL" },
-    { "id": "classification", "lane": "response", "col": 4, "width": 142, "type": "security", "label": "Review Evidence", "sublabel": "minimum capture + class", "tag": "HUMAN REVIEW" },
-    { "id": "ledgerContainment", "lane": "response", "col": 5, "width": 138, "type": "database", "label": "Track Response", "sublabel": "ledger + owner action", "tag": "HUMAN + TOOL" },
-    { "id": "freshRecheck", "lane": "public", "col": 5, "width": 138, "type": "cloud", "label": "Recheck", "sublabel": "fresh anonymous session", "tag": "HUMAN + TOOL" },
-    { "id": "localAcquire", "lane": "forensics", "col": 1, "width": 136, "type": "database", "label": "Acquire", "sublabel": "authorized local copy", "tag": "OWNER + TOOL" },
-    { "id": "localCustody", "lane": "forensics", "col": 3, "width": 134, "type": "security", "label": "Preserve", "sublabel": "custody + integrity", "tag": "HUMAN + TOOL" },
-    { "id": "localTimeline", "lane": "forensics", "col": 5, "width": 140, "type": "backend", "label": "Export Timeline", "sublabel": "never delays containment", "tag": "TOOL ASSISTED" }
+    {
+      "id": "scope",
+      "lane": "owner",
+      "col": 0,
+      "width": 130,
+      "type": "security",
+      "label": "Intake",
+      "sublabel": "scope + sources",
+      "tag": "HUMAN"
+    },
+    {
+      "id": "searchPlan",
+      "lane": "owner",
+      "col": 1,
+      "width": 128,
+      "type": "backend",
+      "label": "Search Plan",
+      "sublabel": "aliases + terms",
+      "tag": "HUMAN + TOOL"
+    },
+    {
+      "id": "controls",
+      "lane": "public",
+      "col": 1,
+      "width": 132,
+      "yOffset": 30,
+      "type": "security",
+      "label": "Runtime Checks",
+      "sublabel": "fresh controls",
+      "tag": "HUMAN + TOOL"
+    },
+    {
+      "id": "discovery",
+      "lane": "public",
+      "col": 2,
+      "width": 142,
+      "type": "external",
+      "label": "Discover + Import",
+      "sublabel": "GitHub + CT",
+      "tag": "AUTOMATED"
+    },
+    {
+      "id": "ownershipGate",
+      "lane": "owner",
+      "col": 2,
+      "width": 145,
+      "type": "security",
+      "label": "Authorize",
+      "sublabel": "owner + scope",
+      "tag": "HUMAN DECISION"
+    },
+    {
+      "id": "anonymousProbe",
+      "lane": "public",
+      "col": 3,
+      "width": 135,
+      "type": "frontend",
+      "label": "Observe",
+      "sublabel": "probe / browser",
+      "tag": "HUMAN + TOOL"
+    },
+    {
+      "id": "classification",
+      "lane": "response",
+      "col": 4,
+      "width": 142,
+      "type": "security",
+      "label": "Review Evidence",
+      "sublabel": "minimum evidence",
+      "tag": "HUMAN REVIEW"
+    },
+    {
+      "id": "ledgerContainment",
+      "lane": "response",
+      "col": 5,
+      "width": 138,
+      "type": "database",
+      "label": "Track Response",
+      "sublabel": "ledger + owner",
+      "tag": "HUMAN + TOOL"
+    },
+    {
+      "id": "freshRecheck",
+      "lane": "public",
+      "col": 5,
+      "width": 138,
+      "type": "cloud",
+      "label": "Recheck",
+      "sublabel": "fresh observation",
+      "tag": "HUMAN + TOOL"
+    },
+    {
+      "id": "localAcquire",
+      "lane": "forensics",
+      "col": 1,
+      "width": 136,
+      "type": "database",
+      "label": "Acquire",
+      "sublabel": "approved copy",
+      "tag": "OWNER + TOOL"
+    },
+    {
+      "id": "localCustody",
+      "lane": "forensics",
+      "col": 3,
+      "width": 134,
+      "type": "security",
+      "label": "Preserve",
+      "sublabel": "custody + hashes",
+      "tag": "HUMAN + TOOL"
+    },
+    {
+      "id": "localTimeline",
+      "lane": "forensics",
+      "col": 5,
+      "width": 140,
+      "type": "backend",
+      "label": "Export Timeline",
+      "sublabel": "local exports",
+      "tag": "TOOL ASSISTED"
+    },
+    {
+      "id": "codeSearch",
+      "lane": "optional",
+      "col": 2,
+      "width": 150,
+      "type": "external",
+      "label": "Code Search",
+      "sublabel": "repo + control",
+      "tag": "METADATA ONLY"
+    },
+    {
+      "id": "locations",
+      "lane": "optional",
+      "col": 3,
+      "width": 150,
+      "type": "database",
+      "label": "File Locations",
+      "sublabel": "private refs",
+      "tag": "NO CONTENT FETCH"
+    },
+    {
+      "id": "profile",
+      "lane": "optional",
+      "col": 4,
+      "width": 150,
+      "type": "backend",
+      "label": "Asset Profile",
+      "sublabel": "local bytes only",
+      "tag": "OFFLINE HINTS"
+    },
+    {
+      "id": "trace",
+      "lane": "public",
+      "col": 4,
+      "width": 150,
+      "type": "frontend",
+      "label": "Static Trace",
+      "sublabel": "scoped GET refs",
+      "tag": "OPTIONAL / BOUNDED"
+    }
   ],
   "edges": [
-    { "from": "scope", "to": "searchPlan", "label": "authorized intake", "role": "main", "variant": "emphasis" },
-    { "from": "searchPlan", "to": "controls", "label": "observation plan", "role": "main" },
-    { "from": "controls", "to": "discovery", "label": "controlled run", "role": "main" },
-    { "from": "discovery", "to": "ownershipGate", "label": "candidate records", "role": "main" },
-    { "from": "ownershipGate", "to": "anonymousProbe", "label": "exact measurements authorized", "role": "main", "variant": "security" },
-    { "from": "anonymousProbe", "to": "classification", "label": "minimum observation", "role": "main" },
-    { "from": "classification", "to": "ledgerContainment", "label": "human-approved class", "role": "main", "variant": "security" },
-    { "from": "ledgerContainment", "to": "freshRecheck", "label": "after owner action", "role": "main", "variant": "emphasis" },
-    { "from": "scope", "to": "localAcquire", "label": "separate local-forensics approval", "role": "branch", "variant": "dashed" },
-    { "from": "localAcquire", "to": "localCustody", "label": "read-only copy", "role": "branch", "variant": "dashed" },
-    { "from": "localCustody", "to": "localTimeline", "label": "custody record", "role": "branch", "variant": "dashed" }
+    {
+      "from": "scope",
+      "to": "searchPlan",
+      "label": "intake",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "from": "searchPlan",
+      "to": "controls",
+      "label": "plan",
+      "role": "main"
+    },
+    {
+      "from": "controls",
+      "to": "discovery",
+      "label": "controls pass",
+      "role": "main"
+    },
+    {
+      "from": "discovery",
+      "to": "ownershipGate",
+      "label": "candidates",
+      "role": "main"
+    },
+    {
+      "from": "ownershipGate",
+      "to": "anonymousProbe",
+      "label": "scope approved",
+      "role": "main",
+      "variant": "security"
+    },
+    {
+      "from": "anonymousProbe",
+      "to": "classification",
+      "label": "observation",
+      "role": "main"
+    },
+    {
+      "from": "classification",
+      "to": "ledgerContainment",
+      "label": "reviewed class",
+      "role": "main",
+      "variant": "security"
+    },
+    {
+      "from": "ledgerContainment",
+      "to": "freshRecheck",
+      "label": "owner action",
+      "role": "main",
+      "variant": "emphasis"
+    },
+    {
+      "from": "scope",
+      "to": "localAcquire",
+      "label": "case approval",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "localAcquire",
+      "to": "localCustody",
+      "label": "local copy",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "localCustody",
+      "to": "localTimeline",
+      "label": "custody",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "discovery",
+      "to": "codeSearch",
+      "label": "select repo",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "codeSearch",
+      "to": "locations",
+      "label": "file refs",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "anonymousProbe",
+      "to": "trace",
+      "label": "invoke trace",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "trace",
+      "to": "classification",
+      "label": "trace gaps",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "anonymousProbe",
+      "to": "profile",
+      "label": "local capture",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "profile",
+      "to": "classification",
+      "label": "hints",
+      "role": "branch",
+      "variant": "dashed"
+    }
   ]
 }

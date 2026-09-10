@@ -1,7 +1,5 @@
 # Open-Detective
 
-[GitHub 코드 검색 어댑터](ops/github-code-search.md)는 익명 탐색으로 공개 저장소를 확인한 뒤에만 기존 검색 계획의 검색어와 도메인으로 공개 파일 후보를 찾습니다. `search-plan enable-code --repository OWNER/REPO`를 저장소마다 반복해 추가하고, 검색 전용 환경변수 이름과 무해한 공개 파일 제어를 지정해 `search-plan run-code`로 실행합니다. 토큰을 쓰는 모든 검색은 선택한 한 저장소의 `repo:` 조건으로 제한되며 전역 코드 검색은 실행하지 않습니다. 같은 저장소·파일의 중복을 합치고 검색 근거와 페이지 재개 위치를 보존합니다. 기존 익명 계정 탐색·노출 검증은 유지하며 Agent-Reach 설치는 필요하지 않습니다.
-
 ![Open-Detective 증거 조사 작업 공간](assets/hero.png)
 
 <p align="center">
@@ -32,12 +30,16 @@
 
 수정본의 설치·적용 절차와 구현 범위: [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
 
-## 하는 일
+## 기능
 
 - **범위와 소유:** 네트워크 관측 전에 승인된 경계와 소유 증거를 기록합니다.
 - **노출 발견:** 지원하는 소유자 소스를 인벤토리로 수집하고, 기본 수집기가 지원하지 않는 소스는 출처를 남긴 정규화된 로컬 내보내기로 가져옵니다.
 - **증거와 포렌식:** 관측이 뒷받침하는 내용만 분류하고, 보관 내용을 최소화하며, 승인된 로컬 보관 연속성과 타임라인 작업을 지원합니다.
 - **격리와 재측정:** append-only 운영 대장에서 alias, 조치, 대조군, 새 관측을 추적합니다.
+
+### 선택적 저장소 범위 코드 검색
+
+[GitHub 코드 검색 어댑터](ops/github-code-search.md)는 익명 탐색으로 공개 저장소를 확인한 뒤에만 기존 계획을 재사용합니다. `search-plan enable-code --repository OWNER/REPO`를 저장소마다 반복해 추가하고, `search-plan run-code`에 검색 전용 환경변수 이름과 무해한 공개 파일 control을 지정합니다. 토큰을 쓰는 모든 검색은 선택한 한 저장소의 `repo:` 조건으로 제한되며 전역 코드 검색은 실행하지 않습니다. 이 어댑터는 원문을 내려받지 않고 metadata와 페이지 근거를 보존하며, 익명 발견이나 target 검증의 동작을 바꾸지 않습니다.
 
 ## 판정 모델
 
@@ -55,20 +57,61 @@ workflow: candidate | ownership_pending | verification_pending | open |
 
 `BODY_SERVED + PUBLIC_UI`는 정상 로그인 페이지일 수 있다. `SENSITIVE_CONTENT_CONFIRMED`에는 실제 보호 값이나 필드의 최소 증거 참조, 익명 관측, 소유 증거가 필요하다. 이름 일치, 상태코드, 바이트 수, AI 점수, 도구 간 동의만으로는 부족하다.
 
-## 설치와 실행
+## 예시 결과 상태
+
+아래 합성 예시는 결과 상태를 좁게 해석하는 방식을 보여 줍니다. 실제 조직 데이터·원문·비밀을 포함하지 않습니다.
+
+| 합성 출력 | 기록하는 사실 | 확정하지 않는 사실 |
+|---|---|---|
+| `repository_file`, `ownership_pending`, `NOT_INSPECTED` | 명시적으로 선택한 공개 저장소의 index metadata 후보 | 소유, 배포된 공개 접근, 민감 콘텐츠 |
+| `BODY_SERVED`, `SENSITIVE_CANDIDATE` | 사람 검토가 필요한 제한된 익명 관측 | 확정 finding 또는 사이트 전체 내용 |
+| `ACCESS_DENIED_OBSERVED`, `NOT_INSPECTED` | 기록된 scope에서 한 번 거부된 요청 | 모든 path·alias·배포의 보호 |
+
+후보, 익명 접근 관측, 민감 콘텐츠 확정은 서로 다른 상태입니다. 코드 검색 후보는 익명 target 측정이 아닙니다.
+
+## 빠른 시작
 
 Python 3.11 이상이 필요하다. 브라우저 캡처는 선택 기능이다.
 
+먼저 clone하고 격리 환경을 만듭니다.
+
+```bash
+git clone https://github.com/kindsusu/Open-Detective.git
+cd Open-Detective
+python -m venv .venv
+```
+
+사용 중인 shell에서 하나를 선택해 활성화합니다.
+
+```bash
+# PowerShell
+.\.venv\Scripts\Activate.ps1
+```
+
+```bash
+# bash 또는 zsh
+source .venv/bin/activate
+```
+
+그 뒤 기본 명령을 설치합니다.
+
 ```bash
 python -m pip install -e .
+open-detective --help
+```
+
+브라우저 관측이 필요할 때만 선택 의존성을 설치합니다.
+
+```bash
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
-open-detective --help
 ```
 
 기본 명령은 `open-detective`입니다. 기존 `su-detect`와 `python -m sudetect` 진입점도 계속 지원하며 같은 CLI를 실행합니다.
 
 루트 CLI는 `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
+
+게이트 순서는 [운영 흐름](docs/WORKFLOW.md)을, 선택 기능과 네트워크 명령의 세부 규칙은 해당 `ops/` 문서를 먼저 확인합니다.
 
 ```bash
 open-detective probe --scope scope.json https://app.example.test/
@@ -170,7 +213,7 @@ GitHub control은 `api.github.com` family에 맞춘다. 차례로 repository det
 | [ko/assets/ledger-template.md](ko/assets/ledger-template.md) | 사람이 읽는 내보내기 |
 | [tools/idgen.py](tools/idgen.py) | 오프라인 후보 생성기 |
 
-영문 정책이 canonical이고 `ko/`는 동기화된 한국어 번역이다. `ko/SKILL.md`에는 frontmatter가 없어 중복 스킬로 등록되지 않는다.
+영문 정책이 canonical이다. `ko/`는 legacy 참고 번역을 보관하며, 현재 workflow의 한국어 개요는 이 README에서 유지한다. `ko/SKILL.md`에는 frontmatter가 없어 중복 스킬로 등록되지 않는다.
 
 ## 검증과 라이선스
 

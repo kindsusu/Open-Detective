@@ -18,20 +18,22 @@ It is built for investigators who need a defensible record: bounded scope, owner
 
 Implementation and rollout notes (Korean): [IMPLEMENTATION.ko.md](IMPLEMENTATION.ko.md)
 
-Optional [GitHub code search](ops/github-code-search.md) reuses an existing search plan only after anonymous discovery identifies a public repository. Enable it with repeated `search-plan enable-code --repository OWNER/REPO`, then execute `search-plan run-code` with an explicitly selected search token and a fresh benign fixture control. Every token-authenticated query is restricted to one explicitly selected repository; the runner does not perform global code search. It preserves per-query evidence, deduplicates repository/path hits, and resumes page checkpoints without changing anonymous account discovery or target verification. Agent-Reach is not required.
-
 ## Operating workflow
 
 [![Open-Detective operating workflow](docs/workflow/open-detective.workflow.png)](docs/WORKFLOW.md)
 
 Read the [step-by-step guide](docs/WORKFLOW.md), or download the [interactive Archify diagram](docs/workflow/open-detective.workflow.html) and open it in a browser. The complete diagram scrolls vertically on some desktop screens.
 
-## What it does
+## Features
 
 - **Scope and ownership:** records approved boundaries and ownership evidence before any network observation.
 - **Exposure discovery:** inventories supported owner sources and imports normalized local exports with provenance when a source is outside the built-in collectors.
 - **Evidence and forensics:** classifies only what the observation supports, minimizes retained content, and supports approved local custody and timeline workflows.
 - **Containment and rechecks:** tracks aliases, remediation, controls, and fresh rechecks in an append-only operational ledger.
+
+### Optional repository-scoped code search
+
+[GitHub code search](ops/github-code-search.md) reuses an existing plan only after anonymous discovery identifies a public repository. Repeated `search-plan enable-code --repository OWNER/REPO` adds selected repository jobs, and `search-plan run-code` uses an explicitly named token environment and a benign public fixture control. Every authenticated query has one selected `repo:` qualifier; global code search is not performed. The adapter retains metadata and pagination provenance without downloading source, and does not change anonymous discovery or target verification.
 
 ## Decision model
 
@@ -49,20 +51,61 @@ workflow: candidate | ownership_pending | verification_pending | open |
 
 `BODY_SERVED + PUBLIC_UI` can be an ordinary login page. `SENSITIVE_CONTENT_CONFIRMED` requires a minimal evidence reference to an actual protected value or field, anonymous observation, and ownership evidence. A name match, status code, byte count, AI score, or tool agreement is insufficient.
 
-## Install and run
+## Illustrative result states
+
+The following synthetic examples show how output states remain deliberately narrow. They contain no organization data, source material, or secrets.
+
+| Synthetic output | What it records | What it does not establish |
+|---|---|---|
+| `repository_file`, `ownership_pending`, `NOT_INSPECTED` | A public-index metadata candidate in an explicitly selected repository | Ownership, deployed reachability, or sensitive content |
+| `BODY_SERVED`, `SENSITIVE_CANDIDATE` | A bounded anonymous observation requiring human review | A confirmed finding or the full contents of a site |
+| `ACCESS_DENIED_OBSERVED`, `NOT_INSPECTED` | One denied request under the recorded scope | Protection of every path, alias, or deployment |
+
+Candidates, anonymous access observations, and confirmed sensitive-content findings are separate states. A code-search candidate is never an anonymous target measurement.
+
+## Quick start
 
 Python 3.11 or newer is required. Browser capture is optional.
 
+Clone and create an isolated environment first:
+
+```bash
+git clone https://github.com/kindsusu/Open-Detective.git
+cd Open-Detective
+python -m venv .venv
+```
+
+Activate it in the shell you use:
+
+```bash
+# PowerShell
+.\.venv\Scripts\Activate.ps1
+```
+
+```bash
+# bash or zsh
+source .venv/bin/activate
+```
+
+Then install the core command:
+
 ```bash
 python -m pip install -e .
+open-detective --help
+```
+
+Install browser support only when browser observation is needed:
+
+```bash
 python -m pip install -e ".[browser]"
 python -m playwright install chromium
-open-detective --help
 ```
 
 The primary command is `open-detective`. The existing `su-detect` and `python -m sudetect` entry points remain supported and invoke the same CLI.
 
 The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+
+Use [the operating workflow](docs/WORKFLOW.md) for the gated sequence and the relevant `ops/` guide before an optional or networked command.
 
 ```bash
 open-detective probe --scope scope.json https://app.example.test/
@@ -164,7 +207,7 @@ Bind each GitHub control to its `api.github.com` family: repository detail or `/
 | [assets/ledger-template.md](assets/ledger-template.md) | Human-readable export |
 | [tools/idgen.py](tools/idgen.py) | Offline candidate generator |
 
-English policy is canonical. `ko/` contains synchronized Korean translations. `ko/SKILL.md` has no frontmatter, so it is not registered as a duplicate skill.
+English policy is canonical. The `ko/` directory contains legacy reference translations; `README.ko.md` is the maintained Korean overview for the current workflow. `ko/SKILL.md` has no frontmatter, so it is not registered as a duplicate skill.
 
 ## Validation and license
 

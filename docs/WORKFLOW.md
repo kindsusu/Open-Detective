@@ -2,7 +2,7 @@
 
 This guide connects an exposure investigation to the commands that Open-Detective actually implements. There is no single command that runs the whole workflow. An operator reviews the evidence at every gate, then explicitly supplies the next authority, input, and command.
 
-It describes source revision [`e387e1ba454efe175fca0afffa78e4aa158a589e`](https://github.com/kindsusu/Open-Detective/tree/e387e1ba454efe175fca0afffa78e4aa158a589e). Confirm the installed runtime against this reviewed source with `doctor`; editing or pushing the repository does not update an installed runtime.
+It describes reviewed source revision [`39ca3a19cc17fc454c38de2709866fccd3784956`](https://github.com/kindsusu/Open-Detective/tree/39ca3a19cc17fc454c38de2709866fccd3784956). Confirm the installed runtime against this reviewed source with `doctor`; editing or pushing the repository does not update an installed runtime.
 
 Open [the interactive Archify workflow](workflow/open-detective.workflow.html) in a browser after cloning or downloading this repository. GitHub's file viewer does not execute its interactive content.
 
@@ -71,6 +71,27 @@ open-detective ledger --db _local/audit.sqlite close FINDING_ID --evidence-ref "
 ```
 
 A recheck covers the original locator, every known alias/deployment, and separately authorized cache/archive channels in a fresh anonymous context. A current `BODY_SERVED`, unknown/incomplete observation, or equal-time conflict sends a closed finding back for review or reopening.
+
+## Optional file discovery and inspection
+
+These are separate operator-invoked steps, not an automatic pipeline. First discover public repositories, then select exact repositories for code search. The code token is used only for GitHub search; anonymous repository preflight and a benign indexed-file control must pass. Search returns file metadata, not source content or proof of exposure.
+
+```bash
+open-detective search-plan enable-code --plan _local/plan.json --repository OWNER/REPO
+open-detective search-plan run-code --plan _local/plan.json --token-env DETECT_GITHUB_CODE_TOKEN --control _local/code-control.json --locator-store _local/locators.sqlite --output _local/code-results.json --request-budget 10
+open-detective asset-locations --input _local/code-results.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/private-locations.json
+```
+
+Prepare the control using [the code-search guide](../ops/github-code-search.md). Use the plan's actual scope ID. Exact locations stay private; `ownership_pending`, `NOT_INSPECTED`, and `not_measured` remain unresolved. `selected_scope_complete` describes only selected-repository jobs, not global discovery. Explicit retries cover the failures listed in that guide.
+
+After ownership review and exact target-scope approval, an operator may invoke `trace-assets` for literal HTML script and JavaScript GET fetch references. It is bounded anonymous observation; it does not remove login gates or execute JavaScript. Stop on sensitive candidates. Separately, `asset-profile` analyzes already captured local bytes using its own manifest and makes no network requests. A code-search report is not that content manifest and is not passed to profiling as downloaded content.
+
+```bash
+open-detective trace-assets --scope _local/scope.json --url https://app.example.test/public/ --output _local/trace.json
+open-detective asset-profile --input _local/profile-input.json --output _local/profile.json --markdown _local/profile.md
+```
+
+See [static tracing](../ops/asset-trace.md) and [local profiling](../ops/asset-profile.md) for input contracts and limits. Structural hints are candidates; a human still reviews anonymous-access evidence, ownership, and publication intent before confirming exposure.
 
 ## Separate authorized local forensics
 

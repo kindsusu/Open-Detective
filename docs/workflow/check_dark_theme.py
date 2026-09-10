@@ -1,7 +1,7 @@
 """Check the reviewed dark-default theme to the delivered Archify workflow.
 
-The reviewed derivative changes only the generated viewer's palette/default and
-SVG-export mode; topology, text, and interaction code remain renderer output.
+The current authored topology is renderer-generated; this guard checks the
+retained viewer palette, startup preference, and SVG-export mode.
 """
 from pathlib import Path
 
