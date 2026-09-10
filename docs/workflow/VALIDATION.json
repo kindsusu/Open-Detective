@@ -1,37 +1,34 @@
 {
-  "diagram_type": "workflow",
+  "runtime_revision": "39ca3a19cc17fc454c38de2709866fccd3784956",
   "archify_revision": "10722002bb8777ecb639d93c49586fae4adf3ae4",
-  "base_artifact_checks": {
+  "artifact_checks": {
     "passed": 9,
     "composition_errors": 0,
-    "warnings": 0,
-    "scope": "frozen vanilla Archify delivery before the documented themed derivative"
+    "warnings": 0
   },
-  "theme_derivative": {
-    "default_theme": "dark independent of OS preference",
-    "light_overrides": "verified: ?theme=light and archify-theme localStorage",
-    "exports": "actual viewer-button SVG and PNG regenerated with ?theme=dark",
-    "browser_verification": "default dark verified under simulated light OS; first-screen containment remains failed because normal vertical scrolling is required"
+  "theme_checks": {
+    "default_dark_under_light_os": true,
+    "url_light_override": true,
+    "stored_light_override": true
   },
-  "browser_evidence": "failed: vertical first-screen overflow",
-  "visual_review": "qualified: complete scrollable themed workflow and actual dark viewer exports inspected",
-  "correction_rounds": 2,
+  "visual_review": "complete exported PNG inspected; vertical scrolling required; no first-screen containment claim",
+  "exports": "actual viewer Export buttons, dark mode",
   "files": {
     "open-detective.workflow.json": {
-      "sha256": "9da75d5c76015678fd4b2dee5a9658141ba964b7350b4f136f2c9240ba6d42ae",
-      "bytes": 4693
+      "sha256": "d3a42f6dbe38d8606204817e8cca8bd3075147bb39021a04762fb3ce3033cd1a",
+      "bytes": 8005
     },
     "open-detective.workflow.html": {
-      "sha256": "c22ebfbec18149ec000503a22fad45e6cbb7213edb4b7efecc1109f830ff0e5b",
-      "bytes": 817527
+      "sha256": "fda61a0cb079b5c7ba17dd007d2f9e4c3963ead5f5766b869b276358a63995bc",
+      "bytes": 842550
     },
     "open-detective.workflow.svg": {
-      "sha256": "0b12c6648885c26661725c7d705f3a3c3fe2c8120ed2aa4634d2413352808eda",
-      "bytes": 159044
+      "sha256": "90bade1aed4c54ad12dc28e0bdb6571cc53c000231bd3ab4e97b328572fb1159",
+      "bytes": 168041
     },
     "open-detective.workflow.png": {
-      "sha256": "d3e5c797eda2c6f329cfbf04f67e9935a0ecb0f7c9b42a7ab7d374d6e9cb1502",
-      "bytes": 810045
+      "sha256": "fcb8db29a78d9aa9c71a2711f567ed74e88888837b107ef2ca4c33f672ded202",
+      "bytes": 693650
     }
   }
 }

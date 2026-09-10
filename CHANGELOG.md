@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Documented current optional code search, private file-location export, offline profiling, and scoped static tracing; refreshed English/Korean onboarding, synthetic result examples, and the dark workflow diagram.
+- Fixed explicit retries for authentication and request failures, and corrected selected-repository counts, scope gaps, and opaque scope-reference filtering.
+
 - Restricted optional GitHub code search to explicit repositories selected after anonymous public-repository discovery. Repeated `--repository OWNER/REPO` inputs create scoped jobs; legacy unrestricted jobs remain non-runnable migration evidence. Every invocation verifies public fixture and selected-repository metadata before the token-authenticated, repository-qualified search, and counts those preflights in its total request budget.
 
 - Added optional GitHub public code-search jobs to existing search plans, with additive `enable-code` upgrades and a separate explicit-token `run-code` runner. Reuses existing query generation and private locator storage; records file metadata, per-query provenance, revisions, pagination checkpoints, fresh positive controls, and incomplete/rate-limited work without fetching source or changing anonymous target verification.
