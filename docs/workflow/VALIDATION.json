@@ -15,20 +15,26 @@
   "exports": "actual viewer Export buttons, dark mode",
   "files": {
     "open-detective.workflow.json": {
-      "sha256": "d3a42f6dbe38d8606204817e8cca8bd3075147bb39021a04762fb3ce3033cd1a",
-      "bytes": 8005
+      "sha256": "aedf3c1842b955cdb1b3ac58cb1eec18449ec3248a0e538dc31f81b35b7d4de9",
+      "bytes": 8725
     },
     "open-detective.workflow.html": {
-      "sha256": "fda61a0cb079b5c7ba17dd007d2f9e4c3963ead5f5766b869b276358a63995bc",
-      "bytes": 842550
+      "sha256": "0938b141a3c863687979fc2efc33d2ab76b2857dcfd2d9ad6581c5e3173da693",
+      "bytes": 846378
     },
     "open-detective.workflow.svg": {
-      "sha256": "90bade1aed4c54ad12dc28e0bdb6571cc53c000231bd3ab4e97b328572fb1159",
-      "bytes": 168041
+      "sha256": "b402e87f39e468823ba21569ec2e980b810ad47f3b18805a869dbf0de2194c81",
+      "bytes": 171712
     },
     "open-detective.workflow.png": {
-      "sha256": "fcb8db29a78d9aa9c71a2711f567ed74e88888837b107ef2ca4c33f672ded202",
-      "bytes": 693650
+      "sha256": "e9e8840886e0284a688a1e4c3a9d2a46b699dfe969801a2d6dd4a108f64811a5",
+      "bytes": 743938
     }
+  },
+  "ordering_review": {
+    "scope_before_binding": true,
+    "file_locations_return_to_owner_review": true,
+    "profile_requires_separate_local_input": true,
+    "urgent_owner_action_branch": true
   }
 }

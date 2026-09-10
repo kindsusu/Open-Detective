@@ -2,7 +2,7 @@
 
 This guide connects an exposure investigation to the commands that Open-Detective actually implements. There is no single command that runs the whole workflow. An operator reviews the evidence at every gate, then explicitly supplies the next authority, input, and command.
 
-It describes reviewed source revision [`39ca3a19cc17fc454c38de2709866fccd3784956`](https://github.com/kindsusu/Open-Detective/tree/39ca3a19cc17fc454c38de2709866fccd3784956). Confirm the installed runtime against this reviewed source with `doctor`; editing or pushing the repository does not update an installed runtime.
+It describes reviewed runtime source revision [`39ca3a19cc17fc454c38de2709866fccd3784956`](https://github.com/kindsusu/Open-Detective/tree/39ca3a19cc17fc454c38de2709866fccd3784956). Confirm the installed runtime against this reviewed source with `doctor`; editing or pushing the repository does not update an installed runtime.
 
 Open [the interactive Archify workflow](workflow/open-detective.workflow.html) in a browser after cloning or downloading this repository. GitHub's file viewer does not execute its interactive content.
 
@@ -10,14 +10,14 @@ Open [the interactive Archify workflow](workflow/open-detective.workflow.html) i
 
 | Stage | Inputs | Actions | Outputs | Gate to continue |
 |---|---|---|---|---|
-| 1. Intake | Korean/English organization identity, aliases, industry/functions, known URLs, exclusions, affiliate and third-party boundary, owner/escalation references | Create and validate local audit intake; request administrator asset, contract, processor, and outsourcer exports. Intake is not network authority. | Local intake and unresolved-gap list | Boundaries, exclusions, ownership/escalation references, and requested exports are recorded; offline planning may begin. |
+| 1. Intake | Korean/English organization identity, aliases, industry/functions, known URLs, exclusions, affiliate and third-party boundary, owner/escalation references | Create a local audit intake and validate it against the published schema; request administrator asset, contract, processor, and outsourcer exports. Intake is not network authority. | Local intake and unresolved-gap list | Boundaries, exclusions, ownership/escalation references, and requested exports are recorded; offline planning may begin. |
 | 2. Identifiers and plan | Official name, operator aliases, industry/function terms, known URLs | Create offline candidate variants and a bounded search plan. Similarity is never ownership evidence. | Private plan and deferred work | Budgets, channels, and explicit resume rules are recorded. |
-| 3. Runtime and controls | Reviewed source, executable control scope, local control config | Run `doctor`; take fresh positive-control observations with `channels-doctor`. | Runtime parity and channel-health report | Controls required by the channel are fresh and valid. |
-| 4. Discovery and owner inventory | Explicitly authorized owner credentials or exports, scope ID, plan | Run credential-separated owner inventory and anonymous public metadata discovery. Keep cursor, permission, rate-limit, truncation, and time-window gaps. | Provenance candidates, private locator store, coverage gaps | Owner record, DNS/control-plane relation, deployment metadata, or another accountable record is reviewed. |
-| 5. Ownership and exact scope | Administrator exports, ownership evidence, exact HTTPS origin/path, expiry, budgets | Review the exports, bind locator to asset and `target_id`/`policy_id`, then approve executable scope. | Current local scope and locator binding | Owner, evidence, exact origin, and path boundary match. |
+| 3. Runtime and controls | Reviewed source, control-scope approval, local control config | Run `doctor`; take fresh positive-control observations with `channels-doctor` under its own executable control scope. | Runtime parity and channel-health report | Controls required by the channel are fresh and valid. A control scope does not approve a deployment target. |
+| 4. Discovery and owner inventory | Explicitly authorized owner credentials or exports, scope ID, plan | Run credential-separated owner inventory and anonymous public metadata discovery. Keep cursor, permission, rate-limit, truncation, and time-window gaps. Public metadata discovery needs its `scope_id` and fresh channel health, not a deployment `--scope`. Import administrator-export candidates only after the stage-5 approval. | Provenance candidates, private locator store, coverage gaps | Owner record, DNS/control-plane relation, deployment metadata, or another accountable record is reviewed. |
+| 5. Ownership and exact scope | Administrator exports, ownership evidence, exact HTTPS origin/path, expiry, budgets | Review evidence; approve executable target scope; then bind the authorized locator to the asset and `target_id`/`policy_id`. | Current local scope and locator binding | Owner, evidence, exact origin, and path boundary match. |
 | 6. Anonymous observation | Scope and locator reference or exact URL | Use bounded `probe`; use a fresh brokered browser only if static observation cannot answer the content question. | Sanitized observation | Access and content are separate. Partial/unsupported capture is never safe or complete, even when an actual HTTP access status was observed. |
 | 7. Human classification | Observation ID, masked proof reference, ownership evidence | Stop at minimum proof. A human records a confirmed result; automation remains provisional. | Severity, workflow state, evidence reference | Confirmed cases receive owner containment review; candidates and unknowns retain resolution conditions. |
-| 8. Containment and ledger | Confirmed evidence, service impact, owner action evidence | Owner decides isolation, log preservation, rotation, and continuity; record actions and due work in the append-only ledger. | Remediation event and recheck work | Recheck scope declares the original locator, aliases/deployments, and permitted cache/archive channels. |
+| 8. Containment and ledger | Reviewed evidence or urgent exposure indicators, service impact, owner action evidence | Urgent owner action may precede final classification. Owner decides isolation, log preservation, rotation, and continuity; record actions and due work in the append-only ledger. | Remediation event and recheck work | Recheck scope declares the original locator, aliases/deployments, and permitted cache/archive channels. |
 | 9. Fresh recheck | Fresh scope/control and every known locator/alias | Take a new anonymous observation and import it to the ledger. | Fresh evidence and closed/partially_closed/reopened state | `closed` needs every declared residue covered; unknown residue is `partially_closed`. |
 
 ## Operating sequence
@@ -35,11 +35,13 @@ open-detective channels-doctor --config _local/channels.json --scope _local/cont
 
 # 4: owner-credential inventory and anonymous public discovery are separate paths
 open-detective inventory --provider vercel --scope-id TEAM --token-env VERCEL_TOKEN
-open-detective inventory --provider import --scope-id TEAM --input _local/owner-export.json
 open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
 
-# 5–6: bind only after ownership review, then observe anonymously
+# 5: review administrator exports and approve target scope before their candidate import
+open-detective inventory --provider import --scope-id TEAM --input _local/owner-export.json
+
+# 5–6: with approved target scope, bind its locator then observe anonymously
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:OPAQUE_ID" --scope _local/scope.json --db _local/audit.sqlite --asset-id asset-1 --provider import
 open-detective probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:OPAQUE_ID"
 open-detective browser --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:OPAQUE_ID" --duration 3
@@ -84,7 +86,7 @@ open-detective asset-locations --input _local/code-results.json --locator-store 
 
 Prepare the control using [the code-search guide](../ops/github-code-search.md). Use the plan's actual scope ID. Exact locations stay private; `ownership_pending`, `NOT_INSPECTED`, and `not_measured` remain unresolved. `selected_scope_complete` describes only selected-repository jobs, not global discovery. Explicit retries cover the failures listed in that guide.
 
-After ownership review and exact target-scope approval, an operator may invoke `trace-assets` for literal HTML script and JavaScript GET fetch references. It is bounded anonymous observation; it does not remove login gates or execute JavaScript. Stop on sensitive candidates. Separately, `asset-profile` analyzes already captured local bytes using its own manifest and makes no network requests. A code-search report is not that content manifest and is not passed to profiling as downloaded content.
+After ownership review and exact target-scope approval, an operator may invoke `trace-assets` for literal HTML script and JavaScript GET fetch references. It is bounded anonymous observation; it does not remove login gates or execute JavaScript. Stop on sensitive candidates. Separately, `asset-profile` analyzes owner-authorized, already available local bytes using its own manifest and makes no network requests. A sanitized `probe` or code-search report does not supply file bytes and is not automatically passed to profiling.
 
 ```bash
 open-detective trace-assets --scope _local/scope.json --url https://app.example.test/public/ --output _local/trace.json

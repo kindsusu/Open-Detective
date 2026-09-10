@@ -69,8 +69,7 @@
     ],
     "allowedTerminals": [
       "freshRecheck",
-      "localTimeline",
-      "locations"
+      "localTimeline"
     ],
     "requiredPaths": [
       {
@@ -119,20 +118,20 @@
       "id": "discovery",
       "lane": "public",
       "col": 2,
-      "width": 142,
+      "width": 136,
       "type": "external",
-      "label": "Discover + Import",
-      "sublabel": "GitHub + CT",
-      "tag": "AUTOMATED"
+      "label": "Public Discovery",
+      "sublabel": "metadata candidates",
+      "tag": "BOUNDED TOOL"
     },
     {
       "id": "ownershipGate",
       "lane": "owner",
       "col": 2,
-      "width": 145,
+      "width": 136,
       "type": "security",
-      "label": "Authorize",
-      "sublabel": "owner + scope",
+      "label": "Approve Scope",
+      "sublabel": "owner review first",
       "tag": "HUMAN DECISION"
     },
     {
@@ -149,7 +148,7 @@
       "id": "classification",
       "lane": "response",
       "col": 4,
-      "width": 142,
+      "width": 136,
       "type": "security",
       "label": "Review Evidence",
       "sublabel": "minimum evidence",
@@ -159,7 +158,7 @@
       "id": "ledgerContainment",
       "lane": "response",
       "col": 5,
-      "width": 138,
+      "width": 136,
       "type": "database",
       "label": "Track Response",
       "sublabel": "ledger + owner",
@@ -169,7 +168,7 @@
       "id": "freshRecheck",
       "lane": "public",
       "col": 5,
-      "width": 138,
+      "width": 136,
       "type": "cloud",
       "label": "Recheck",
       "sublabel": "fresh observation",
@@ -199,7 +198,7 @@
       "id": "localTimeline",
       "lane": "forensics",
       "col": 5,
-      "width": 140,
+      "width": 136,
       "type": "backend",
       "label": "Export Timeline",
       "sublabel": "local exports",
@@ -209,7 +208,7 @@
       "id": "codeSearch",
       "lane": "optional",
       "col": 2,
-      "width": 150,
+      "width": 136,
       "type": "external",
       "label": "Code Search",
       "sublabel": "repo + control",
@@ -219,7 +218,7 @@
       "id": "locations",
       "lane": "optional",
       "col": 3,
-      "width": 150,
+      "width": 136,
       "type": "database",
       "label": "File Locations",
       "sublabel": "private refs",
@@ -229,21 +228,31 @@
       "id": "profile",
       "lane": "optional",
       "col": 4,
-      "width": 150,
+      "width": 136,
       "type": "backend",
       "label": "Asset Profile",
-      "sublabel": "local bytes only",
+      "sublabel": "approved local bytes",
       "tag": "OFFLINE HINTS"
     },
     {
       "id": "trace",
       "lane": "public",
       "col": 4,
-      "width": 150,
+      "width": 136,
       "type": "frontend",
       "label": "Static Trace",
       "sublabel": "scoped GET refs",
       "tag": "OPTIONAL / BOUNDED"
+    },
+    {
+      "id": "localInput",
+      "lane": "optional",
+      "col": 1,
+      "width": 136,
+      "type": "database",
+      "label": "Local Evidence",
+      "sublabel": "owner-approved files",
+      "tag": "SEPARATE INPUT"
     }
   ],
   "edges": [
@@ -275,7 +284,7 @@
     {
       "from": "ownershipGate",
       "to": "anonymousProbe",
-      "label": "scope approved",
+      "label": "approve > bind",
       "role": "main",
       "variant": "security"
     },
@@ -349,16 +358,37 @@
       "variant": "dashed"
     },
     {
-      "from": "anonymousProbe",
-      "to": "profile",
-      "label": "local capture",
+      "from": "profile",
+      "to": "classification",
+      "label": "hints",
       "role": "branch",
       "variant": "dashed"
     },
     {
-      "from": "profile",
-      "to": "classification",
-      "label": "hints",
+      "from": "scope",
+      "to": "localInput",
+      "label": "approved input",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "localInput",
+      "to": "profile",
+      "label": "bytes + manifest",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "locations",
+      "to": "ownershipGate",
+      "label": "owner review",
+      "role": "branch",
+      "variant": "dashed"
+    },
+    {
+      "from": "anonymousProbe",
+      "to": "ledgerContainment",
+      "label": "urgent action",
       "role": "branch",
       "variant": "dashed"
     }
