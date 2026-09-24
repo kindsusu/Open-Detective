@@ -25,7 +25,8 @@ def main():
             assert "su-detect = sudetect.__main__:main" in entry_points.splitlines()
             archive.extractall(target)
         env = dict(os.environ, PYTHONPATH=str(target), PYTHONIOENCODING="utf-8")
-        for args in (["--help"], ["search-plan", "--help"], ["search-plan", "plan",
+        for args in (["--help"], ["search-plan", "--help"], ["prior-records", "--help"],
+                     ["github-history", "--help"], ["dom-replay", "--help"], ["search-plan", "plan",
                      "--scope-id", "fixture", "--company-en", "Melody Rent Car",
                      "--output", str(target / "plan.json")]):
             subprocess.run([sys.executable, "-S", "-m", "sudetect", *args],

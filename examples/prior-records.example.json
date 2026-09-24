@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "source": {
+    "kind": "trusted_operator_export",
+    "export_ref": "operator-export:sample-2026-09",
+    "exported_at": "2026-09-10T09:00:00Z"
+  },
+  "reviews": [
+    {
+      "review_ref": "prior-review:sample-01",
+      "reviewed_at": "2026-08-01T09:00:00Z",
+      "lookup_status": "unavailable",
+      "known_assets": [{"record_ref": "asset-record:sample-a"}],
+      "unresolved": [{"record_ref": "issue-record:sample-a", "reason_ref": "reason:scope-expired"}],
+      "due": [{"record_ref": "recheck-record:sample-a", "due_at": "2026-10-01T00:00:00Z"}]
+    }
+  ]
+}

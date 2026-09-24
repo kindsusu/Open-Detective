@@ -109,7 +109,7 @@ python -m playwright install chromium
 
 기본 명령은 `open-detective`입니다. 기존 `su-detect`와 `python -m sudetect` 진입점도 계속 지원하며 같은 CLI를 실행합니다.
 
-루트 CLI는 `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
+루트 CLI는 `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 게이트 순서는 [운영 흐름](docs/WORKFLOW.md)을, 선택 기능과 네트워크 명령의 세부 규칙은 해당 `ops/` 문서를 먼저 확인합니다.
 
@@ -128,6 +128,7 @@ open-detective search-plan run --plan _local/plan.json --locator-store _local/lo
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
 open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
 open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
+open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 open-detective probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 open-detective ledger --db audit.sqlite due
@@ -138,6 +139,12 @@ open-detective ledger --db audit.sqlite due
 `asset-profile`도 오프라인 명령이다. 이미 승인된 로컬 capture의 제한된 bytes만 읽어 값 없이 구조 힌트와 후보 사업 데이터 범주를 만든다. locator를 가져오거나 공개 도달 가능성을 확정하거나 심각도를 부여하거나 민감 콘텐츠를 확정하지 않는다. manifest와 해석 규칙은 [ops/asset-profile.md](ops/asset-profile.md)를 본다.
 
 `asset-locations`는 profile 또는 inventory report의 opaque 참조를 같은 `--scope-id`의 기존 로컬 locator store와 연결한다. exact URL은 새 private-local mapping에만 기록하고 네트워크 요청·index/file body 검사는 하지 않는다. 이 mapping에는 민감한 URL 구성 요소가 있을 수 있으므로 공개하지 않는다. [ops/asset-profile.md](ops/asset-profile.md)를 본다.
+
+`prior-records`는 운영자가 명시적으로 제공한 이전 검토 export 하나를 오프라인에서 대조한다. 신뢰된 export라는 표시는 운영자의 선언이며 독립적인 검증은 아니다. 기록 참조, 검토 시각, 조회 상태, 알려진 자산·미해결·기한 기록을 보존하며 볼트를 자동 검색하거나 과거 권한을 이어받지 않는다. 과거 기록만으로 해결된 항목을 다시 열지 않으며, 요청에는 현재 소유권 검토와 실행 scope가 필요하다. [ops/discovery.md](ops/discovery.md)와 [중립 예시](examples/prior-records.example.json)를 본다.
+
+`github-history`는 지정한 공개 저장소·브랜치·기간의 커밋 이력을 제한된 범위에서 조회한다. 선택 기능인 패치 본문 검사에는 현재 실행 scope가 필요하며, 과거 자산 위치는 비공개 참조로 보관한다. 과거 코드가 현재 노출을 입증하지는 않는다. [ops/github-history.md](ops/github-history.md)를 본다.
+
+`dom-replay`는 별도 승인하고 해시를 고정한 로컬 합성 fixture에서만 로그인 화면 제거와 app 표시 변경을 실제 실행해 전후 DOM을 측정한다. 네트워크를 차단하며 실제 사이트를 변경하거나 서버 인증의 유효성을 판정하지 않는다. [ops/dom-replay.md](ops/dom-replay.md)를 본다.
 
 소유한 페이지를 제한된 `probe`로 관측한 뒤 관련 정적 파일도 확인해야 하면 `trace-assets`를 별도로 실행한다. 한 공개 HTML URL에서 시작하는 scope-bound 익명 GET 추적으로, scope가 허용한 명시적 HTML `script`와 명시적 GET JavaScript `fetch(...)` 참조만 따르며 전체 request·byte·duration·depth 예산과 중복 제거를 적용한다. JavaScript 실행, DOM 렌더링, 동적 endpoint 추측, 인증을 하지 않고 기존 `probe`나 `browser`의 동작도 바꾸지 않는다. 민감 콘텐츠 후보가 보이면 즉시 멈춘다. 따라서 inline client password literal 때문에 이후 JSON fetch 전에 중단될 수 있으며, 그 결과를 thin gate 전체를 추적한 것으로 말하면 안 된다. 결과는 content-profile 힌트와 coverage gap을 포함한 asset-linked report이며, `--locator-store`와 `--scope-id`를 함께 지정하면 최종 redirect의 exact location은 로컬에만 보관하고 report에는 opaque 참조만 남긴다. 자세한 규칙은 [ops/asset-trace.md](ops/asset-trace.md)를 본다.
 

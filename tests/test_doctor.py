@@ -13,7 +13,9 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue({"sudetect/forensics.py", "sudetect/forensic_cli.py",
                          "sudetect/discovery_channels.py", "sudetect/discovery_eval.py",
                          "sudetect/asset_graph.py", "ops/forensics.md",
-                         "ops/discovery-optimization.md"}.issubset(relative))
+                         "ops/discovery-optimization.md", "sudetect/prior_records.py",
+                         "sudetect/github_history.py", "sudetect/dom_replay.py",
+                         "ops/github-history.md", "ops/dom-replay.md"}.issubset(relative))
 
     def test_current_source_satisfies_required_runtime_files(self):
         result=check(ROOT)

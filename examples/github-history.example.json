@@ -1,0 +1,10 @@
+{
+  "scope_id": "replace-with-reviewed-scope-id",
+  "repository": "example-owner/example-public-repository",
+  "branch": "main",
+  "since": "2020-01-01T00:00:00Z",
+  "until": "2020-01-02T00:00:00Z",
+  "max_commits": 10,
+  "expires_at": "2020-01-03T00:00:00Z",
+  "owner_ref": "replace-with-verified-ownership-evidence-record"
+}

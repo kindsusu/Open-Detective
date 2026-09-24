@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added offline `prior-records` reconciliation for explicitly supplied operator-declared trusted prior-review manifests. Historical asset references retain provenance without automatically reopening findings or inheriting authorization; current requests still require ownership review and executable scope.
+- Refined offline Latin identifier variants for supplied compact and multiword industry tails while retaining operator spelling and bounded search-plan scheduling.
+- Added explicit bounded public `github-history` discovery and separately scoped patch-content inspection. Historical references remain candidates; extracted locations are private and never followed automatically.
+- Added approved local synthetic `dom-replay` with a fixed login-screen/app preset, actual before/after measurements, and blocked network access. It does not change the external anonymous browser or establish server-side authorization.
+
 - Corrected workflow ordering: target-scope approval precedes locator binding, public metadata discovery is distinct from administrator-export import, file locations return to ownership review, local profiling takes separately authorized bytes, and urgent owner containment can precede final classification.
 
 - Documented current optional code search, private file-location export, offline profiling, and scoped static tracing; refreshed English/Korean onboarding, synthetic result examples, and the dark workflow diagram.

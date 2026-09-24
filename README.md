@@ -103,7 +103,7 @@ python -m playwright install chromium
 
 The primary command is `open-detective`. The existing `su-detect` and `python -m sudetect` entry points remain supported and invoke the same CLI.
 
-The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 Use [the operating workflow](docs/WORKFLOW.md) for the gated sequence and the relevant `ops/` guide before an optional or networked command.
 
@@ -122,6 +122,7 @@ open-detective search-plan run --plan _local/plan.json --locator-store _local/lo
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
 open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
 open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
+open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 open-detective probe --scope _local/scope.json --locator-store _local/locators.sqlite --locator-scope TEAM --locator-ref "opaque:<id>"
 open-detective ledger --db audit.sqlite due
@@ -132,6 +133,12 @@ open-detective ledger --db audit.sqlite due
 `asset-profile` is also offline: it examines bounded, already captured local bytes and emits value-free structural hints and candidate business-data categories. It never fetches a locator, establishes public reachability, assigns severity, or confirms sensitive content. Read [ops/asset-profile.md](ops/asset-profile.md) for the manifest and interpretation rules.
 
 `asset-locations` joins opaque references from a profile or inventory report with the existing local locator store in one `--scope-id`. It writes exact URLs only to a new private-local mapping, makes no network request, and does not inspect an index or file body. The mapping can contain sensitive URL components; do not publish it. See [ops/asset-profile.md](ops/asset-profile.md).
+
+`prior-records` reconciles one explicit operator-declared trusted prior-review export offline. That declaration is not independent verification. It preserves record references, review times, lookup status, and known-asset/unresolved/due records without searching a vault or inheriting old authorization. Historical records do not automatically reopen a finding; current ownership review and executable scope are still required for requests. See [ops/discovery.md](ops/discovery.md) and the [neutral example](examples/prior-records.example.json).
+
+`github-history` adds bounded public commit-history discovery for a selected repository, branch, and time window. Optional patch-content inspection requires current executable scope and keeps historical asset locations as private references. Historical content does not prove current exposure. See [ops/github-history.md](ops/github-history.md).
+
+`dom-replay` measures the fixed login-screen removal/app-display preset only in an approved, hash-pinned local synthetic fixture with network blocked. It does not change live targets or prove server authorization. See [ops/dom-replay.md](ops/dom-replay.md).
 
 After a bounded `probe` of an owned page, invoke `trace-assets` separately when its related static files need checking. It is a scope-bound anonymous GET trace from one public HTML URL that follows only explicit HTML `script` and explicit GET JavaScript `fetch(...)` references the scope authorizes, with aggregate request, byte, duration, depth, and deduplication bounds. It never executes JavaScript, renders a DOM, guesses dynamic endpoints, authenticates, or changes `probe` or `browser`. A sensitive-content candidate stops the trace early, so an inline client password literal can stop it before a later JSON fetch; that result does not trace a thin gate completely. Its asset-linked report contains content-profile hints and coverage gaps; optional paired `--locator-store` and `--scope-id` retain exact final redirect locations locally while the report keeps opaque references. Read [ops/asset-trace.md](ops/asset-trace.md).
 

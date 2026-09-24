@@ -1,0 +1,9 @@
+{
+  "case_id": "synthetic-dom-replay-example",
+  "fixture_path": "dom-replay.fixture.html",
+  "fixture_sha256": "d2cc4a2df5f40bda360533337a7f8c60e7389430c3ae663e771b293c07d6f979",
+  "expires_at": "2020-01-01T00:00:00Z",
+  "owner_ref": "fixture:repository-maintainer",
+  "approved_action": "remove_login_show_app",
+  "control_canary": "OPEN_DETECTIVE_DOM_REPLAY_CONTROL"
+}

@@ -29,6 +29,7 @@ open-detective search-plan run --plan _local/plan.json --locator-store _local/lo
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
 open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
 open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
+open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 open-detective ledger --db audit.sqlite due
 ```
@@ -64,6 +65,12 @@ For partial capture record `capture_complete=false`, inspected bytes, and stop r
 ## Intake and phase gates
 
 Before any discovery, record local `audit-intake` data using `examples/audit-intake.example.json` and `schemas/audit-intake.schema.json`: exclusions with evidence; Korean/English identity, aliases, industry, functions, known URLs and domains; affiliate boundary; third-party declaration; owner/escalation references; and additional approval actions. It is neither executable scope nor a network grant. `third_parties.status="unknown"` is a gap, never a reason to infer ownership.
+
+Use `prior-records` before new discovery for an explicitly supplied operator-declared trusted prior-review export. That declaration is not independent verification. It is offline and reads only the named manifest and optional intake; it never scans a vault or arbitrary filesystem data. Preserve review references, times, lookup status, known-asset/unresolved/due record references, but no raw URLs, captures, credentials, or secrets. Prior findings have no inherited authority and do not automatically reopen: current ownership review and executable scope are still required for a request.
+
+Use `github-history` separately for a selected public repository, explicit branch, time window, and commit cap. Metadata listing does not inspect file contents. Its optional patch inspection requires current executable scope, minimizes content, and stops on sensitive candidates. Keep historical file and URL locations in the private locator store; never follow them automatically or infer current exposure from a historical line. Read `ops/github-history.md`.
+
+Use `dom-replay` only for an explicitly approved, hash-pinned local synthetic inert fixture. The fixed preset removes `login-screen` and sets `app` display to `flex`; measure the actual before/after DOM with network blocked. Fixture scripts and live target mutation are not supported. This separate reproduction is not an anonymous observation or backend authorization test, and never produces a confirmed exposure. Read `ops/dom-replay.md`.
 
 Use this order: (1) intake for boundary, exclusions, ownership references, and escalation; (2) offline identifiers and search plan; (3) `doctor --reference .`, which reports the runtime root actually loaded and compares it with the reviewed source tree at `.`; (4) fresh control-scope-authorized positive controls with `channels-doctor`, then public GitHub discovery under its separate `scope_id` and channel-health contract. Obtain administrator exports of contracts, assets, processor and outsourcer registers before approving an executable target scope and importing their candidates. Public-metadata discovery remains ownership-pending. Owner-inventory credentials remain a separate authorization path.
 

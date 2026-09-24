@@ -61,6 +61,16 @@ TAILS_KO = [
 JOINERS = ["", "-", "_"]
 NUMERIC = ["1", "2", "01", "02", "24", "2024", "2025", "1234"]
 
+# These are complete, generic compound industry spellings, rather than a rule for
+# chopping arbitrary suffixes from an operator term.  A compact ``rentcar`` is a
+# common namespace spelling of two independently meaningful words; recognizing
+# those words lets a derived brand produce ``brandrent`` and ``brandcar`` without
+# turning an unknown value such as ``acmexa`` into a made-up ``acme`` variant.
+COMPOUND_INDUSTRY_WORDS = {
+    "rentcar": ("rent", "car"),
+    "rentalcar": ("rental", "car"),
+}
+
 # --------------------------------------------------------------- hangul handling
 
 CHO = ["g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj",
@@ -125,6 +135,23 @@ def _clean(s: str) -> str:
     return normalize_term(s)
 
 
+def industry_variants(values: list[str] | None) -> list[str]:
+    """Return supplied industry spellings plus bounded semantic components.
+
+    Only entries in :data:`COMPOUND_INDUSTRY_WORDS` are decomposed.  This keeps
+    candidate generation source-derived and avoids arbitrary character suffixes.
+    """
+    out: list[str] = []
+    for raw in values or []:
+        value = normalize_term(raw)
+        if not value:
+            continue
+        for variant in (value, *COMPOUND_INDUSTRY_WORDS.get(value, ())):
+            if variant not in out:
+                out.append(variant)
+    return out
+
+
 def _english_name_parts(value: str) -> list[str]:
     """Return English name tokens after removing exact legal-form suffix tokens."""
     normalized = unicodedata.normalize("NFKC", value).casefold()
@@ -154,9 +181,23 @@ def _english_initialism(parts: list[str]) -> str:
 
 
 def _english_brand_compound(parts: list[str], industry: list[str]) -> str:
-    """Preserve a hyphenated multiword brand only before a supplied industry tail."""
-    if len(parts) >= 3 and parts[-1] in industry:
-        return "-".join(parts[:-1])
+    """Preserve the brand boundary before an explicitly supplied industry tail.
+
+    Operator industry input is normalized by :func:`normalize_term`, so a
+    multiword spelling such as ``"field service"`` can match the compact tail
+    ``FieldService`` in an official Latin name.  This is a bounded suffix split:
+    it never guesses a three-character tail or invents an industry term.
+    """
+    for supplied in industry:
+        if not supplied:
+            continue
+        if len(parts) == 1 and parts[0].endswith(supplied):
+            prefix = parts[0][:-len(supplied)]
+            if len(prefix) >= 2:
+                return prefix
+        for split in range(1, len(parts)):
+            if "".join(parts[split:]) == supplied:
+                return "-".join(parts[:split])
     return ""
 
 
@@ -197,7 +238,7 @@ def stems(ko: str = "", en: str = "", extra: list[str] | None = None,
             # source order without carrying the bare-only initialism restriction.
             found[existing] = (v, why)
 
-    industry = industry or []
+    industry = industry_variants(industry)
     for raw in (extra or []):
         # An operator may intentionally supply a legal-looking or otherwise
         # compact account spelling.  Preserve that literal normalized seed before
@@ -284,8 +325,7 @@ def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
     """
     funcs = [normalize_term(f) for f in (functions or FUNCTION)]
     funcs = [f for f in funcs if f]
-    inds = [normalize_term(i) for i in (industry or [])]
-    inds = [i for i in inds if i]
+    inds = industry_variants(industry)
     base = stems(ko, en, extra, inds)
     seen: set[str] = set()
     out: list[tuple[str, int, str, int, int, int, int, int]] = []

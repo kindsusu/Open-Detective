@@ -2,7 +2,7 @@
 
 This guide connects an exposure investigation to the commands that Open-Detective actually implements. There is no single command that runs the whole workflow. An operator reviews the evidence at every gate, then explicitly supplies the next authority, input, and command.
 
-It describes reviewed runtime source revision [`39ca3a19cc17fc454c38de2709866fccd3784956`](https://github.com/kindsusu/Open-Detective/tree/39ca3a19cc17fc454c38de2709866fccd3784956). Confirm the installed runtime against this reviewed source with `doctor`; editing or pushing the repository does not update an installed runtime.
+This guide describes the runtime in this checkout. The Archify overview was validated against revision [`39ca3a19cc17fc454c38de2709866fccd3784956`](https://github.com/kindsusu/Open-Detective/tree/39ca3a19cc17fc454c38de2709866fccd3784956); the optional history and local replay steps below extend that overview. Confirm the installed runtime against the reviewed checkout with `doctor`; editing or pushing the repository does not update an installed runtime.
 
 Open [the interactive Archify workflow](workflow/open-detective.workflow.html) in a browser after cloning or downloading this repository. GitHub's file viewer does not execute its interactive content.
 
@@ -25,7 +25,8 @@ Open [the interactive Archify workflow](workflow/open-detective.workflow.html) i
 Keep organization values, tokens, and exact locators in access-controlled `_local/` files, not in the repository. Replace `TEAM` and paths with approved values.
 
 ```bash
-# 1–2: intake first, then offline identifiers and plan
+# 1–2: intake and explicit prior-review export, then offline identifiers and plan
+open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
 python tools/idgen.py --ko "<organization>" --en "<official English name>" --industry "<industry>" --function "<function>"
 open-detective search-plan plan --output _local/plan.json --scope-id TEAM --company-en "<official English name>"
 
@@ -75,6 +76,12 @@ open-detective ledger --db _local/audit.sqlite close FINDING_ID --evidence-ref "
 A recheck covers the original locator, every known alias/deployment, and separately authorized cache/archive channels in a fresh anonymous context. A current `BODY_SERVED`, unknown/incomplete observation, or equal-time conflict sends a closed finding back for review or reopening.
 
 ## Optional file discovery and inspection
+
+Before generating new candidates, reconcile the explicitly supplied prior-review export with `prior-records`. Record unavailable prior evidence as a gap. Historical records preserve provenance and due work; they neither reopen a resolved finding automatically nor authorize current requests. No vault is searched automatically.
+
+After selecting a public repository, `github-history` can list bounded commit metadata for an explicit branch and time window. Its separate patch inspection requires current executable scope and records historical URL candidates as private locator references. A `.patch` response is source content: inspect it under the content rules, stop at sensitive candidates, and do not follow extracted URLs automatically. A removed line or historical reference does not prove current deployment exposure. See [commit history](../ops/github-history.md).
+
+`dom-replay` is a separate, approved local synthetic-fixture check. It measures the DOM before and after the fixed login-screen removal and app-display preset with network access blocked. It does not modify a live target, run fixture scripts, or establish backend authorization, anonymous reachability, or a confirmed exposure. See [local DOM replay](../ops/dom-replay.md). The stage-6 `probe` and `browser` remain unchanged.
 
 These are separate operator-invoked steps, not an automatic pipeline. First discover public repositories, then select exact repositories for code search. The code token is used only for GitHub search; anonymous repository preflight and a benign indexed-file control must pass. Search returns file metadata, not source content or proof of exposure.
 

@@ -163,6 +163,44 @@ class IdgenTests(unittest.TestCase):
         self.assertIn("blue-harbor", dict(idgen.stems(extra=["Blue Harbor"])))
         self.assertNotIn("blue-harbor", dict(idgen.stems(en="Blue Harbor Logistics")))
 
+    def test_compact_industry_tail_requires_explicit_multiword_industry(self):
+        explicit = dict(idgen.stems(en="Amber Harbor Field Service", industry=["field service"]))
+        absent = dict(idgen.stems(en="Amber Harbor Field Service"))
+        self.assertEqual("english-brand-compound", explicit["amber-harbor"])
+        self.assertNotIn("amber-harbor", absent)
+        rows = idgen.generate(en="Amber Harbor Field Service", industry=["field service"])
+        self.assertLess(next(i for i, row in enumerate(rows) if row[0] == "amber-harbor"), 20)
+
+    def test_compact_rentcar_industry_derives_only_meaningful_components(self):
+        # Neutral compact fixture: the split comes from a finite generic vocabulary,
+        # not from peeling arbitrary characters off a supplied industry value.
+        rows = idgen.generate(en="HarborRentCar", industry=["rentcar"], functions=[])
+        candidates = {candidate for candidate, _, _ in rows}
+        self.assertTrue({"harbor", "harborrentcar", "harborrent", "harborcar"}.issubset(candidates))
+        self.assertEqual(["widget"], idgen.industry_variants(["widget"]))
+
+    def test_compact_brand_context_is_used_in_actual_search_queries(self):
+        from sudetect.identifiers import generate_search_queries
+        rows = generate_search_queries(en="HarborRentCar", industry=["rentcar"], functions=[])
+        by_query = {row["query"].casefold(): row["rationale"] for row in rows}
+        self.assertEqual("narrow:brand+industry", by_query["harbor rentcar"])
+        self.assertEqual("narrow:brand+industry", by_query["harbor rent"])
+        self.assertEqual("narrow:brand+industry", by_query["harbor car"])
+
+    def test_alias_generator_has_the_same_brand_context_as_a_list(self):
+        from sudetect.identifiers import generate_search_queries
+        kwargs = {"en": "", "industry": ["rentcar"], "functions": []}
+        expected = generate_search_queries(aliases=["HarborRentCar"], **kwargs)
+        actual = generate_search_queries(aliases=(value for value in ["HarborRentCar"]), **kwargs)
+        self.assertEqual(expected, actual)
+
+    def test_explicit_industry_spelling_and_compact_variant_are_scheduled(self):
+        from sudetect.identifiers import generate_search_queries
+        rows = generate_search_queries(en="Amber Harbor Field Service", industry=["field service"])
+        rationale = {row["query"]: row["rationale"] for row in rows}
+        self.assertEqual("narrow:brand+industry", rationale["Amber field service"])
+        self.assertEqual("narrow:brand+industry", rationale["Amber fieldservice"])
+
     def test_initialism_is_source_derived_and_does_not_expand_candidate_volume(self):
         rows = idgen.generate(en="Maple Data Studio", functions=["sales"], industry=["data"])
         candidates = {candidate for candidate, _, _ in rows}

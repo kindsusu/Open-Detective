@@ -11,7 +11,7 @@ import unicodedata
 from typing import Iterable, Mapping, TypeVar
 
 from .idgen import (FUNCTION, TARGET_PATTERNS, TAILS_KO, generate, initials, main,
-                         normalize_term, positive_int, romanize, selftest, stems,
+                         industry_variants, normalize_term, positive_int, romanize, selftest, stems,
                          validate_target_candidate, _strip_korean_legal_boundary)
 
 
@@ -63,6 +63,9 @@ def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str
     planners preserve its order, so a small budget rotates available full-name,
     industry, and function context work before generic brand or industry terms.
     """
+    # Callers may provide one-pass iterables.  The alias values feed both their
+    # own full-name rows and the bounded compact-brand derivation below.
+    aliases = list(aliases)
     rows: list[dict[str, str]] = []
     seen: set[str] = set()
     def add(value: str, rationale: str) -> None:
@@ -109,9 +112,29 @@ def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str
     # Narrow combinations are evidence-oriented: their two terms come from the
     # supplied identity/context rather than an unqualified generic word.  Interleave
     # brands by term so aliases cannot consume the front of a bounded query budget.
-    query_industry = list(dict.fromkeys(str(term) for term in industry if str(term).strip()))
+    # Preserve the operator spelling and, when it contains several Latin words,
+    # its explicit compact spelling.  This mirrors idgen's industry-tail suffix
+    # split without deriving arbitrary short fragments.
+    raw_industry = list(industry)
+    query_industry: list[str] = []
+    for term in raw_industry:
+        value = " ".join(unicodedata.normalize("NFKC", str(term)).split())
+        if not value:
+            continue
+        for variant in (value, "".join(re.findall(r"[A-Za-z0-9]+", value))):
+            if variant and variant.casefold() not in {item.casefold() for item in query_industry}:
+                query_industry.append(variant)
+    for variant in industry_variants(raw_industry):
+        if variant.casefold() not in {item.casefold() for item in query_industry}:
+            query_industry.append(variant)
     query_functions = list(dict.fromkeys(str(term) for term in functions if str(term).strip()))
-    all_brands = list(dict.fromkeys(korean_brands + brands))
+    # ``stems`` performs the same bounded compact-industry split used for account
+    # candidates.  Reuse its brand result for search phrases, so ``HarborRentCar``
+    # with industry ``rentcar`` also gets the useful ``harbor rent`` query.
+    derived_brands = [stem.replace("-", " ") for stem, why in stems(
+        en=en, extra=list(aliases), industry=raw_industry)
+        if why in {"english-brand-compound", "operator-supplied-brand-compound"}]
+    all_brands = list(dict.fromkeys(korean_brands + brands + derived_brands))
     for term in query_industry:
         for brand in all_brands:
             add(f"{brand} {term}", "narrow:brand+industry")

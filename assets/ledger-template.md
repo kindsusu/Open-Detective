@@ -44,4 +44,12 @@ Allowed content values: `PUBLIC_UI`, `SENSITIVE_CONTENT_CONFIRMED`, `SENSITIVE_C
 |---|---|---|---|---|---|---|---|
 | | | | | | | | |
 
+## Prior-review reconciliation
+
+| prior_review_ref | reviewed_at | lookup_status | known_asset_record_ref | history_state | current_scope_required | unresolved_or_due_record_ref |
+|---|---|---|---|---|---|---|
+| | | verified / none / unavailable | | recorded_history | yes | |
+
+Prior-review references are operator-export provenance only. They do not establish ownership, reachability, current authorization, or a measurement target. Record opaque references only; never paste exact URLs, captured bodies, headers, personal data, or secrets.
+
 Closure requires a new anonymous observation for every known live locator and completion of the declared residue scope. Unknown archive/cache/alias coverage produces `partially_closed`. Do not paste raw personal data, secrets, headers, or token-bearing URLs here.
