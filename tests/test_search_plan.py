@@ -6,6 +6,16 @@ from tests.test_github_discovery import repo
 from tests.health_fixtures import health_report
 
 class SearchPlanTests(unittest.TestCase):
+    def test_compact_industry_brand_query_is_planned_and_context_is_deferred(self):
+        plan = create_plan(scope_id="compact-brand", company_en="HarborRentCar",
+                           industry=["rentcar"], functions=["sales"])
+        queries = [job for job in plan["jobs"]
+                   if job["channel"] == "github" and job["kind"] == "search_query"]
+        planned = {job["value"] for job in queries if job["state"] == "planned"}
+        deferred = {job["value"] for job in queries if job["state"] == "deferred"}
+        self.assertIn("harbor rentcar", planned)
+        self.assertTrue({"harbor sales", "harbor rent", "harbor car"}.issubset(deferred))
+
     def test_health_requirements_are_channel_specific_and_fail_closed(self):
         self.assertEqual(["github-repositories"], _health_requirements({"channel":"github", "kind":"known_url"}))
         self.assertEqual(["github-user-search", "github-repository-search", "github-repositories"],

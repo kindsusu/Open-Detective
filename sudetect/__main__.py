@@ -14,6 +14,8 @@ def main(argv=None):
         "forensics": "forensic_cli", "channel-discover": "discovery_channels",
         "discovery-eval": "discovery_eval", "asset-graph": "asset_graph", "asset-profile": "asset_profile", "asset-locations": "asset_locations",
         "trace-assets": "asset_trace",
+        "prior-records": "prior_records", "github-history": "github_history",
+        "dom-replay": "dom_replay",
     }
     if not args or args[0] in ("-h", "--help"):
         print("usage: open-detective {" + ",".join(commands) + "} [options]")

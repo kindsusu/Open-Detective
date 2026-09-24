@@ -34,7 +34,19 @@ python tools/idgen.py --ko "<name>" --en "<official Latin spelling>" --industry 
 python tools/idgen.py --en "<name>" --targets github --limit 100
 ```
 
-The generator is offline. Validate candidates with the platform-specific namespace rules and route them to ownership review. Candidate volume never authorizes mass scanning.
+The generator is offline. Repeat `--industry` for each operator-supplied industry spelling. It retains supplied multiword Latin spellings and compact forms, and can split a matching industry tail from the official name. A small generic vocabulary additionally recognizes `rentcar` as `rent`/`car` and `rentalcar` as `rental`/`car`; other compound industries need explicit operator terms. Derived brands feed both account candidates and contextual search queries. It never guesses arbitrary character tails or treats a generated variant as ownership evidence. Operator aliases and official spellings remain higher-quality inputs than derived forms. Validate candidates with the platform-specific namespace rules and route them to ownership review. Candidate volume never authorizes mass scanning.
+
+## Prior-review records
+
+`prior-records` reconciles one explicitly supplied operator-declared trusted export offline. That declaration is provenance, not independent verification. It does not scan a vault or arbitrary local paths, fetch a locator, or carry permission from an earlier review. The manifest contains opaque record references, review time, `verified`/`none`/`unavailable` lookup status, and known-asset, unresolved, and due records; do not put URLs, response bodies, headers, or secrets in it.
+
+```bash
+open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
+```
+
+Known assets retain historical review provenance; they are not automatically reopened. Current executable scope and ownership review are required before any network action. The optional intake only associates a current `scope_id`; it grants no network authority. Start from [examples/prior-records.example.json](../examples/prior-records.example.json).
+
+Each asset preserves all its review references. Review references must be unique; `none` cannot accompany known assets, and `unavailable` adds a coverage gap while retaining historical context. Timestamps are normalized to UTC; a date-only value means midnight UTC and a datetime without a timezone is rejected. References are operator-selected identifiers, not automatic secret redaction: supply value-free references only. Input is bounded to 1 MB, 500 reviews and 2,000 total asset/unresolved/due records; output must be a new file, and symlink or junction paths are rejected.
 
 ## Scheduling and output
 

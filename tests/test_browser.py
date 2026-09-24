@@ -15,13 +15,13 @@ from sudetect.transport import FetchResult
 CANARY = 'SU_DETECT_SYNTHETIC_PRIVATE_BUDGET'
 
 
-def scope():
+def scope(timeout=3):
     return Scope.from_dict({
         'policy_id': 'synthetic-browser-test',
         'expires_at': (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
         'targets': [{'origin': 'https://app.example', 'owner': 'test-owner',
                      'ownership_evidence': 'synthetic-fixture', 'path_prefixes': ['/']}],
-        'max_bytes': 65536, 'max_requests': 10, 'timeout': 3, 'max_redirects': 3,
+        'max_bytes': 65536, 'max_requests': 10, 'timeout': timeout, 'max_redirects': 3,
     })
 
 
@@ -118,8 +118,10 @@ class BrowserTests(unittest.TestCase):
         def bounded(url, policy, **kwargs):
             budgets.append(kwargs['max_bytes'])
             return broker(url, policy, **kwargs)
-        r = observe('https://app.example/login', scope(), duration=.25,
+        # This verifies byte propagation, not Chromium's cold-start speed.
+        r = observe('https://app.example/login', scope(timeout=10), duration=.25,
                     max_total_bytes=4096, fetcher=bounded)
+        self.assertGreaterEqual(len(budgets), 2, r)
         self.assertEqual(budgets[0], 4096)
         self.assertLess(budgets[1], budgets[0])
         self.assertLessEqual(r['bytes_processed'], 4096)
