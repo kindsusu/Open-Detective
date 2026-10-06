@@ -1,0 +1,6 @@
+{
+  "policy_id": "replace-with-approved-scope-id",
+  "action": "reveal_delivered_content",
+  "valid_until": "2020-01-01T00:00:00Z",
+  "authorization_ref": "replace-with-owner-authorization"
+}

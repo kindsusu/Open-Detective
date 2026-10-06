@@ -225,3 +225,14 @@ python -m unittest discover -s tests -v
 Tests are synthetic and offline; passing does not mean a deployment or live organization was tested. The repository retains the [PolyForm Noncommercial License 1.0.0](LICENSE). Read its terms for permitted purposes. Use outside them requires permission from the licensor; an appropriate third-party or organizational license is an owner and legal decision, not a universal rule from this project.
 
 The optional locator store is plaintext SQLite. Keep it on an owner-controlled encrypted volume with restricted permissions; its opaque references do not encrypt the underlying URLs. Local search manifests contain input names, queries, and public repository metadata and must not be published as masked reports.
+# Resumable multi-agent audits
+
+Codex and Claude share [one audit workflow](ops/audit-workflow.md) through the root
+`AGENTS.md` and `CLAUDE.md` adapters. `audit init/plan/run/resume/worker/import/status/report/evaluate`
+preserves jobs in the existing ledger, follows scoped static dependencies and PDF
+links, and reports failed/blocked/partial work without declaring it clean.
+`gate-review` separately reviews captured HTML and capability-authorized isolated
+client gates; unsupported flows stay pending. Install the `documents` extra for PDF
+text extraction and the `browser` extra plus Chromium for optional local replay.
+These synthetic-tested features do not imply a completed live audit or actual
+Codex-versus-Claude host comparison. See [gate review](ops/gate-review.md).

@@ -1,0 +1,8 @@
+{
+  "max_requests": 100,
+  "max_download_bytes": 33554432,
+  "max_analysis_bytes": 33554432,
+  "max_seconds": 600,
+  "max_attempts": 3,
+  "max_jobs": 200
+}

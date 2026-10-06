@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+from urllib.parse import urlsplit
 
 from .github_discovery import (discover as github_discover, _validate_channel_health)
 from .identifiers import (generate_identifiers, generate_search_queries,
@@ -15,6 +16,7 @@ from .identifiers import (generate_identifiers, generate_search_queries,
 
 _NS = uuid.UUID("a63cb58e-29d3-450c-8a71-1e4ad86dbe38")
 CHANNELS = ("github", "web", "certificate_transparency", "documents")
+GENERATION_VERSION = 2
 
 def _now(): return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 def _id(prefix, *parts): return prefix + "_" + uuid.uuid5(_NS, "\x1f".join(map(str, parts))).hex
@@ -65,7 +67,8 @@ def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliase
     else:
         job("certificate_transparency","domain_seed_missing","","no-approved-domain-seed","not_applicable",0,
             not_applicable_reason="no_approved_domain_seed")
-    result = {"schema_version":"1.0","coverage_version":2,"legacy_coverage_gap":False,
+    result = {"schema_version":"1.0","coverage_version":2,"generation_version":GENERATION_VERSION,
+            "legacy_coverage_gap":False,
             "plan_id":plan_id,"scope_id":scope_id,"created_at":_now(),
             "identity":identity,"required_channels":list(CHANNELS),"budgets":{"github_queries":query_budget,
             "github_accounts":account_budget},"jobs":jobs,"runs":[],"status":"PLANNED"}
@@ -74,8 +77,58 @@ def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliase
         result = enable_code_search(result, repositories)
     return result
 
+
+def reconcile_generated_jobs(plan: Mapping[str,Any]) -> dict[str,Any]:
+    """Add newly supported seed derivatives to an old plan without replaying work.
+
+    Existing job IDs, states, attempts, and runs remain authoritative. A missing
+    identity leaves an explicit gap instead of silently claiming migration.
+    """
+    out=json.loads(json.dumps(plan))
+    if out.get("generation_version",1)>=GENERATION_VERSION:
+        return out
+    identity=out.get("identity")
+    budgets=out.get("budgets")
+    if not isinstance(identity,Mapping) or not isinstance(budgets,Mapping):
+        out["generation_migration_gap"]="identity_or_budget_unavailable"
+        return out
+    try:
+        candidate=create_plan(
+            scope_id=out["scope_id"],company_ko=identity.get("company_ko", ""),
+            company_en=identity.get("company_en", ""),aliases=identity.get("aliases", []),
+            industry=identity.get("industry", []),functions=identity.get("functions", []),
+            known_urls=identity.get("known_urls", []),domains=identity.get("domains", []),
+            query_budget=budgets["github_queries"],account_budget=budgets["github_accounts"])
+    except (KeyError, TypeError, ValueError):
+        out["generation_migration_gap"]="identity_or_budget_invalid"
+        return out
+    if candidate["plan_id"] != out.get("plan_id"):
+        out["generation_migration_gap"]="identity_plan_id_mismatch"
+        return out
+    existing={job.get("work_id") for job in out.get("jobs",[])}
+    added=0
+    for job in candidate["jobs"]:
+        if "proper-prefix" not in job.get("generation_rationale", "") or job["work_id"] in existing:
+            continue
+        # New search/account work is visible for resume-all-deferred or an
+        # explicit resume budget. External channels remain import-required.
+        if job["channel"]=="github":
+            job["state"]="deferred"
+            job["deferred_reason"]="seed_generation_v2"
+        out.setdefault("jobs",[]).append(job)
+        existing.add(job["work_id"])
+        added+=1
+    out["generation_version"]=GENERATION_VERSION
+    out["generation_migration_added"]=added
+    out.pop("generation_migration_gap",None)
+    out["status"]=_status(out)
+    out["updated_at"]=_now()
+    return out
+
 def _status(plan):
     jobs=plan["jobs"]; required=set(plan.get("required_channels",CHANNELS))
+    if plan.get("generation_migration_gap"):
+        return "PARTIAL"
     if (any(run.get("status") != "COMPLETE" for run in plan.get("runs",[]) if isinstance(run,Mapping))
             and plan.get("legacy_coverage_gap") is not False):
         # Legacy plans did not retain per-job attempts, so a partial run cannot
@@ -168,6 +221,28 @@ def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -
                 and isinstance(row.get("value"),str)):
             _dynamic_account_job(plan,row["value"],"github-search-deferred-account")
 
+
+def _record_connected_domains(plan: dict[str,Any], result: Mapping[str,Any]) -> None:
+    """Queue observed homepage domains as separate, unapproved CT handoffs."""
+    known={str(job.get("value","")).casefold() for job in plan["jobs"]
+           if job.get("kind")=="domain_seed"}
+    for candidate in result.get("candidates",[]):
+        if not isinstance(candidate,Mapping):
+            continue
+        homepage=candidate.get("homepage")
+        if not isinstance(homepage,str):
+            continue
+        host=urlsplit(homepage).hostname
+        if not host or host in known or host.endswith((".github.io",".jsdelivr.net", ".vercel.app", ".netlify.app", ".pages.dev")):
+            continue
+        jid=_id("wrk",plan["plan_id"],"certificate_transparency","domain_seed",host)
+        plan["jobs"].append({"work_id":jid,"channel":"certificate_transparency","kind":"domain_seed",
+            "value":host,"generation_rationale":"github-repository-homepage",
+            "origin_evidence_ref":candidate.get("slug"),"state":"deferred",
+            "deferred_reason":"scope_and_import_required","request_budget":0,"result_count":None,
+            "pages":None,"end_condition":None,"error_code":None})
+        known.add(host)
+
 def _next_work(plan: Mapping[str,Any]) -> dict[str,Any]:
     pending=[j for j in plan.get("jobs",[]) if j.get("state") in {"planned","deferred","failed"}]
     next_job=next((j for state in ("planned","failed","deferred") for j in pending if j.get("state")==state),None)
@@ -204,8 +279,9 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
              retry_failed: bool=False, request_budget: int=20, max_batches: int=100,
              resume_all_deferred: bool=False, per_job_request_budget: int=6,
              persist: Callable[[Mapping[str,Any]],None] | None=None,
-             channel_health: Mapping[str,Any] | None=None) -> dict[str,Any]:
-    out=json.loads(json.dumps(plan)); jobs=out.get("jobs",[])
+             channel_health: Mapping[str,Any] | None=None,
+             live_fetch: bool=False, respect_retry_after: bool=False) -> dict[str,Any]:
+    out=json.loads(json.dumps(plan))
     if (out.get("coverage_version",1)<2 and
             any(run.get("status") != "COMPLETE" for run in out.get("runs",[]) if isinstance(run,Mapping))):
         out["legacy_coverage_gap"]=True
@@ -214,20 +290,40 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
             not isinstance(per_job_request_budget,int) or isinstance(per_job_request_budget,bool) or
             not 1<=per_job_request_budget<=30):
         raise ValueError("invalid run budget")
+    prior_generation=out.get("generation_version",1)
+    out=reconcile_generated_jobs(out)
+    jobs=out.get("jobs",[])
+    if persist and prior_generation != out.get("generation_version",1):
+        persist(out)
     _promote(jobs,"search_query",resume_query_budget); _promote(jobs,"account_candidate",resume_account_budget)
     if retry_failed:
         for job in jobs:
             if job.get("channel")=="github" and job.get("state")=="failed":
+                due=job.get("next_eligible_at")
+                if isinstance(due,str) and due > _now():
+                    continue
+                if (job.get("error_code")=="BODY_LIMIT_EXCEEDED"
+                        and (job.get("kind")=="known_url" or job.get("retry_adjustment")=="page_size_exhausted")):
+                    # A detail request cannot be made smaller; a one-item page
+                    # already exhausted the safe pagination adjustment.
+                    continue
                 job["state"]="planned"; job["retry_of_error"]=job.get("error_code")
+                job.pop("next_eligible_at",None)
     eligible=[j for j in jobs if j.get("channel")=="github" and
               (j.get("state")=="planned" or (resume_all_deferred and j.get("state")=="deferred"))]
-    if fetch is None and eligible:
+    if (fetch is None or live_fetch) and eligible:
         # Validate the conservative union up front.  Every selected job is
         # checked again immediately before its broker call as controls age.
         required=sorted({channel for job in eligible for channel in _health_requirements(job)})
         errors=_validate_channel_health(channel_health, required, now=datetime.now(timezone.utc))
         if errors:
-            raise ValueError(errors[0])
+            # A degraded search control must not suppress an independently
+            # healthy repository listing. The per-job check still gates each
+            # broker request below.
+            available=any(not _validate_channel_health(channel_health, _health_requirements(job),
+                              now=datetime.now(timezone.utc)) for job in eligible)
+            if not available:
+                raise ValueError(errors[0])
     # Exact URLs and supplied/generated identity candidates are cheap and strong.
     # Run them before broad searches so a paginated search cannot starve them.
     def priority(job: Mapping[str,Any]) -> int:
@@ -244,7 +340,13 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         if index<len(queries): interleaved.append(queries[index])
         if index<len(accounts): interleaved.append(accounts[index])
     eligible=known+interleaved+[j for j in eligible if j not in known and j not in interleaved]
+    # Fresh and deliberately resumed deferred work gets the first opportunity.
+    # Repeated failed searches otherwise consume every short request interval.
+    eligible.sort(key=lambda job: bool(job.get("retry_of_error")))
     requests_used=0; batches=0; stop_reason="no_runnable_work" if not eligible else None
+    limited_families: set[str] = set()
+    budget_skipped = False
+    health_blocked = False
     execution_run: dict[str,Any] | None=None
     queued={job["work_id"] for job in eligible}
     position=0
@@ -255,15 +357,18 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         remaining=request_budget-requests_used
         minimum=2 if job.get("kind")=="search_query" else 1
         if remaining<minimum:
-            stop_reason="request_budget_exhausted"; break
+            budget_skipped=True
+            continue
+        family="search" if job.get("kind")=="search_query" else "core"
+        if family in limited_families:
+            continue
         required_health=_health_requirements(job)
-        if fetch is None:
+        if fetch is None or live_fetch:
             health_errors=_validate_channel_health(channel_health, required_health, now=datetime.now(timezone.utc))
             if health_errors:
-                # Earlier batches are already checkpointed.  Do not mutate the
-                # next job or make another request after a control expires.
-                stop_reason="channel_health_failed"
-                break
+                # Leave this job unchanged and try an independent family.
+                health_blocked=True
+                continue
         if job.get("state")=="deferred":
             job["resumed_from_deferred_reason"]=job.get("deferred_reason")
             job["state"]="planned"; job.pop("deferred_reason",None)
@@ -272,7 +377,9 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         elif job["kind"]=="account_candidate": kwargs["accounts"]=[job["value"]]
         else: kwargs["known_urls"]=[job["value"]]
         result=github_discover(out["scope_id"],max_requests=min(per_job_request_budget,remaining),fetch=fetch,
-                               max_accounts=10,channel_health=channel_health,**kwargs)
+                               max_accounts=10,channel_health=channel_health,
+                               locator_store=locator_store,page_size=job.get("page_size",100),
+                               **({"validate_fetch_health":True} if live_fetch else {}),**kwargs)
         used=int(result.get("coverage",{}).get("totals",{}).get("requests",0))
         requests_used+=min(remaining,max(0,used)); batches+=1
         if job["kind"]=="search_query": keys=("search_users:1","search_repositories:1")
@@ -282,7 +389,23 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
             parsed=_known_pages_url(job["value"]); keys=(f"repository_detail:{parsed[0]}/{parsed[1]}",) if parsed else ()
         _apply_coverage(job,[result["coverage"][key] for key in keys if key in result.get("coverage",{})],
                         result["observed_at"],len(keys))
+        if job.get("error_code")=="BODY_LIMIT_EXCEEDED":
+            if job.get("kind") in {"search_query","account_candidate"}:
+                current=int(job.get("page_size",100))
+                job["page_size"]=max(1,current//2)
+                job["retry_adjustment"]=("smaller_page" if current>1 else "page_size_exhausted")
+            else:
+                job["retry_adjustment"]="no_smaller_detail_request"
+        if job.get("error_code")=="RATE_LIMITED":
+            limited_families.add(family)
+            job["next_eligible_at"]=result.get("retry_after_at") or _now()
+            job["retry_channel"]=family
+        elif job.get("state")=="completed":
+            job.pop("retry_of_error",None)
+            job.pop("retry_adjustment",None)
+            job.pop("next_eligible_at",None)
         _record_discovered_accounts(out,result)
+        _record_connected_domains(out,result)
         if resume_all_deferred:
             additions=[candidate for candidate in jobs if candidate.get("channel")=="github"
                        and candidate.get("state") in {"planned","deferred"} and candidate.get("work_id") not in queued]
@@ -292,17 +415,26 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
             exact=candidate.get("pages_url_candidate")
             if locator_store is not None and exact:
                 candidate["locator_ref"]=locator_store.put(out["scope_id"],exact); candidate["handoff_state"]="ready"
-                from urllib.parse import urlsplit
-                candidate["pages_url_candidate"]="https://"+str(urlsplit(exact).hostname)
             else:
                 candidate["handoff_state"]="blocked"
+            if exact:
+                candidate["pages_url_candidate"]="https://"+str(urlsplit(exact).hostname)
+            for deployment in candidate.get("deployment_candidates",[]):
+                # Also normalize older/injected results at the persistence
+                # boundary so batch history never keeps a raw target path.
+                raw=deployment.pop("url",None)
+                if isinstance(raw,str):
+                    deployment["origin"]="https://"+str(urlsplit(raw).hostname)
+                    if locator_store is not None:
+                        deployment["locator_ref"]=locator_store.put(out["scope_id"],raw)
+                deployment["handoff_state"]=("ready" if deployment.get("locator_ref") else "blocked")
         if execution_run is None:
             execution_run={"run_id":_id("run",out["plan_id"],job["work_id"],_now()),"channel":"github",
                            "work_ids":[],"observed_at":result["observed_at"],"status":result["status"],
                            "requests_used":0,"result":{"schema_version":"1.0","provider":"github_public",
                            "scope_id":out["scope_id"],"status":"COMPLETE","candidates":[],"accounts":[],
                            "errors":[],"coverage":{},"totals":{"requests":0,"batches":0}},"batches":[]}
-            if fetch is None:
+            if fetch is None or live_fetch:
                 execution_run["health_provenance"]=_health_provenance(channel_health or {}, required_health)
             else:
                 execution_run["synthetic"]=True
@@ -312,8 +444,8 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         execution_run["batches"].append({"work_id":job["work_id"],"observed_at":result["observed_at"],
                                           "status":result["status"],"requests_used":used,"result":result,
                                           **({"health_provenance":_health_provenance(channel_health or {}, required_health)}
-                                             if fetch is None else {})})
-        if fetch is None:
+                                             if fetch is None or live_fetch else {})})
+        if fetch is None or live_fetch:
             prior=set(execution_run["health_provenance"].get("required_channels", []))
             prior.update(required_health)
             execution_run["health_provenance"]=_health_provenance(channel_health or {}, prior)
@@ -331,15 +463,19 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
                              "candidates":len(aggregate["candidates"]),"accounts":len(aggregate["accounts"])}
         aggregate["status"]="COMPLETE" if not aggregate["errors"] else "PARTIAL"
         execution_run["status"]=aggregate["status"]
-        if "RATE_LIMITED" in result.get("errors",[]):
-            stop_reason="provider_rate_limited"
-        elif requests_used>=request_budget:
+        if requests_used>=request_budget:
             stop_reason="request_budget_exhausted"
         out["last_execution"]={"requests_used":requests_used,"request_budget":request_budget,"batches":batches,
                                "max_batches":max_batches,"stop_reason":stop_reason,"next_work":_next_work(out)}
         out["status"]=_status(out); out["updated_at"]=_now()
         if persist: persist(out)
-        if stop_reason in {"provider_rate_limited","request_budget_exhausted"}: break
+        if stop_reason=="request_budget_exhausted": break
+    if stop_reason is None and limited_families:
+        stop_reason="provider_rate_limited"
+    if stop_reason is None and health_blocked:
+        stop_reason="channel_health_failed"
+    if stop_reason is None and budget_skipped:
+        stop_reason="request_budget_exhausted"
     if stop_reason is None and batches>=max_batches and any(j.get("state")=="planned" for j in jobs): stop_reason="batch_limit_reached"
     out["last_execution"]={"requests_used":requests_used,"request_budget":request_budget,"batches":batches,
                            "max_batches":max_batches,"stop_reason":stop_reason or "completed_runnable_work",

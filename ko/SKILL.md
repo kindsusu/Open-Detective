@@ -1,5 +1,12 @@
 # Open-Detective 한국어 번역
 
+지속적인 다중 자산 검사는 [공통 감사 절차](ops/audit-workflow.md)를 따른다.
+Codex와 Claude는 같은 audit case·작업 큐·예산·완료 기준을 사용한다. 개별 민감
+후보 때문에 독립 자산 검사를 중단하지 않는다. 독립 발견에서는 과거 정답을
+audit evaluate까지 분리하며, 아래 prior review 단계는 재점검에 적용한다.
+gate-review는 이미 전달된 자료에 대한 별도 승인된 오프라인 검토·격리 재현이다.
+익명 probe/browser의 행위를 바꾸거나 라이브 자격증명 사용·서버 인증을 시험하지 않는다.
+
 이 파일은 루트 `SKILL.md`의 번역이며 설치용 frontmatter가 없다. 설치되는 스킬 항목은 하나다.
 
 설치된 스킬은 작업 흐름만 정의하며 Python 패키지를 설치하지 않는다. `open-detective` 실행 전 [README 설치 안내](../README.ko.md)를 따라 패키지를 설치한다.

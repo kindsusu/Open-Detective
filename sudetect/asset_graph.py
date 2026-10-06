@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
-_RELATIONSHIPS = {"deployment", "alias", "custom_domain", "repository", "certificate_name", "public_search_result", "document_result"}
+_RELATIONSHIPS = {"deployment", "alias", "custom_domain", "repository", "certificate_name", "public_search_result", "document_result", "linked_account", "homepage_domain", "cdn_mirror", "code_reference"}
 
 def _exclusive_json(path: Path, value: Mapping[str, Any]) -> None:
     if path.exists() or path.is_symlink() or not path.parent.is_dir(): raise ValueError("unsafe output")
@@ -53,6 +53,19 @@ def _read(source: str | Path | Iterable[Mapping[str, Any]]) -> list[dict[str, An
     return json.loads(json.dumps(value))
 
 
+def compare_mirror_observations(left: Mapping[str, Any], right: Mapping[str, Any]) -> str:
+    """Compare only complete representations captured for the same URL form."""
+    if not all(isinstance(row, Mapping) and row.get("capture_complete") is True
+               and isinstance(row.get("sha256"), str)
+               and re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+               and isinstance(row.get("representation"), str)
+               for row in (left, right)):
+        return "comparison_pending"
+    if left["representation"] != right["representation"]:
+        return "comparison_pending"
+    return "same_at_observation" if left["sha256"] == right["sha256"] else "different_at_observation"
+
+
 def build_asset_graph(records: str | Path | Iterable[Mapping[str, Any]], *, previous: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Validate normalized records and build a reference-only graph snapshot."""
     rows = _read(records)
@@ -65,8 +78,23 @@ def build_asset_graph(records: str | Path | Iterable[Mapping[str, Any]], *, prev
     for raw in rows:
         fields = {"scope_id", "source_kind", "source_id", "source_record_id", "retrieved_at", "locator_ref",
                   "asset_id", "alias_id", "relationship", "ownership_evidence", "coverage_state"}
-        if not isinstance(raw, dict) or set(raw) != fields:
+        optional = {"existence_state", "business_relevance", "publication_approval", "exclusion"}
+        if not isinstance(raw, dict) or not fields <= set(raw) or set(raw) - fields - optional:
             raise ValueError("invalid asset graph record")
+        raw.setdefault("existence_state", "candidate")
+        raw.setdefault("business_relevance", "unknown")
+        raw.setdefault("publication_approval", "unknown")
+        if (raw["existence_state"] not in {"candidate", "observed", "not_found"}
+                or raw["business_relevance"] not in {"unknown", "low", "related", "unrelated"}
+                or raw["publication_approval"] not in {"unknown", "approved", "not_approved"}):
+            raise ValueError("invalid candidate assessment")
+        exclusion=raw.get("exclusion")
+        if exclusion is not None:
+            if (not isinstance(exclusion,dict) or set(exclusion)!={"reason","evidence_ref","recorded_at","review_at"}
+                    or not all(isinstance(exclusion.get(k),str) and _ID.fullmatch(exclusion[k]) for k in ("reason","evidence_ref"))
+                    or not _valid_time(exclusion.get("recorded_at")) or not _valid_time(exclusion.get("review_at"))
+                    or exclusion["review_at"] <= exclusion["recorded_at"]):
+                raise ValueError("invalid exclusion provenance")
         for key in ("scope_id", "source_id", "source_record_id", "asset_id"):
             if not isinstance(raw[key], str) or not _ID.fullmatch(raw[key]):
                 raise ValueError("invalid opaque record identifier")
@@ -101,6 +129,10 @@ def build_asset_graph(records: str | Path | Iterable[Mapping[str, Any]], *, prev
         discovered = [x for x in group if x["source_kind"] == "public_discovery"]
         ownership = "disputed" if disputed else ("evidence_linked" if owner else "ownership_pending")
         nodes.append({"scope_id": scope_id, "locator_ref": locator_ref, "ownership_state": ownership,
+                      "existence_state": "observed" if any(x["existence_state"]=="observed" for x in group) else "candidate",
+                      "business_relevance": "related" if any(x["business_relevance"]=="related" for x in group) else
+                                            "low" if any(x["business_relevance"]=="low" for x in group) else "unknown",
+                      "publication_approval": "approved" if any(x["publication_approval"]=="approved" for x in owner) else "unknown",
                       "asset_ids": sorted({x["asset_id"] for x in group}),
                       "alias_ids": sorted({x["alias_id"] for x in group if x["alias_id"] is not None}),
                       "source_record_count": len(group)})
@@ -110,6 +142,9 @@ def build_asset_graph(records: str | Path | Iterable[Mapping[str, Any]], *, prev
                           "locator_ref": locator_ref, "relationship": row["relationship"],
                           "retrieved_at": row["retrieved_at"], "coverage_state": row["coverage_state"],
                           "ownership_evidence": row["ownership_evidence"],
+                          "existence_state": row["existence_state"], "business_relevance": row["business_relevance"],
+                          "publication_approval": row["publication_approval"],
+                          "exclusion": row.get("exclusion"),
                           "ownership_state": ("disputed" if key in conflicted_keys else (ownership if row in owner else "candidate_signal"))})
         if discovered and not owner:
             gaps.append({"locator_ref": locator_ref, "coverage_state": "ownership_evidence_missing"})

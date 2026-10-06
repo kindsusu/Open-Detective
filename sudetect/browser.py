@@ -106,6 +106,7 @@ def observe(url, scope, *, duration=3.0, max_total_bytes=None, fetcher=None,
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
+                timeout=15_000,
                 proxy={"server": "http://127.0.0.1:9", "bypass": "<-loopback>"},
                 args=["--disable-background-networking", "--disable-quic",
                       "--disable-extensions", "--disable-sync", "--disable-default-apps",
@@ -228,6 +229,10 @@ def observe(url, scope, *, duration=3.0, max_total_bytes=None, fetcher=None,
                     route.fulfill(status=status, headers=output_headers, body=body)
 
                 context.route("**/*", handle)
+                # Process startup is separately bounded. It must not consume the
+                # page observation window and silently abort the first request
+                # on a busy host before any content could be inspected.
+                deadline = time.monotonic() + min(60, duration + scope.timeout)
                 try:
                     page.goto(canonical, wait_until="domcontentloaded", timeout=min(60000, int((duration + scope.timeout) * 1000)))
                     completed_navigation = True

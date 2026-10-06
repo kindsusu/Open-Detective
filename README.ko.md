@@ -231,3 +231,14 @@ python -m unittest discover -s tests -v
 테스트는 합성 입력을 쓰며 오프라인으로 실행한다. 통과는 배포나 실제 조직을 점검했다는 뜻이 아니다. 저장소의 [PolyForm Noncommercial License 1.0.0](LICENSE)를 유지한다. 허용 목적은 원문으로 판단한다. 그 범위를 벗어난 사용에는 licensor의 허가가 필요하며 제3자나 조직에 맞는 라이선스는 권리자와 법률 판단의 영역이다.
 
 선택적인 locator store는 평문 SQLite다. 소유자가 접근을 제한하고 암호화한 저장 볼륨에 보관한다. opaque 참조가 원 URL을 암호화하지는 않는다. 로컬 검색 manifest에는 입력 회사명, 검색어, 공개 저장소 메타데이터가 들어 있으므로 마스킹 보고서로 간주해 공개하지 않는다.
+# 재개 가능한 공통 감사 실행
+
+Codex와 Claude는 루트 AGENTS.md·CLAUDE.md에서 [같은 실행 절차](ko/ops/audit-workflow.md)를
+읽는다. audit init/plan/run/resume/worker/import/status/report/evaluate 명령으로 기존 원장에
+작업을 보존하고 승인된 정적 자료·PDF 연결을 확인한다. 실패·권한 부족·부분 분석은
+미완료로 남긴다. 별도 gate-review는 수집한 HTML과 승인된 클라이언트 게이트를
+격리 검토하며 지원하지 않는 흐름은 pending으로 기록한다. PDF 텍스트 추출에는
+documents extra, 선택적 로컬 재현에는 browser extra와 Chromium이 필요하다.
+합성 테스트 결과는 실제 회사 점검이나 두 모델 호스트의 실행 비교 결과가 아니다.
+
+변경 사항과 검증 범위는 [구현 결과](IMPLEMENTATION-AUDIT.ko.md)에 기록했다.

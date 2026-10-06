@@ -323,8 +323,9 @@ def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
     measured. Sorting by length instead of stem quality floats junk abbreviations
     above the company's actual name - measured, and fixed.
     """
-    funcs = [normalize_term(f) for f in (functions or FUNCTION)]
-    funcs = [f for f in funcs if f]
+    supplied = [normalize_term(f) for f in (functions or [])]
+    supplied = list(dict.fromkeys(f for f in supplied if f))
+    defaults = [f for f in FUNCTION if f not in supplied]
     inds = industry_variants(industry)
     base = stems(ko, en, extra, inds)
     seen: set[str] = set()
@@ -356,7 +357,10 @@ def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
             # this weaker guess by roles, separators, or numeric suffixes.
             continue
         affixes(stem, inds, 2, "industry", w, 1, stem_order)
-        affixes(stem, funcs, 3, "function", w, 2, stem_order)
+        # Operator context gets an early round without replacing the generic
+        # roles. Keep the source in the rationale for downstream scheduling.
+        affixes(stem, supplied, 3, "operator-function", w, 2, stem_order)
+        affixes(stem, defaults, 3, "default-function", w, 2, stem_order)
         for number_order, num in enumerate(NUMERIC):           # uniqueness suffix
             emit(f"{stem}{num}", 4, f"stem+numeric:{num}", w,
                  number_order + 1, 3, stem_order, 0)
@@ -369,7 +373,24 @@ def generate(ko: str = "", en: str = "", extra: list[str] | None = None,
     # Separator choices are spelling variants, so the compact form for every stem
     # is useful sooner than hyphen/underscore spellings of the first long stem.
     out.sort(key=lambda r: (r[3], r[4], r[7], r[5], r[6], len(r[0]), r[0]))
-    return [(v, t, why) for v, t, why, *_ in out]
+    # Candidate lists are a finite scheduling surface, not a Cartesian-product
+    # promise. Custom-context calls historically stayed below a few hundred.
+    limit = 220 if supplied else 399
+    selected = out[:limit]
+    present = {row[0] for row in selected}
+    reserved = [row for row in out[limit:] if row[2].startswith("stem:") and row[0] not in present]
+    # Give every generic role one compact spelling on the strongest stem even
+    # when operator functions are supplied. Other combinations remain ranked.
+    if base:
+        strongest = base[0][0]
+        reserved.extend(row for row in out[limit:]
+                        if row[2].startswith("stem+default-function:")
+                        and row[0] == strongest + row[2].split(":", 1)[1]
+                        and row[0] not in present)
+    if reserved:
+        selected = selected[:limit-len(reserved)] + reserved
+        selected.sort(key=lambda r: (r[3], r[4], r[7], r[5], r[6], len(r[0]), r[0]))
+    return [(v, t, why) for v, t, why, *_ in selected]
 
 
 TARGET_PATTERNS = {

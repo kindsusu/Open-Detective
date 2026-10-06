@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Offline gate review capability",
+  "oneOf": [{"$ref": "#/$defs/scoped"}, {"$ref": "#/$defs/pinned"}],
+  "$defs": {
+    "ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+    "action": {"enum": ["reveal_delivered_content", "verify_fixed_client_gate"]},
+    "scoped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "action", "valid_until", "authorization_ref"],
+      "properties": {
+        "policy_id": {"$ref": "#/$defs/ref"},
+        "action": {"$ref": "#/$defs/action"},
+        "valid_until": {"type": "string", "format": "date-time"},
+        "authorization_ref": {"$ref": "#/$defs/ref"}
+      }
+    },
+    "pinned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability_id", "policy_id", "action", "target_url", "owner_evidence_ref", "expires_at", "max_attempts", "response_sha256"],
+      "properties": {
+        "capability_id": {"$ref": "#/$defs/ref"},
+        "policy_id": {"$ref": "#/$defs/ref"},
+        "action": {"$ref": "#/$defs/action"},
+        "target_url": {"type": "string", "format": "uri", "maxLength": 2048},
+        "owner_evidence_ref": {"$ref": "#/$defs/ref"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "max_attempts": {"const": 1},
+        "response_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

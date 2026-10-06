@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Persistent audit job projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["case_id", "job_id", "job_type", "asset_ref", "dedupe_key", "parent_job_id", "origin_evidence_ref", "scope_id", "policy_id", "capabilities_required", "state", "priority", "attempts", "next_eligible_at", "estimated_cost", "actual_cost", "checkpoint", "last_error_code", "lease_owner", "lease_expires_at", "result_refs", "created_at", "updated_at"],
+  "properties": {
+    "case_id": {"type": "string", "minLength": 1},
+    "job_id": {"type": "string", "pattern": "^aj_[a-f0-9]{32}$"},
+    "job_type": {"$ref": "#/$defs/ref"},
+    "asset_ref": {"$ref": "#/$defs/ref"},
+    "dedupe_key": {"type": "string", "minLength": 1, "maxLength": 512},
+    "parent_job_id": {"anyOf": [{"type": "null"}, {"type": "string", "pattern": "^aj_[a-f0-9]{32}$"}]},
+    "origin_evidence_ref": {"$ref": "#/$defs/optionalRef"},
+    "scope_id": {"$ref": "#/$defs/ref"},
+    "policy_id": {"$ref": "#/$defs/optionalRef"},
+    "capabilities_required": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}},
+    "state": {"enum": ["pending", "ready", "running", "retry_wait", "blocked_scope", "blocked_input", "succeeded", "failed_terminal", "cancelled"]},
+    "priority": {"type": "integer"},
+    "attempts": {"type": "integer", "minimum": 0},
+    "next_eligible_at": {"$ref": "#/$defs/optionalTime"},
+    "estimated_cost": {"type": "integer", "minimum": 1},
+    "actual_cost": {"type": "object", "additionalProperties": false, "required": ["requests", "download_bytes", "analysis_bytes"], "properties": {"requests": {"type": "integer", "minimum": 0}, "download_bytes": {"type": "integer", "minimum": 0}, "analysis_bytes": {"type": "integer", "minimum": 0}}},
+    "checkpoint": {},
+    "last_error_code": {"$ref": "#/$defs/optionalRef"},
+    "lease_owner": {"$ref": "#/$defs/optionalRef"},
+    "lease_expires_at": {"$ref": "#/$defs/optionalTime"},
+    "result_refs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}},
+    "created_at": {"$ref": "#/$defs/time"},
+    "updated_at": {"$ref": "#/$defs/time"}
+  },
+  "$defs": {
+    "ref": {"type": "string", "minLength": 1, "maxLength": 256},
+    "optionalRef": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/ref"}]},
+    "time": {"type": "string", "format": "date-time"},
+    "optionalTime": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/time"}]}
+  }
+}

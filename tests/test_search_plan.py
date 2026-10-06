@@ -217,7 +217,8 @@ class SearchPlanTests(unittest.TestCase):
         result=run_plan(plan,fetch=fetch)
         candidates=[c for run in result["runs"] for c in run["result"]["candidates"]]
         self.assertIn("starlight-ops/hidden-docs",[c["slug"] for c in candidates])
-        self.assertIn("https://starlight-ops.github.io/hidden-docs/",[c["pages_url_candidate"] for c in candidates])
+        self.assertIn("https://starlight-ops.github.io",[c["pages_url_candidate"] for c in candidates])
+        self.assertTrue(all(c["handoff_state"]=="blocked" for c in candidates))
         self.assertEqual("PARTIAL",result["status"])
 
     def test_account_failure_does_not_poison_successful_query_jobs(self):
@@ -270,20 +271,22 @@ class SearchPlanTests(unittest.TestCase):
         failed=run_plan(plan,fetch=fetch,max_batches=1)
         first=next(j for j in failed["jobs"] if j["work_id"]==account["work_id"])
         self.assertEqual("failed",first["state"]); self.assertEqual(1,len(first["attempts"]))
+        # Resume after the recorded provider cooldown, without sleeping in a test.
+        first["next_eligible_at"]="2020-01-01T00:00:00Z"
         recovered=run_plan(failed,fetch=fetch,retry_failed=True,max_batches=1)
         current=next(j for j in recovered["jobs"] if j["work_id"]==account["work_id"])
         self.assertEqual("completed",current["state"]); self.assertEqual(2,len(current["attempts"]))
         self.assertEqual("RATE_LIMITED",current["attempts"][0]["error_code"])
 
-    def test_rate_limit_stops_following_batches(self):
+    def test_rate_limit_allows_independent_core_batch(self):
         plan=create_plan(scope_id="rate-stop",company_en="Starlight Research",query_budget=2,account_budget=2)
         calls=[]
         def fetch(url,_headers):
             calls.append(url); return 429,{"message":"limited"},{}
         result=run_plan(plan,fetch=fetch,request_budget=20,max_batches=10)
-        self.assertEqual(1,len(calls))
+        self.assertEqual(2,len(calls))
         self.assertEqual("provider_rate_limited",result["last_execution"]["stop_reason"])
-        self.assertEqual(1,result["last_execution"]["batches"])
+        self.assertEqual(2,result["last_execution"]["batches"])
 
     def test_request_budget_is_strict_and_next_work_is_explained(self):
         plan=create_plan(scope_id="strict-budget",company_en="Starlight Research",query_budget=2,account_budget=2)
@@ -469,6 +472,7 @@ class SearchPlanTests(unittest.TestCase):
             if job is not account:
                 job["state"]="not_applicable"; job["not_applicable_reason"]="fixture"
         failed=run_plan(plan,fetch=lambda *_:(429,{"message":"limited"},{}),max_batches=1)
+        next(j for j in failed["jobs"] if j["work_id"]==account["work_id"])["next_eligible_at"]="2020-01-01T00:00:00Z"
         recovered=run_plan(failed,fetch=lambda *_:(200,[],{}),retry_failed=True,max_batches=1)
         self.assertEqual("COMPLETE",plan_status(recovered)["status"])
         self.assertEqual(2,len(account_attempts:=next(j for j in recovered["jobs"] if j["work_id"]==account["work_id"])["attempts"]))

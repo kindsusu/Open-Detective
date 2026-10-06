@@ -1,3 +1,136 @@
 {
-  "$schema":"https://json-schema.org/draft/2020-12/schema","type":"array","items":{"type":"object","additionalProperties":false,"required":["scope_id","source_kind","source_id","source_record_id","retrieved_at","locator_ref","asset_id","alias_id","relationship","ownership_evidence","coverage_state"],"properties":{"scope_id":{"type":"string"},"source_kind":{"enum":["owner_inventory","public_discovery"]},"source_id":{"type":"string"},"source_record_id":{"type":"string"},"retrieved_at":{"type":"string","format":"date-time"},"locator_ref":{"type":"string","pattern":"^opaque:[0-9a-f]{32}$"},"asset_id":{"type":"string"},"alias_id":{"type":["string","null"]},"relationship":{"enum":["deployment","alias","custom_domain","repository","certificate_name","public_search_result","document_result"]},"ownership_evidence":{"type":["string","null"]},"coverage_state":{"enum":["complete","partial","failed"]}}}
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "scope_id",
+      "source_kind",
+      "source_id",
+      "source_record_id",
+      "retrieved_at",
+      "locator_ref",
+      "asset_id",
+      "alias_id",
+      "relationship",
+      "ownership_evidence",
+      "coverage_state"
+    ],
+    "properties": {
+      "scope_id": {
+        "type": "string"
+      },
+      "source_kind": {
+        "enum": [
+          "owner_inventory",
+          "public_discovery"
+        ]
+      },
+      "source_id": {
+        "type": "string"
+      },
+      "source_record_id": {
+        "type": "string"
+      },
+      "retrieved_at": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "locator_ref": {
+        "type": "string",
+        "pattern": "^opaque:[0-9a-f]{32}$"
+      },
+      "asset_id": {
+        "type": "string"
+      },
+      "alias_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "relationship": {
+        "enum": [
+          "deployment",
+          "alias",
+          "custom_domain",
+          "repository",
+          "certificate_name",
+          "public_search_result",
+          "document_result",
+          "linked_account",
+          "homepage_domain",
+          "cdn_mirror",
+          "code_reference"
+        ]
+      },
+      "ownership_evidence": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "coverage_state": {
+        "enum": [
+          "complete",
+          "partial",
+          "failed"
+        ]
+      },
+      "existence_state": {
+        "enum": [
+          "candidate",
+          "observed",
+          "not_found"
+        ]
+      },
+      "business_relevance": {
+        "enum": [
+          "unknown",
+          "low",
+          "related",
+          "unrelated"
+        ]
+      },
+      "publication_approval": {
+        "enum": [
+          "unknown",
+          "approved",
+          "not_approved"
+        ]
+      },
+      "exclusion": {
+        "required": [
+          "reason",
+          "evidence_ref",
+          "recorded_at",
+          "review_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "evidence_ref": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "review_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "type": [
+          "object",
+          "null"
+        ]
+      }
+    }
+  }
 }

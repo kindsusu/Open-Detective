@@ -26,6 +26,8 @@ MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_DURATION = 120.0
 MAX_REFERENCES = 256
 MAX_QUEUED_ASSETS = 1000
+MAX_DOCUMENT_REFERENCE_BYTES = 8 * 1024 * 1024
+_DOCUMENT_SUFFIXES = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".hwp", ".ppt", ".pptx")
 
 LIMITATIONS = [
     "static_script_src_and_literal_fetch_get_only",
@@ -49,8 +51,9 @@ _FETCH_GET = re.compile(
 
 
 class _Scripts(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, *, collect_documents: bool = False) -> None:
         super().__init__(convert_charrefs=True)
+        self.collect_documents = collect_documents
         self.references: list[tuple[str, str]] = []
         self.inline: list[str] = []
         self.unresolved: list[str] = []
@@ -59,6 +62,14 @@ class _Scripts(HTMLParser):
         self._chunks: list[str] = []
 
     def handle_starttag(self, tag, attrs):
+        if self.collect_documents and tag.casefold() in {"a", "iframe", "embed", "object"}:
+            values = {str(k).casefold(): v for k, v in attrs}
+            candidate = values.get({"a": "href", "iframe": "src", "embed": "src", "object": "data"}[tag.casefold()])
+            if candidate and _is_document_reference(candidate):
+                if len(self.references) < MAX_REFERENCES:
+                    self.references.append(("document_dom", candidate))
+                else:
+                    self.unresolved.append("reference_limit")
         if tag.casefold() == "base":
             values = {str(k).casefold(): v for k, v in attrs}
             if values.get("href"):
@@ -87,6 +98,121 @@ class _Scripts(HTMLParser):
     def handle_data(self, data):
         if self._capture:
             self._chunks.append(data)
+
+
+def _is_document_reference(value: str) -> bool:
+    """Only literal document paths; no host, identifier, or extension inference."""
+    from urllib.parse import urlsplit
+    value = value.strip()
+    if not value or len(value) > 2048 or any(ord(c) < 32 for c in value):
+        return False
+    if value.startswith(("//", "\\")) or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", value) and not value.lower().startswith("https://"):
+        return False
+    path = urlsplit(value).path.casefold()
+    return path.endswith(_DOCUMENT_SUFFIXES)
+
+
+def _decode_js_literal(source: str, start: int) -> tuple[str | None, int]:
+    """Decode only fixed JS string escapes, without evaluating expressions."""
+    quote = source[start]
+    chars: list[str] = []
+    too_long = False
+    i = start + 1
+    escapes = {"/": "/", "\\": "\\", "'": "'", '"': '"', "n": "\n", "r": "\r", "t": "\t"}
+    while i < len(source):
+        char = source[i]
+        if char == quote:
+            return (None if too_long else "".join(chars)), i + 1
+        if char in "\r\n":
+            return None, i + 1
+        if char != "\\":
+            if len(chars) < 2048: chars.append(char)
+            else: too_long = True
+            i += 1; continue
+        if i + 1 >= len(source):
+            return None, len(source)
+        kind = source[i + 1]
+        if kind in escapes:
+            if len(chars) < 2048: chars.append(escapes[kind])
+            else: too_long = True
+            i += 2; continue
+        width = 4 if kind == "u" else 2 if kind == "x" else 0
+        if width and re.fullmatch(r"[0-9A-Fa-f]{%d}" % width, source[i + 2:i + 2 + width]):
+            if len(chars) < 2048: chars.append(chr(int(source[i + 2:i + 2 + width], 16)))
+            else: too_long = True
+            i += 2 + width; continue
+        return None, i + 2
+    return None, len(source)
+
+
+def _extract_document_literals(source: str) -> tuple[list[tuple[str, str]], list[str]]:
+    refs: list[tuple[str, str]] = []
+    gaps: list[str] = []
+    i = 0
+    while i < len(source):
+        char = source[i]
+        nxt = source[i + 1] if i + 1 < len(source) else ""
+        if char == "/" and nxt == "/":
+            end = source.find("\n", i + 2)
+            i = len(source) if end < 0 else end + 1; continue
+        if char == "/" and nxt == "*":
+            end = source.find("*/", i + 2)
+            if end < 0:
+                gaps.append("javascript_comment_incomplete"); break
+            i = end + 2; continue
+        if char == "/":
+            j = i - 1
+            while j >= 0 and source[j].isspace(): j -= 1
+            preceding = source[j] if j >= 0 else ""
+            regex_context = preceding in {"", "=", "(", "[", "{", ":", ",", "!", "&", "|", "?", ";"} or bool(
+                re.search(r"\b(?:return|throw|yield|case)$", source[max(0, j - 16):j + 1]))
+            if regex_context:
+                i += 1
+                in_class = False
+                closed = False
+                while i < len(source):
+                    if source[i] == "\\": i += 2; continue
+                    if source[i] == "[": in_class = True
+                    elif source[i] == "]": in_class = False
+                    elif source[i] == "/" and not in_class: i += 1; closed = True; break
+                    elif source[i] in "\r\n":
+                        gaps.append("javascript_lexical_ambiguity")
+                        return refs, gaps
+                    i += 1
+                if not closed:
+                    gaps.append("javascript_lexical_ambiguity")
+                    break
+                continue
+            if preceding and (preceding.isalnum() or preceding in "_$)]"):
+                i += 1; continue
+            gaps.append("javascript_lexical_ambiguity"); break
+        if char == "`":
+            # Template interpolation is not a literal URL, even if some pieces look like one.
+            i += 1
+            while i < len(source):
+                if source[i] == "\\": i += 2
+                elif source[i] == "`": i += 1; break
+                else: i += 1
+            continue
+        if char in "'\"":
+            start = i
+            value, i = _decode_js_literal(source, i)
+            if value is None:
+                gaps.append("javascript_string_unresolved")
+            elif _is_document_reference(value) and (value.startswith(("/", "./", "../")) or value.lower().startswith("https://")):
+                previous, following = start - 1, i
+                while previous >= 0 and source[previous].isspace(): previous -= 1
+                while following < len(source) and source[following].isspace(): following += 1
+                # A fragment of a constructed URL is not an observed locator.
+                # Do not resolve it against the page and request a different path.
+                if (previous >= 0 and source[previous] == '+') or (following < len(source) and source[following] in '+.'):
+                    gaps.append("document_expression_unresolved")
+                    continue
+                if len(refs) < MAX_REFERENCES: refs.append(("document_literal", value))
+                else: gaps.append("reference_limit")
+            continue
+        i += 1
+    return refs, gaps
 
 
 def _fetch_positions(source: str):
@@ -167,6 +293,9 @@ def extract_references(body: bytes, content_type: str) -> tuple[list[tuple[str, 
     references: list[tuple[str, str]] = []
     unresolved: list[str] = []
     lowered = content_type.casefold()
+    document_source = body[:MAX_DOCUMENT_REFERENCE_BYTES].decode("utf-8", errors="replace")
+    if len(body) > MAX_DOCUMENT_REFERENCE_BYTES and any(kind in lowered for kind in ("html", "javascript", "ecmascript")):
+        unresolved.append("document_reference_source_limit")
     if "html" in lowered:
         parser = _Scripts()
         try:
@@ -179,11 +308,23 @@ def extract_references(body: bytes, content_type: str) -> tuple[list[tuple[str, 
             found, gaps = _extract_fetches(script)
             references.extend(found)
             unresolved.extend(gaps)
+        document_parser = _Scripts(collect_documents=True)
+        try:
+            document_parser.feed(document_source)
+            references.extend(ref for ref in document_parser.references if ref[0] == "document_dom")
+            for script in document_parser.inline:
+                found, gaps = _extract_document_literals(script)
+                references.extend(found); unresolved.extend(gaps)
+        except (ValueError, RecursionError):
+            unresolved.append("document_reference_parse_incomplete")
         if len(parser.base_hrefs) > 1:
             unresolved.append("multiple_base_elements")
         base_href = parser.base_hrefs[0] if parser.base_hrefs else None
     elif "javascript" in lowered or "ecmascript" in lowered:
-        references, unresolved = _extract_fetches(text)
+        references, fetch_gaps = _extract_fetches(text)
+        unresolved.extend(fetch_gaps)
+        found, gaps = _extract_document_literals(document_source)
+        references.extend(found); unresolved.extend(gaps)
         base_href = None
     else:
         base_href = None

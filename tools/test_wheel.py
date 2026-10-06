@@ -25,7 +25,8 @@ def main():
             assert "su-detect = sudetect.__main__:main" in entry_points.splitlines()
             archive.extractall(target)
         env = dict(os.environ, PYTHONPATH=str(target), PYTHONIOENCODING="utf-8")
-        for args in (["--help"], ["search-plan", "--help"], ["prior-records", "--help"],
+        for args in (["--help"], ["audit", "--help"], ["gate-review", "--help"],
+                     ["search-plan", "--help"], ["prior-records", "--help"],
                      ["github-history", "--help"], ["dom-replay", "--help"], ["search-plan", "plan",
                      "--scope-id", "fixture", "--company-en", "Melody Rent Car",
                      "--output", str(target / "plan.json")]):
@@ -33,6 +34,17 @@ def main():
                            cwd=target, env=env, check=True, capture_output=True, text=True)
         subprocess.run([sys.executable, "-S", "-m", "sudetect.idgen", "--selftest"],
                        cwd=target, env=env, check=True, capture_output=True, text=True)
+        subprocess.run([sys.executable, "-S", "-c", '''
+from sudetect.classifiers import analyze
+from sudetect.media_projection import project_inline_images
+from sudetect.repository_history import history_url
+r = analyze(b'<script>const rows = [{"price": 7}];</script>', 'text/html').report
+assert r['content'] == 'SENSITIVE_CANDIDATE'
+assert r['asset_profile']['static_json_literals']['root_item_count'] == 1
+p = project_inline_images([b'data:image/png;base64,AAAA"tail'], max_wire_bytes=100, max_projected_bytes=100)
+assert p.skipped_images == 1 and p.projected.endswith(b'"tail')
+assert history_url({'slug': 'fixture-team/tool', 'source_revision': {'kind': 'branch_mutable', 'value': 'main'}})
+'''], cwd=target, env=env, check=True, capture_output=True, text=True)
         environment = target / "venv"
         venv.EnvBuilder(with_pip=True).create(environment)
         python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")

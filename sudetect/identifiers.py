@@ -35,9 +35,10 @@ def round_robin_narrow_queries(rows: Iterable[_QueryRow]) -> list[_QueryRow]:
             tail.append(row)
         elif rationale.startswith("full-name:"):
             full.append(row)
-        elif rationale in {"narrow:brand+industry", "narrow:korean-brand+compound-industry"}:
+        elif rationale in {"narrow:brand+industry", "narrow:proper-prefix+industry",
+                           "narrow:korean-brand+compound-industry"}:
             industry.append(row)
-        elif rationale == "narrow:brand+function":
+        elif rationale in {"narrow:brand+function", "narrow:proper-prefix+function"}:
             function.append(row)
         else:
             tail.append(row)
@@ -50,9 +51,48 @@ def round_robin_narrow_queries(rows: Iterable[_QueryRow]) -> list[_QueryRow]:
 
 def generate_identifiers(*, ko: str = "", en: str = "", aliases: Iterable[str] = (),
                          industry: Iterable[str] = (), functions: Iterable[str] = ()) -> list[dict[str, object]]:
-    rows = generate(ko, en, list(aliases), list(functions) or None, list(industry))
-    return [{"identifier": value, "tier": tier, "rationale": rationale}
-            for value, tier, rationale in rows]
+    aliases, functions, industry = list(aliases), list(functions), list(industry)
+    rows = [{"identifier": value, "tier": tier, "rationale": rationale}
+            for value, tier, rationale in generate(ko, en, aliases, functions or None, industry)]
+    # An explicit multiword identity can be shortened at a *word* boundary.
+    # Only proper prefixes (at least two words) qualify; arbitrary character
+    # truncation and guessed company vocabulary do not.
+    added: list[dict[str, object]] = []
+    seen = {str(row["identifier"]).casefold() for row in rows}
+    roles = list(dict.fromkeys(
+        [normalize_term(str(value)) for value in functions][:2] + ["sales", "admin", "dev"
+         ]))[:5]
+    for source, name in [("english", en), *(("operator-alias", alias) for alias in aliases[:4])]:
+        words = re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKC", name).casefold())
+        if len(words) < 3:
+            continue
+        for size in range(2, min(len(words), 5)):
+            prefix = words[:size]
+            if len("".join(prefix)) < 4:
+                continue
+            for separator in ("", "-", "_"):
+                base = separator.join(prefix)
+                for value, why in [(base, f"{source}-proper-prefix:{size}"),
+                                   *((base + joiner + role, f"{source}-proper-prefix+role:{size}:{role}")
+                                     for role in roles if role and role not in prefix
+                                     for joiner in ("", "-", "_"))]:
+                    if (2 <= len(value) <= 39 and value not in seen
+                            and validate_target_candidate("github", value)):
+                        seen.add(value)
+                        added.append({"identifier": value, "tier": 2 if value == base else 3,
+                                      "rationale": why})
+                    if len(added) >= 120:
+                        break
+                if len(added) >= 120:
+                    break
+            if len(added) >= 120:
+                break
+        if len(added) >= 120:
+            break
+    # Put direct word-prefix evidence near literal names, before many numeric and
+    # devowelled guesses from the generic generator.
+    boundary = next((i for i, row in enumerate(rows) if int(row["tier"]) >= 4), len(rows))
+    return rows[:boundary] + added + rows[boundary:]
 
 
 def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str] = (),
@@ -85,6 +125,7 @@ def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str
                 break
     name_rows = [(en, "official-english")] + [(value, "operator-alias") for value in aliases]
     brands: list[str] = []
+    prefix_brands: list[str] = []
     deferred_short_aliases: list[str] = []
     full_identity_keys = {
         "".join(re.findall(r"[A-Za-z0-9가-힣]+", unicodedata.normalize("NFKC", value))).casefold()
@@ -109,6 +150,12 @@ def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str
             add(" ".join(parts), "full-name:" + rationale + "-spaced")
             add("".join(parts), "full-name:" + rationale + "-joined")
             brands.append(parts[0])
+            for size in range(2, min(len(parts), 5)):
+                prefix = parts[:size]
+                add(" ".join(prefix), f"full-name:{rationale}-proper-prefix:{size}")
+                add("-".join(prefix), f"full-name:{rationale}-proper-prefix-hyphen:{size}")
+                if len(prefix_brands) < 4:
+                    prefix_brands.append(" ".join(prefix))
     # Narrow combinations are evidence-oriented: their two terms come from the
     # supplied identity/context rather than an unqualified generic word.  Interleave
     # brands by term so aliases cannot consume the front of a bounded query budget.
@@ -127,20 +174,30 @@ def generate_search_queries(*, ko: str = "", en: str = "", aliases: Iterable[str
     for variant in industry_variants(raw_industry):
         if variant.casefold() not in {item.casefold() for item in query_industry}:
             query_industry.append(variant)
-    query_functions = list(dict.fromkeys(str(term) for term in functions if str(term).strip()))
+    query_functions = list(dict.fromkeys(str(term).strip() for term in functions if str(term).strip()))
     # ``stems`` performs the same bounded compact-industry split used for account
     # candidates.  Reuse its brand result for search phrases, so ``HarborRentCar``
     # with industry ``rentcar`` also gets the useful ``harbor rent`` query.
     derived_brands = [stem.replace("-", " ") for stem, why in stems(
         en=en, extra=list(aliases), industry=raw_industry)
         if why in {"english-brand-compound", "operator-supplied-brand-compound"}]
-    all_brands = list(dict.fromkeys(korean_brands + brands + derived_brands))
-    for term in query_industry:
+    all_brands = list(dict.fromkeys(korean_brands + brands + prefix_brands + derived_brands))
+    for term_index, term in enumerate(query_industry):
         for brand in all_brands:
-            add(f"{brand} {term}", "narrow:brand+industry")
-    for term in query_functions:
+            if brand in prefix_brands and term_index >= 3:
+                continue
+            add(f"{brand} {term}", "narrow:proper-prefix+industry" if brand in prefix_brands
+                else "narrow:brand+industry")
+    default_functions = [term for term in FUNCTION if term not in {value.casefold() for value in query_functions}]
+    prefix_functions = set(query_functions[:2] + default_functions[:3])
+    for term in query_functions + default_functions:
         for brand in all_brands:
-            add(f"{brand} {term}", "narrow:brand+function")
+            if brand in prefix_brands and term not in prefix_functions:
+                continue
+            add(f"{brand} {term}",
+                ("narrow:proper-prefix+function" if brand in prefix_brands else "narrow:brand+function")
+                if term in query_functions else
+                ("narrow:proper-prefix+default-function" if brand in prefix_brands else "narrow:brand+default-function"))
 
     for value in deferred_short_aliases:
         add(value, "short-name:operator-alias-brand-token")

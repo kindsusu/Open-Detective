@@ -18,7 +18,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -145,6 +146,7 @@ class GitHubBroker:
         self.bytes_used = 0
         self._started = time.monotonic()
         self._terminal_error: str | None = None
+        self.retry_after_at: str | None = None
         self._health_check = health_check
 
     @staticmethod
@@ -181,7 +183,9 @@ class GitHubBroker:
                        and query.get("type") == ["owner"]
                        and query.get("sort") == ["full_name"]
                        and query.get("direction") == ["asc"]
-                       and query.get("per_page") == ["100"]
+                       and 1 <= len(query.get("per_page", [""])[0]) <= 3
+                       and query["per_page"][0].isdigit()
+                       and 1 <= int(query["per_page"][0]) <= 100
                        and query.get("page", [""])[0].isdigit()
                        and 1 <= int(query["page"][0]) <= 100)
         elif re.fullmatch(r"/user/[1-9][0-9]*/repos", path):
@@ -191,7 +195,9 @@ class GitHubBroker:
                        and query.get("type") == ["owner"]
                        and query.get("sort") == ["full_name"]
                        and query.get("direction") == ["asc"]
-                       and query.get("per_page") == ["100"]
+                       and 1 <= len(query.get("per_page", [""])[0]) <= 3
+                       and query["per_page"][0].isdigit()
+                       and 1 <= int(query["per_page"][0]) <= 100
                        and query.get("page", [""])[0].isdigit()
                        and 1 <= int(query["page"][0]) <= 100)
         elif re.fullmatch(r"/repos/[^/]+/[^/]+", path):
@@ -202,7 +208,7 @@ class GitHubBroker:
 
     def get(self, url: str) -> Response:
         self._validate_url(url)
-        if self.fetch is None and self._health_check is not None:
+        if self._health_check is not None:
             errors = self._health_check()
             if errors:
                 raise DiscoveryError(errors[0])
@@ -256,6 +262,7 @@ class GitHubBroker:
                 code = self._http_error_code(exc.code, response_headers)
                 if code == "RATE_LIMITED":
                     self._terminal_error = code
+                    self.retry_after_at = self._retry_time(response_headers)
                 raise DiscoveryError(code) from None
             except DiscoveryError:
                 raise
@@ -265,6 +272,7 @@ class GitHubBroker:
             code = self._http_error_code(response.status, response.headers)
             if code == "RATE_LIMITED":
                 self._terminal_error = code
+                self.retry_after_at = self._retry_time(response.headers)
             raise DiscoveryError(code)
         size = response.body_bytes
         if size < 0 or size > self.max_response_bytes:
@@ -288,6 +296,30 @@ class GitHubBroker:
                 return "RATE_LIMITED"
             return "ACCESS_DENIED"
         return "REQUEST_FAILED"
+
+    @staticmethod
+    def _retry_time(headers: Mapping[str, str]) -> str:
+        """Bound provider hints; never persist arbitrary response text."""
+        now = datetime.now(timezone.utc)
+        hint = str(headers.get("retry-after", "")).strip()
+        due = None
+        if hint.isdigit():
+            due = now + timedelta(seconds=min(int(hint[:12]), 86400))
+        elif hint:
+            try:
+                due = parsedate_to_datetime(hint).astimezone(timezone.utc)
+            except (TypeError, ValueError, OverflowError):
+                pass
+        if due is None:
+            reset = str(headers.get("x-ratelimit-reset", "")).strip()
+            if reset.isdigit():
+                try:
+                    due = datetime.fromtimestamp(int(reset[:12]), timezone.utc)
+                except (ValueError, OverflowError, OSError):
+                    pass
+        if due is None or due <= now:
+            due = now + timedelta(minutes=1)
+        return min(due, now + timedelta(days=1)).isoformat().replace("+00:00", "Z")
 
 
 def _known_pages_url(value: Any) -> tuple[str, str, str] | None:
@@ -350,6 +382,27 @@ def _clean_homepage(value: Any) -> str | None:
         return None
 
 
+def _exact_homepage(value: Any) -> str | None:
+    """Retain a validated repository homepage path only for private locators."""
+    origin = _clean_homepage(value)
+    if origin is None:
+        return None
+    parsed = urllib.parse.urlsplit(value)
+    return origin + (parsed.path or "/")
+
+
+def _deployment(exact: str, kind: str, revision: dict[str, str] | None,
+                scope_id: str, locator_store: Any) -> dict[str, Any]:
+    parsed = urllib.parse.urlsplit(exact)
+    item = {"kind": kind, "origin": f"https://{parsed.hostname}",
+            "revision": revision, "status": "candidate_not_confirmed",
+            "handoff_state": "blocked"}
+    if locator_store is not None:
+        item["locator_ref"] = locator_store.put(scope_id, exact)
+        item["handoff_state"] = "ready"
+    return item
+
+
 def _next_link(header: str | None, current_url: str,
                allowed_user_id: int | None = None) -> str | None:
     if not header:
@@ -393,7 +446,7 @@ def _next_link(header: str | None, current_url: str,
     return candidate
 
 
-def _candidate(repo: Mapping[str, Any]) -> dict[str, Any] | None:
+def _candidate(repo: Mapping[str, Any], *, scope_id: str = "", locator_store: Any = None) -> dict[str, Any] | None:
     owner_obj = repo.get("owner")
     owner = owner_obj.get("login") if isinstance(owner_obj, Mapping) else None
     name = repo.get("name")
@@ -405,13 +458,37 @@ def _candidate(repo: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
     pages_url = (f"https://{owner.lower()}.github.io/" if name.casefold() == f"{owner}.github.io".casefold()
                  else f"https://{owner.lower()}.github.io/{urllib.parse.quote(name, safe='._-')}/")
+    homepage = _clean_homepage(repo.get("homepage"))
+    homepage_exact = _exact_homepage(repo.get("homepage"))
+    deployments = [_deployment(pages_url, "pages", None, scope_id, locator_store)]
+    if homepage_exact and homepage_exact.rstrip("/") != pages_url.rstrip("/"):
+        deployments.append(_deployment(homepage_exact, "repository_homepage", None,
+                                       scope_id, locator_store))
+    branch = repo.get("default_branch")
+    commit = repo.get("commit_sha")
+    revision = (commit if isinstance(commit, str) and re.fullmatch(r"[0-9a-fA-F]{40}", commit)
+                else branch if isinstance(branch, str) and re.fullmatch(r"[A-Za-z0-9._/-]{1,100}", branch)
+                and ".." not in branch and not branch.startswith("/")
+                and not branch.endswith("/") and "//" not in branch else None)
+    source_revision = ({"value": revision, "kind": "commit" if revision == commit else "branch_mutable"}
+                       if revision else None)
+    if revision:
+        # A branch is mutable. Only a validated commit SHA is immutable.
+        deployments.append(_deployment(
+            f"https://cdn.jsdelivr.net/gh/{owner}/{name}@{urllib.parse.quote(revision, safe='._-/')}/",
+            "cdn_mirror", source_revision, scope_id, locator_store))
     return {
         "slug": slug,
         "github_url": f"https://github.com/{owner}/{name}",
         "has_pages": repo.get("has_pages") is True,
         "pages_url_candidate": pages_url,
         "pages_url_status": "candidate_not_confirmed",
-        "homepage": _clean_homepage(repo.get("homepage")),
+        "homepage": homepage,
+        "deployment_candidates": deployments,
+        "source_revision": source_revision,
+        "existence_state": "public_repository_observed",
+        "business_relevance": "candidate",
+        "publication_approval": "unknown",
         "workflow": "ownership_pending",
         "scope_label": "authorized_public_metadata_discovery",
         "ownership": "pending",
@@ -469,8 +546,9 @@ def _health_provenance(report: object, required: Iterable[str]) -> dict[str, Any
 def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str] = (),
              known_urls: Iterable[str] = (), max_requests: int = 30,
              fetch: Fetch | None = None, max_accounts: int = 10,
-             max_results: int = 1000, max_pages: int = 10,
-             channel_health: Mapping[str, Any] | None = None) -> dict[str, Any]:
+             max_results: int = 1000, max_pages: int = 10, page_size: int = 100,
+             channel_health: Mapping[str, Any] | None = None,
+             validate_fetch_health: bool = False, locator_store: Any = None) -> dict[str, Any]:
     """Discover public GitHub metadata from bounded, operator-supplied clues."""
     observed_at = _utc_now()
     report: dict[str, Any] = {
@@ -490,7 +568,9 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             raise DiscoveryError("INPUT_INVALID")
         if (isinstance(max_accounts, bool) or not 1 <= max_accounts <= 10
                 or isinstance(max_results, bool) or not 1 <= max_results <= 1000
-                or isinstance(max_pages, bool) or not 1 <= max_pages <= 10):
+                or isinstance(max_pages, bool) or not 1 <= max_pages <= 10
+                or isinstance(page_size, bool) or not isinstance(page_size, int)
+                or not 1 <= page_size <= 100):
             raise DiscoveryError("INPUT_INVALID")
         seed_list = list(dict.fromkeys(value.strip() for value in seeds
                                        if isinstance(value, str) and value.strip()))
@@ -512,20 +592,21 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             seeds=seed_list, accounts=account_inputs, known_urls=known_inputs)
         # An injected transport is an offline fixture.  It is deliberately
         # marked synthetic below and cannot establish a live channel check.
-        if fetch is None and required_health:
+        if (fetch is None or validate_fetch_health) and required_health:
             health_errors = _validate_channel_health(channel_health, required_health)
             if health_errors:
                 raise DiscoveryError(health_errors[0])
         broker = GitHubBroker(fetch=fetch, max_requests=max_requests,
                               health_check=(lambda: _validate_channel_health(
-                                  channel_health, required_health, now=datetime.now(timezone.utc))) if fetch is None else None)
+                                  channel_health, required_health, now=datetime.now(timezone.utc)))
+                              if fetch is None or validate_fetch_health else None)
     except DiscoveryError as exc:
         report["status"] = "FAILED"
         report["errors"] = [exc.code]
         report["coverage"]["input"] = {"state": "FAILED", "items": 0}
         return report
 
-    if fetch is not None:
+    if fetch is not None and not validate_fetch_health:
         report["synthetic"] = True
         report["limitations"].append("synthetic_transport_not_live_health_validation")
     else:
@@ -579,7 +660,7 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
         if not isinstance(row, Mapping):
             errors.append("MALFORMED_RESPONSE")
             return False
-        item = _candidate(row)
+        item = _candidate(row, scope_id=scope_id, locator_store=locator_store)
         if item is None:
             errors.append("MALFORMED_RESPONSE")
             return False
@@ -594,6 +675,12 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
         candidates.setdefault(key, item)
         edges.add((f"account:{owner}", f"repo:{item['slug']}", "public_repository"))
         edges.add((source, f"repo:{item['slug']}", "reported_repository"))
+        if item["homepage"]:
+            host = urllib.parse.urlsplit(item["homepage"]).hostname
+            edges.add((f"repo:{item['slug']}", f"domain:{host}", "homepage_domain_candidate"))
+        for deployment in item["deployment_candidates"]:
+            host = urllib.parse.urlsplit(deployment["origin"]).hostname
+            edges.add((f"repo:{item['slug']}", f"domain:{host}", "deployment_domain_candidate"))
         total_rows += 1
         return True
 
@@ -671,7 +758,9 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
                 if next_url is None:
                     if expected_total is not None and items < expected_total:
                         raise DiscoveryError("PAGINATION_INVALID")
-                    if expected_total is None and len(rows) == 100:
+                    current_size = int(urllib.parse.parse_qs(
+                        urllib.parse.urlsplit(url).query)["per_page"][0])
+                    if expected_total is None and len(rows) == current_size:
                         raise DiscoveryError("PAGINATION_INVALID")
                 elif pages >= max_pages:
                     raise DiscoveryError("PAGE_LIMIT_EXCEEDED")
@@ -692,6 +781,7 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
         report["coverage"][method] = {"state": state, "pages": pages, "items": items,
                                       "end_condition": end_condition,
                                       "error_code": method_error,
+                                      "page_size": page_size,
                                       "requests": broker.requests_used - requests_before}
         report["methods_executed"].append(method)
 
@@ -737,7 +827,7 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
         execute_pages(
             f"list_public_repositories:{account}",
             _query_url(f"/users/{urllib.parse.quote(account, safe='-')}/repos",
-                       type="owner", sort="full_name", direction="asc", per_page="100", page="1"),
+                       type="owner", sort="full_name", direction="asc", per_page=str(page_size), page="1"),
             "", add_repo,
         )
         listed_accounts.add(account.casefold())
@@ -747,13 +837,13 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
     for index, seed in enumerate(seed_list, 1):
         execute_pages(
             f"search_repositories:{index}",
-            _query_url("/search/repositories", q=f"{seed} in:name,description,readme", per_page="100", page="1"),
+            _query_url("/search/repositories", q=f"{seed} in:name,description,readme", per_page=str(page_size), page="1"),
             "items", lambda row, source: add_repo(row, source, priority=2),
         )
     for index, seed in enumerate(seed_list, 1):
         execute_pages(
             f"search_users:{index}",
-            _query_url("/search/users", q=f"{seed} in:login,fullname", per_page="100", page="1"),
+            _query_url("/search/users", q=f"{seed} in:login,fullname", per_page=str(page_size), page="1"),
             "items", lambda row, source: add_account(row.get("login") if isinstance(row, Mapping) else None, source, priority=3),
         )
 
@@ -769,7 +859,7 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             method,
             _query_url(
                 f"/users/{urllib.parse.quote(account, safe='-')}/repos",
-                type="owner", sort="full_name", direction="asc", per_page="100", page="1",
+                type="owner", sort="full_name", direction="asc", per_page=str(page_size), page="1",
             ),
             "", add_repo,
         )
@@ -810,6 +900,8 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
         "response_bytes": broker.bytes_used, "accounts": len(report["accounts"]),
         "unique_repositories": len(report["candidates"]), "rows_processed": total_rows,
     }
+    if broker.retry_after_at:
+        report["retry_after_at"] = broker.retry_after_at
     if report["errors"]:
         report["status"] = "PARTIAL" if successful_requests else "FAILED"
     elif not report["methods_executed"]:

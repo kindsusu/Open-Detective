@@ -16,6 +16,7 @@ def main(argv=None):
         "trace-assets": "asset_trace",
         "prior-records": "prior_records", "github-history": "github_history",
         "dom-replay": "dom_replay",
+        "audit": "audit", "gate-review": "gate_review",
     }
     if not args or args[0] in ("-h", "--help"):
         print("usage: open-detective {" + ",".join(commands) + "} [options]")

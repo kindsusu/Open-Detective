@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import http.client
 import ipaddress
+import errno
+import queue
 import socket
 import ssl
-import queue
 import threading
 import time
 import uuid
@@ -78,6 +79,12 @@ def _resolve_public(host: str, port: int, resolver: Resolver) -> list[str]:
     except ValueError:
         try:
             values = list(resolver(host, port))
+        except (TimeoutError, socket.timeout):
+            raise PolicyError("DNS resolution timed out") from None
+        except PolicyError as exc:
+            if str(exc) == "DNS resolution timed out":
+                raise
+            values = []
         except Exception:
             values = []
     if not values:
@@ -141,6 +148,30 @@ def _classify_status(status: int) -> tuple[str, str]:
     if status in (404, 410):
         return "NOT_FOUND_OBSERVED", "not_found_status"
     return "INDETERMINATE", "http_status_inconclusive"
+
+
+def _transport_reason(exc: BaseException) -> str:
+    """Return a fixed code using structured exception evidence only."""
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        # OpenSSL X509_V_ERR_CERT_HAS_EXPIRED / X509_V_ERR_HOSTNAME_MISMATCH.
+        # Other platforms may omit these codes; retain the generic result.
+        code = getattr(exc, "verify_code", None)
+        if code == 10:
+            return "tls_certificate_expired"
+        if code == 62:
+            return "tls_hostname_mismatch"
+        return "tls_verification_failed"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "timeout"
+    if isinstance(exc, ConnectionRefusedError) or getattr(exc, "errno", None) == errno.ECONNREFUSED:
+        return "connection_refused"
+    if isinstance(exc, ConnectionResetError) or getattr(exc, "errno", None) == errno.ECONNRESET:
+        return "connection_reset"
+    if isinstance(exc, socket.gaierror):
+        return "dns_failure"
+    if isinstance(exc, ssl.SSLError):
+        return "tls_error"
+    return "transport_error"
 
 
 def _response_socket_timeout(response: http.client.HTTPResponse, timeout: float) -> None:
@@ -244,7 +275,12 @@ def fetch(
             budget.consume()
             pins = _resolve_public(host, port, active_resolver)
         except PolicyError as exc:
-            observation["reason"] = clean_text(exc)
+            reason = str(exc)
+            observation["reason"] = (
+                "dns_failure" if reason == "DNS resolution failed" else
+                "timeout" if reason in ("DNS resolution timed out", "request timed out") else
+                clean_text(exc)
+            )
             observation["redirects"] = redirects
             return FetchResult(observation, b"", {})
 
@@ -252,6 +288,7 @@ def fetch(
         if parts.query:
             target += "?" + parts.query
         response_error = True
+        failure_reason = "transport_error"
         for pin_number, pin in enumerate(pins):
             connection = None
             try:
@@ -278,10 +315,16 @@ def fetch(
                 response_error = False
                 break
             except PolicyError as exc:
-                observation["reason"] = clean_text(exc)
+                reason = str(exc)
+                observation["reason"] = (
+                    reason if reason == "request budget exhausted" else "transport_error"
+                )
                 observation["redirects"] = redirects
                 return FetchResult(observation, b"", {})
-            except (OSError, ssl.SSLError, http.client.HTTPException, TimeoutError, ValueError):
+            except (OSError, ssl.SSLError, http.client.HTTPException, TimeoutError, ValueError) as exc:
+                code = _transport_reason(exc)
+                if code != "transport_error" or failure_reason == "transport_error":
+                    failure_reason = code
                 continue
             except Exception:
                 # Test adapters and platform TLS stacks must not leak exception text.
@@ -293,7 +336,7 @@ def fetch(
                     except Exception:
                         pass
         if response_error:
-            observation["reason"] = "transport_error"
+            observation["reason"] = failure_reason
             observation["redirects"] = redirects
             return FetchResult(observation, b"", {})
 
@@ -352,7 +395,12 @@ def fetch(
             )
             _resolve_public(candidate_parts.hostname or "", candidate_parts.port or 443, active_resolver)
         except PolicyError as exc:
-            observation["reason"] = clean_text(exc)
+            reason = str(exc)
+            observation["reason"] = (
+                "dns_failure" if reason == "DNS resolution failed" else
+                "timeout" if reason in ("DNS resolution timed out", "request timed out") else
+                clean_text(exc)
+            )
             observation["redirects"] = redirects
             return FetchResult(observation, body, headers)
         redirects.append({"http_status": status, "target_ref": safe_url(authorized_candidate)})

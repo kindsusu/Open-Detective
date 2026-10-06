@@ -4,6 +4,9 @@ import hashlib
 import importlib.util
 import json
 import unittest
+import contextlib
+import time
+from unittest.mock import patch
 from urllib.parse import urlsplit
 import uuid
 
@@ -68,6 +71,17 @@ def fake_fetch(calls):
 
 @unittest.skipUnless(importlib.util.find_spec('playwright'), 'optional Playwright not installed')
 class BrowserTests(unittest.TestCase):
+    def test_runtime_fetch_detected_after_slow_browser_start(self):
+        from playwright.sync_api import sync_playwright
+        @contextlib.contextmanager
+        def delayed():
+            time.sleep(3.5)
+            with sync_playwright() as engine:
+                yield engine
+        with patch("playwright.sync_api.sync_playwright", delayed):
+            result, calls = self.run_page('/runtime')
+        self.assertIn('https://app.example/data', calls)
+
     def run_page(self, path, **kwargs):
         calls = []
         result = observe('https://app.example' + path, scope(), duration=.25,

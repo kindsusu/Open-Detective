@@ -14,6 +14,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Mapping
 
+from .structured_data import inspect_static_json
+
 MAX_MANIFEST_BYTES = 1_048_576
 MAX_ASSETS = 100
 MAX_CONTENT_BYTES = 262_144
@@ -25,6 +27,10 @@ _CATEGORIES = {
     "customer_contact": ("customer", "client", "email", "phone", "telephone", "contact", "고객", "이메일", "전화"),
     "partner": ("partner", "vendor", "reseller", "affiliate", "협력", "파트너"),
     "financial": ("revenue", "profit", "invoice", "balance", "expense", "budget", "매출", "수익", "예산"),
+    "commission_settlement": ("commission", "settlement", "수수료", "정산", "지급 조건"),
+    "depreciation_residual_grade": ("depreciation", "residual", "grade", "감가", "잔가", "등급"),
+    "business_instruction": ("procedure", "manual", "guideline", "업무 지침", "처리 절차"),
+    "contract_vehicle_record": ("contract", "vehicle", "license plate", "계약", "차량번호"),
 }
 _SAFE_EXTENSIONS = frozenset({"json", "csv", "tsv", "xml", "yaml", "yml", "toml", "ini", "env", "sql", "txt", "md", "pdf", "docx", "xlsx", "js", "ts", "jsx", "tsx", "py", "java", "go", "rb", "php", "c", "cc", "cpp", "h", "cs", "sh", "html", "css", "vue", "svelte", "conf", "config"})
 
@@ -40,6 +46,12 @@ def _terms(value: str) -> set[str]:
             if any(" " + word.replace("_", " ") + " " in padded for word in words)}
 
 
+def _substantive(value: Any) -> bool:
+    if value is None or value == "" or value == [] or value == {}: return False
+    if isinstance(value, str) and _PLACEHOLDER.fullmatch(value.strip()): return False
+    return True
+
+
 class _MarkupStructure(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -50,22 +62,73 @@ class _MarkupStructure(HTMLParser):
         self.json_script = False
         self.json_chunks: list[str] = []
         self.script_chunks: list[str] = []
+        self.style_depth = 0
+        self.table_depth = 0
+        self.tables: list[list[list[str]]] = []
+        self._rows: list[list[str]] = []
+        self._cells: list[str] = []
+        self._cell: list[str] | None = None
+        self.visible_chunks: list[str] = []
+        self.truncated = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "script":
             self.in_script = True
             self.json_script = (dict(attrs).get("type") or "").casefold() in {"application/json", "application/ld+json"}
+        if tag == "style": self.style_depth += 1
+        if tag == "table":
+            self.table_depth += 1
+            if self.table_depth == 1: self._rows = []
+        if tag in {"td", "th"} and self.table_depth: self._cell = []
         self.tags[tag] = self.tags.get(tag, 0) + 1
         # Attribute names can reveal a data shape; values are intentionally ignored.
         self.attribute_terms.update(_terms(" ".join(name for name, _ in attrs)))
 
     def handle_data(self, data: str) -> None:
-        if not self.in_script: self.text_terms.update(_terms(data))
+        if not self.in_script and not self.style_depth:
+            self.text_terms.update(_terms(data))
+            if len(self.visible_chunks) < 4096: self.visible_chunks.append(data)
+            else: self.truncated = True
+            if self._cell is not None: self._cell.append(data)
         elif self.json_script and len(self.json_chunks) < 16: self.json_chunks.append(data)
         elif not self.json_script and len(self.script_chunks) < 16: self.script_chunks.append(data)
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "script": self.in_script = self.json_script = False
+        if tag == "style" and self.style_depth: self.style_depth -= 1
+        if tag in {"td", "th"} and self._cell is not None:
+            self._cells.append(" ".join(self._cell).strip()); self._cell = None
+        if tag == "tr" and self._cells:
+            if len(self._rows) < 256: self._rows.append(self._cells)
+            self._cells = []
+        if tag == "table" and self.table_depth:
+            self.table_depth -= 1
+            if not self.table_depth and len(self.tables) < 32:
+                self.tables.append(self._rows); self._rows = []
+
+
+_AMOUNT = re.compile(r"(?:\d+(?:\.\d+)?\s*%|(?:₩|\$)?\s*\d[\d,]*(?:\.\d+)?\s*(?:원|만원|달러|USD|KRW))", re.I)
+_CONDITION = re.compile(r"(?:조건|기준|지급|정산|달성|성과|구간|매출|계약|condition|payment|threshold|sales)", re.I)
+_COMMISSION = re.compile(r"(?:수수료|커미션|commission|incentive)", re.I)
+_PLACEHOLDER = re.compile(r"^(?:[-—_\s]*|n/?a|null|undefined|example|sample|placeholder|예시|샘플|미정|입력|\{\{.*\}\}|\$\{.*\})$", re.I)
+
+
+def _table_candidates(tables: list[list[list[str]]]) -> list[dict[str, Any]]:
+    """Report table structure and value state without retaining cell contents."""
+    found = []
+    for rows in tables:
+        if not rows: continue
+        heading = " ".join(" ".join(row) for row in rows[:2])
+        if not _COMMISSION.search(heading): continue
+        condition = bool(_CONDITION.search(heading))
+        amount_heading = bool(re.search(r"(?:비율|금액|요율|지급액|rate|amount|%|원)", heading, re.I))
+        data = [cell for row in rows[1:] for cell in row]
+        filled = sum(bool(_AMOUNT.search(cell)) and not _PLACEHOLDER.fullmatch(cell.strip()) for cell in data)
+        if condition and amount_heading:
+            found.append({"category": "commission_settlement", "reason_code": "COMMISSION_TABLE_STRUCTURE",
+                          "confidence": "high" if filled else "medium", "filled_records": filled,
+                          "value_state": "filled" if filled else "template", "row_count": len(rows)})
+    return found
 
 
 def _walk_json(value: Any, *, limit: int = 2048) -> tuple[dict[str, list[int]], bool]:
@@ -76,7 +139,7 @@ def _walk_json(value: Any, *, limit: int = 2048) -> tuple[dict[str, list[int]], 
             for key, val in item.items():
                 for category in _terms(str(key)):
                     stats = found.setdefault(category, [0, 0]); stats[0] += 1
-                    if val is not None and val != "" and val != [] and val != {}: stats[1] += 1
+                    if _substantive(val): stats[1] += 1
                 if isinstance(val, (dict, list)): queue.append(val)
         elif isinstance(item, list):
             queue.extend(v for v in item if isinstance(v, (dict, list)))
@@ -97,10 +160,12 @@ def _kind_hint(text: str, content_type: str, markup: _MarkupStructure | None, pa
     return "unknown"
 
 
-def profile_content(body: bytes, content_type: str = "") -> dict[str, Any]:
+def profile_content(body: bytes, content_type: str = "", *, max_bytes: int = MAX_CONTENT_BYTES) -> dict[str, Any]:
     """Return safe structural hints from bounded local bytes, never values or keys."""
-    truncated = len(body) > MAX_CONTENT_BYTES
-    text = body[:MAX_CONTENT_BYTES].decode("utf-8", errors="replace")
+    if max_bytes < 1: raise ValueError("max_bytes must be positive")
+    truncated = len(body) > max_bytes
+    text = body[:max_bytes].decode("utf-8", errors="replace")
+    static_json = inspect_static_json(text, content_type)
     parsed_json = None; json_terms: dict[str, list[int]] = {}; json_truncated = False
     markup = None
     stripped = text.lstrip()
@@ -114,6 +179,7 @@ def profile_content(body: bytes, content_type: str = "") -> dict[str, Any]:
         markup = _MarkupStructure()
         try:
             markup.feed(text)
+            truncated |= markup.truncated
             for chunk in markup.json_chunks:
                 try:
                     nested, nested_truncated = _walk_json(json.loads(chunk))
@@ -122,24 +188,31 @@ def profile_content(body: bytes, content_type: str = "") -> dict[str, Any]:
                     json_truncated |= nested_truncated
                 except (ValueError, RecursionError): truncated = True
         except (ValueError, RecursionError): truncated = True
-    source_text = text if ("javascript" in content_type.casefold() or _kind_hint(text, content_type, markup, parsed_json) == "source_code") else " ".join(markup.script_chunks if markup else [])
-    source_terms = _terms(source_text)
     bases: dict[str, set[str]] = {}; counts: dict[str, list[int]] = {key: value[:] for key, value in json_terms.items()}
+    for category, row in static_json["categories"].items():
+        totals = counts.setdefault(category, [0, 0])
+        totals[0] += row["candidate_count"]
+        totals[1] += row["filled_field_count"]
+        bases.setdefault(category, set()).add("static_js_json_literal")
     for terms, basis in ((set(json_terms), "structured_field_names"),
                          (markup.attribute_terms if markup else set(), "markup_attribute_names"),
-                         (markup.text_terms if markup else set(), "markup_text_labels"),
-                         (source_terms, "source_text_terms")):
+                         (markup.text_terms if markup else set(), "markup_text_labels")):
         for category in terms: bases.setdefault(category, set()).add(basis)
     categories = [{"category": category, "candidate_count": counts.get(category, [1, 0])[0],
                    "filled_field_count": counts.get(category, [0, 0])[1],
+                   "template_count": static_json["categories"].get(category, {}).get("template_count", 0),
+                   "calculation_count": static_json["categories"].get(category, {}).get("calculation_count", 0),
                    "candidate_confidence": "low" if len(bases[category]) == 1 else "medium",
                    "evidence_bases": sorted(bases[category])}
                   for category in sorted(bases)]
     return {"asset_kind_hint": _kind_hint(text, content_type, markup, parsed_json),
-            "business_data_categories": categories, "analysis_complete": not (truncated or json_truncated),
+            "business_data_categories": categories, "analysis_complete": not (truncated or json_truncated) and static_json["analysis_complete"],
+            "static_json_literals": {key: static_json[key] for key in ("literal_count", "root_item_count", "analysis_complete")},
+            "structured_tables": _table_candidates(markup.tables) if markup else [],
+            "structure_analysis_complete": not (truncated or json_truncated) and static_json["analysis_complete"],
             "analysis_scope": "supplied_bytes_only",
-            "bytes_examined": min(len(body), MAX_CONTENT_BYTES),
-            "truncated": bool(truncated or json_truncated),
+            "bytes_examined": min(len(body), max_bytes),
+            "truncated": bool(truncated or json_truncated or not static_json["analysis_complete"]),
             "automated_sensitivity_is_provisional": True}
 
 

@@ -210,8 +210,17 @@ def _candidate(scope_id: str, source_id: str, work_id: str, record_ref: str, url
     except (PolicyError, ValueError):
         return None
     ref = store.put(scope_id, normalized)
+    host = urlsplit(normalized).hostname or ""
+    # The host itself stays in the private locator store. A document or code
+    # reference can seed a separate domain review without exposing its URL.
+    domain_ref = store.put(scope_id, f"https://{host}/")
     candidate_id = "cand_" + uuid.uuid5(_NS, "\x1f".join((source_id, record_ref, normalized))).hex
     return {"candidate_id": candidate_id, "locator_ref": ref, "handoff_state": "ready",
+            "domain_locator_ref": domain_ref,
+            "environment_hint": "development_candidate" if any(part in {"dev","test","staging","stage","preview"}
+                                                           for part in host.split(".")) else "unspecified",
+            "existence_state": "source_reference_observed", "ownership_state": "pending",
+            "publication_approval": "unknown",
             "source_id": source_id, "query_work_id": work_id,
             "record_ref": "sha256:" + hashlib.sha256(record_ref.encode()).hexdigest()}
 

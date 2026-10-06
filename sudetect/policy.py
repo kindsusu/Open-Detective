@@ -268,7 +268,7 @@ class Scope:
             expires_at=expiry,
             targets=tuple(targets),
             exclude_urls=excludes,
-            max_bytes=_integer(data.get("max_bytes", 262_144), "max bytes", 1, 16 * 1024 * 1024),
+            max_bytes=_integer(data.get("max_bytes", 262_144), "max bytes", 1, 128 * 1024 * 1024),
             max_requests=_integer(data.get("max_requests", 20), "max requests", 1, 10_000),
             timeout=_integer(data.get("timeout", 10), "timeout", 1, 120),
             max_redirects=_integer(data.get("max_redirects", 5), "max redirects", 0, 20),

@@ -5,6 +5,15 @@ description: Audit publicly reachable organization-owned assets for accidental p
 
 # Open-Detective
 
+For sustained multi-asset work, follow [the shared audit workflow](ops/audit-workflow.md).
+Codex and Claude use the same persisted `audit` case, queue, budgets and completion
+rules. An individual sensitive candidate does not stop unrelated assets. In
+seed-only discovery, prior findings are held out until `audit evaluate`; the prior
+review steps below apply to recheck work. `gate-review` is a separate authorized
+offline review/replay of already delivered bytes, documented in
+[gate review](ops/gate-review.md); it does not change anonymous probe/browser or
+perform live credential use or server authorization tests.
+
 This installed skill defines the workflow; it does not install the Python package. Install the package with the [README instructions](README.md) before running `open-detective`.
 
 Run **scope → inventory/discovery → ownership → anonymous observation → content classification → containment → recheck**. Never claim closure without a fresh observation.
