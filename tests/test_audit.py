@@ -169,6 +169,31 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(2, code)
         self.assertEqual(before, (self.root / "case.json").read_bytes())
 
+    def test_report_rejects_state_files_through_case_directory_alias(self):
+        # A lexical alias reproduces the asymmetric resolve bug on every OS;
+        # Windows CI additionally exercises short-name aliases in its TEMP path.
+        alias_parent = self.root.parent / "alias"
+        alias_parent.mkdir()
+        alias = alias_parent / ".." / self.root.name
+        for name in ("case.json", "search-plan.json", "ledger.sqlite", "locators.sqlite"):
+            with self.subTest(name=name), patch("sudetect.audit.report_case") as report:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = main(["report", "--case", str(alias), "--output", str(self.root / name)])
+                self.assertEqual(2, code)
+                report.assert_not_called()
+        with Case(self.root) as case:
+            self.assertEqual("fixture", case.scope_id)
+
+    def test_report_allows_separate_file_through_case_directory_alias(self):
+        alias_parent = self.root.parent / "alias"
+        alias_parent.mkdir()
+        alias = alias_parent / ".." / self.root.name
+        output = self.root / "report.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = main(["report", "--case", str(alias), "--output", str(output)])
+        self.assertEqual(0, code)
+        self.assertIn("coverage", json.loads(output.read_text(encoding="utf-8")))
+
     def test_search_rate_limit_does_not_poison_core_transport(self):
         calls = []
         def limited(url, headers):

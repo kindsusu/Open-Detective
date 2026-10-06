@@ -819,7 +819,9 @@ def main(argv=None):
                 elif args.command == "import":
                     answer = import_channel(case, read_json(args.input), read_json(args.channel_health))
                 elif args.command == "report":
-                    if Path(args.output).resolve() in {case.root / name for name in (
+                    # Resolve both sides: Windows short directory names and
+                    # lexical '..' aliases can identify the same state file.
+                    if Path(args.output).resolve() in {(case.root / name).resolve() for name in (
                             "case.json", "search-plan.json", "ledger.sqlite", "locators.sqlite")}:
                         raise ValueError("case_state_overwrite_rejected")
                     answer = report_case(case)
