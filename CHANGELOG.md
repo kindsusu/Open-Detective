@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added operator-bound repository manifests, scope preflight, staged tree/raw-file/recent-history/`.patch`/deployment inspection, and `--inspection-only` audit runs. `audit report --final` saves incomplete gaps and exits 3 until completion requirements are met. Ambiguous broad-name hits remain review candidates under separate account and job fanout caps.
 - Added offline `prior-records` reconciliation for explicitly supplied operator-declared trusted prior-review manifests. Historical asset references retain provenance without automatically reopening findings or inheriting authorization; current requests still require ownership review and executable scope.
 - Refined offline Latin identifier variants for supplied compact and multiword industry tails while retaining operator spelling and bounded search-plan scheduling.
 - Added explicit bounded public `github-history` discovery and separately scoped patch-content inspection. Historical references remain candidates; extracted locations are private and never followed automatically.

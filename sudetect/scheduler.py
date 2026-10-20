@@ -222,7 +222,8 @@ class Scheduler:
         if changed:
             self._event("AUDIT_RUN_ENDED", run_id, {"reason": reason})
 
-    def claim(self, run_id: str, worker_id: str = "local", lease_seconds: int = 300) -> dict[str, Any] | None:
+    def claim(self, run_id: str, worker_id: str = "local", lease_seconds: int = 300,
+              job_types: frozenset[str] | None = None) -> dict[str, Any] | None:
         _integer(lease_seconds, "lease_seconds")
         if not isinstance(worker_id, str) or not _IDENT.fullmatch(worker_id):
             raise LedgerError("valid worker_id required")
@@ -244,6 +245,8 @@ class Scheduler:
                 ORDER BY (j.priority + CAST((julianday(?) - julianday(j.created_at))*24 AS INTEGER)) DESC,
                          j.created_at,j.job_id""", (now, now)).fetchall()
             for row in rows:
+                if job_types is not None and row["job_type"] not in job_types:
+                    continue
                 if row["estimated_cost"] > remaining:
                     continue
                 if row["attempts"] >= run["budget"]["max_attempts"]:

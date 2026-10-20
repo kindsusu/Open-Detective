@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "scope_id": "example-scope",
+  "expires_at": "2099-01-01T00:00:00Z",
+  "repositories": [
+    {
+      "repository": "example-org/public-guide",
+      "branch": "main",
+      "owner_ref": "record:verified-repository-owner",
+      "ownership_status": "confirmed",
+      "pages": [
+        {
+          "page_url": "https://example-org.github.io/public-guide/",
+          "evidence_ref": "record:verified-pages-association"
+        }
+      ],
+      "deployment_urls": [
+        "https://example-org.github.io/public-guide/",
+        "https://app.example.test/guide/"
+      ]
+    }
+  ]
+}

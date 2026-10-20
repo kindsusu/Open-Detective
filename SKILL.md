@@ -36,12 +36,27 @@ open-detective channels-doctor --config _local/channels.json --scope _local/cont
 open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
 open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective audit bind-repositories --case _local/case --manifest _local/repository-manifest.json --scope _local/scope.json
+open-detective audit preflight --case _local/case --scope _local/scope.json
+open-detective audit resume --case _local/case --scope _local/scope.json --budget _local/budget.json --channel-health _local/channel-health.json --inspection-only
+open-detective audit report --case _local/case --output _local/report.json --final
 open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
 open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
 open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
 open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --locator-ref "opaque:<id>" --scope _local/scope.json --db audit.sqlite --asset-id asset-1 --provider import
 open-detective ledger --db audit.sqlite due
 ```
+
+Use [the neutral repository manifest](examples/repository-manifest.example.json)
+as a private-local template. Bind only operator-selected repositories with current
+ownership evidence and explicit Page/deployment associations. Preflight must
+identify exact tree, history, raw-file, patch, and deployment grants; a missing
+grant stays pending. Inspection records tree inventory, emitted raw files, a
+bounded five-commit history and `.patch` window, and declared deployments as
+separate stages. `--inspection-only` resumes the same case under a fresh scope,
+control report, and explicit budget. `report --final` writes incomplete gaps and
+returns exit 3 until completion requirements are met. Broad ambiguous name hits
+remain review candidates; automated account and job expansion are bounded.
 
 `forensics` is separate private-local work for an approved `--case` and owner-authorized read-only exports. Its case authorization is not a network measurement `--scope`. Read `ops/forensics.md`; do not authenticate, reuse credentials, acquire RAM/disk images, or infer no exfiltration from a missing log.
 

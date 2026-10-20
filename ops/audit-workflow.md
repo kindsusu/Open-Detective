@@ -42,11 +42,13 @@ Keep workers on disjoint files and jobs; hand off evidence and gaps for integrat
 ```sh
 open-detective audit init --case _local/new-case --intake _local/intake.json
 open-detective audit plan --case _local/new-case --profile thorough
+open-detective audit bind-repositories --case _local/new-case --manifest _local/repository-manifest.json --scope _local/scope.json
+open-detective audit preflight --case _local/new-case --scope _local/scope.json
 open-detective audit run --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json --agent codex
 open-detective audit status --case _local/new-case --json
-open-detective audit resume --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json --agent claude
+open-detective audit resume --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json --agent claude --inspection-only
 open-detective audit worker --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json
-open-detective audit report --case _local/new-case --output _local/report.json
+open-detective audit report --case _local/new-case --output _local/report.json --final
 open-detective audit evaluate --case _local/new-case --reference _local/held-out.json
 ```
 
@@ -54,6 +56,32 @@ The adapters run identical Python commands. `--agent` records the worker identit
 not a different decision policy. `plan` inspects the already persisted plan/queue;
 it neither reads reference answers nor grants network authority. Resume requires
 current scope again; stored ownership does not automatically renew expiry.
+
+For an operator-selected repository, copy
+[`examples/repository-manifest.example.json`](../examples/repository-manifest.example.json)
+to the ignored private input area and replace every example value. Bind an exact
+`OWNER/REPO`, branch, current expiry, and owner evidence reference. Set
+`ownership_status` to `confirmed` only after owner review; `investigation` stays
+pending. A `pages` association requires its own `page_url` and `evidence_ref`;
+associated Pages are queued for capture. Declare other public deployments in
+`deployment_urls`. A search name, repository
+match, or Pages-looking URL alone cannot create these associations. Binding is
+idempotent for the same manifest. Extending only its expiry records a renewal
+event; other changes conflict with the existing selection. `preflight` reports
+each missing grant; it requires the binding's owner
+evidence on the corresponding scope target and does not change scope. The scope must cover repository
+tree and commit API paths, raw-content and commit-patch prefixes, and each
+declared deployment/Page URL. Missing authorization remains blocked or pending.
+
+The repository inspection stages are inventory tree, every emitted raw file,
+bounded recent commit history and its `.patch` content, then declared deployment
+observation. Each stage reports its own evidence and gaps. The current history
+window is at most five commits and is never exhaustive history coverage.
+`--inspection-only` on `run`, `resume`, or `worker` works the existing inspection
+queue without opening new discovery work. Use the same case and a newly explicit
+budget, current scope, and fresh controls for each resumed interval. `report
+--final` still writes an incomplete report and exits 3 when completion conditions
+are unmet; inspect its gaps and resume eligible work before claiming a final audit.
 
 ## Durable state and resource limits
 
@@ -94,6 +122,11 @@ per-job state and error information. Retry only errors classified as transient o
 explicitly selected for retry, within a newly approved interval and its budget.
 Keep permanent failures, blocked inputs, and retry-wait work visible; do not turn
 an error into a clean result or silently retry unchanged missing inputs.
+Ambiguous broad-name GitHub hits stay review candidates; arbitrary hit owners do
+not trigger automatic repository expansion. Search-account expansion and durable
+discovered-account jobs are bounded separately. A deferred
+`operator_review_required` job is not promoted by an automatic resume. Exact known
+URLs and operator account inputs retain their independent priority.
 
 When a persisted seed plan is upgraded to version 2, migration adds missing-prefix
 jobs idempotently and retains completed jobs. For a previously successful capture

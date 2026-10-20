@@ -137,6 +137,19 @@ def _category_hint(path):
     return "other"
 
 
+def _patch_url_parts(url):
+    """Accept only an exact public GitHub commit patch locator."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        match = re.fullmatch(r"/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/commit/([0-9a-fA-F]{40})\.patch", parts.path)
+        if (parts.scheme != "https" or parts.netloc != "github.com" or parts.query or
+                parts.fragment or not match or any(part in {".", ".."} for part in match.groups()[:2])):
+            return None
+        return match.group(1) + "/" + match.group(2), match.group(3)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_patch(body, repository, sha, locator_store, scope_id):
     try:
         text = body.decode("utf-8", "strict")
@@ -146,13 +159,70 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
         return None, "patch_provenance_invalid"
     files, changed_lines = [], []
     old_path = new_path = False
+    diff_old = diff_new = None
+    current_recorded = False
+    status_hint = None
     old_remaining = new_remaining = 0
     saw_hunk = saw_binary = saw_diff = False
+
+    def record_file():
+        nonlocal current_recorded
+        if current_recorded:
+            return
+        before = diff_old if old_path is False else old_path
+        after = diff_new if new_path is False else new_path
+        if before is False or after is False or (before is None and after is None):
+            raise ValueError("patch_provenance_invalid")
+        path = after or before
+        status = ("added" if before is None or status_hint == "added" else
+                  "removed" if after is None or status_hint == "removed" else
+                  "renamed" if before != after else "modified")
+        digest = hashlib.sha256(path.encode()).hexdigest()
+        if status == "removed":
+            location = f"https://github.com/{repository}/commit/{sha}#diff-{digest}"
+        else:
+            location = f"https://github.com/{repository}/blob/{sha}/{urllib.parse.quote(path, safe='/')}"
+        files.append({"file_locator_ref": locator_store.put(scope_id, location),
+                      "status": status, "category_hint": _category_hint(path),
+                      "current_repository_state": "not_measured"})
+        current_recorded = True
+
     for line in text.splitlines():
         in_hunk = old_remaining > 0 or new_remaining > 0
         if not in_hunk and line.startswith("diff --git "):
+            if saw_diff:
+                try:
+                    record_file()
+                except ValueError:
+                    return None, "patch_provenance_invalid"
+            header = line[len("diff --git "):]
+            if header.startswith('"') and "\\" in header:
+                return None, "patch_provenance_invalid"
+            try:
+                pair = shlex.split(header)
+            except ValueError:
+                return None, "patch_provenance_invalid"
+            if len(pair) != 2 or not pair[0].startswith("a/") or not pair[1].startswith("b/"):
+                return None, "patch_provenance_invalid"
+            diff_old, diff_new = _path(pair[0][2:]), _path(pair[1][2:])
+            if not diff_old or not diff_new:
+                return None, "patch_provenance_invalid"
             saw_diff = True
             old_path = new_path = False
+            current_recorded = False
+            status_hint = None
+        elif not in_hunk and line.startswith("new file mode "):
+            status_hint = "added"
+        elif not in_hunk and line.startswith("deleted file mode "):
+            status_hint = "removed"
+        elif not in_hunk and line.startswith("rename from "):
+            old_path = _path(line[len("rename from "):]) or False
+            if old_path is False:
+                return None, "patch_provenance_invalid"
+        elif not in_hunk and line.startswith("rename to "):
+            new_path = _path(line[len("rename to "):]) or False
+            if new_path is False:
+                return None, "patch_provenance_invalid"
         elif not in_hunk and (line.startswith("GIT binary patch") or line.startswith("Binary files ")):
             saw_binary = True
         elif not in_hunk and line.startswith("--- "):
@@ -161,16 +231,10 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
             new_path = _header_path(line[4:], "b/")
             if old_path is False or new_path is False or (old_path is None and new_path is None):
                 return None, "patch_provenance_invalid"
-            path = new_path or old_path
-            status = "added" if old_path is None else "removed" if new_path is None else "renamed" if old_path != new_path else "modified"
-            digest = hashlib.sha256(path.encode()).hexdigest()
-            if status == "removed":
-                location = f"https://github.com/{repository}/commit/{sha}#diff-{digest}"
-            else:
-                location = f"https://github.com/{repository}/blob/{sha}/{urllib.parse.quote(path, safe='/')}"
-            files.append({"file_locator_ref": locator_store.put(scope_id, location), "path_sha256": digest,
-                          "status": status, "category_hint": _category_hint(path),
-                          "current_repository_state": "not_measured"})
+            try:
+                record_file()
+            except ValueError:
+                return None, "patch_provenance_invalid"
         elif not in_hunk and line.startswith("@@"):
             match = _HUNK.match(line)
             if not match or not saw_diff or old_path is False or new_path is False:
@@ -197,6 +261,10 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
         return None, "patch_provenance_invalid"
     if not saw_diff:
         return None, "patch_provenance_invalid"
+    try:
+        record_file()
+    except ValueError:
+        return None, "patch_provenance_invalid"
     if not saw_hunk:
         reason = "binary_patch_not_inspected" if saw_binary else "patch_has_no_text_hunks"
         return {"changed_files": files, "content_review": "not_inspected"}, reason
@@ -222,6 +290,34 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
     return {"changed_files": files, "content_review": "value_free_signals_only",
             "literal_url_changes": {"introduced_locator_refs": sorted(introduced),
                                     "removed_locator_refs": sorted(removed)}}, None
+
+
+def analyze_repository_patch(body, url, locator_store, scope_id):
+    """Analyze captured patch bytes without fetching discovered references."""
+    profile = {"document_type": "repository_patch", "content": "NOT_INSPECTED",
+               "analysis_complete": False, "pending_reviews": [],
+               "limitations": ["observed_commit_only", "history_lineage_not_exhaustive",
+                               "literal_urls_not_requested", "current_repository_state_not_measured"]}
+    parsed = _patch_url_parts(url)
+    if parsed is None:
+        profile["pending_reviews"].append("patch_url_invalid")
+        return profile
+    if not isinstance(body, bytes) or len(body) > MAX_PATCH_BYTES:
+        profile["pending_reviews"].append("patch_byte_limit_reached")
+        return profile
+    repository, sha = parsed
+    summary, gap = _parse_patch(body, repository, sha, locator_store, scope_id)
+    if summary:
+        profile.update(summary)
+        if summary.get("content_review") == "stopped_sensitive_candidate":
+            profile["content"] = "SENSITIVE_CANDIDATE"
+            profile["hold_repository_patch_lineage"] = True
+            profile["pending_reviews"].append("sensitive_candidate_stop")
+    if gap:
+        profile["pending_reviews"].append(gap)
+    elif summary and summary.get("content_review") == "value_free_signals_only":
+        profile["analysis_complete"] = True
+    return profile
 
 
 def _scope_authorizes_patch(scope, url, owner_ref):

@@ -1,8 +1,9 @@
-"""Bounded observed commit snapshots; no fabricated revisions or target access."""
+"""Bounded observed commit snapshots and patches; no fabricated revisions."""
 import json
 import re
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 from .repository_assets import tree_url
+from .github_history import analyze_repository_patch
 
 
 def history_url(candidate):
@@ -15,7 +16,7 @@ def history_url(candidate):
 
 
 def analyze_history(body, url):
-    """Return value-free coverage plus exact observed snapshot tree locators."""
+    """Return value-free coverage and exact locators for observed revisions."""
     report = {'document_type': 'repository_history', 'content': 'NOT_INSPECTED',
               'analysis_complete': False, 'commits_examined': 0,
               'pending_reviews': ['history_window_not_exhaustive']}
@@ -35,12 +36,15 @@ def analyze_history(body, url):
         if not isinstance(rows, list) or len(rows) > 5:
             raise ValueError
         shas = [row.get('sha') if isinstance(row, dict) else None for row in rows]
-        if any(not isinstance(sha, str) or not re.fullmatch('[a-fA-F0-9]{40}', sha) for sha in shas):
+        if (any(not isinstance(sha, str) or not re.fullmatch('[a-fA-F0-9]{40}', sha) for sha in shas)
+                or len(set(shas)) != len(shas)):
             raise ValueError
         for sha in dict.fromkeys(shas):
             refs.append(('repository_snapshot', tree_url({'slug': slug,
                 'source_revision': {'kind': 'commit', 'value': sha}})))
-        report.update(analysis_complete=True, commits_examined=len(shas), snapshots_emitted=len(refs))
+            refs.append(('repository_patch', f'https://github.com/{slug}/commit/{sha}.patch'))
+        report.update(analysis_complete=True, commits_examined=len(shas),
+                      snapshots_emitted=len(shas), patches_emitted=len(shas))
     except (ValueError, TypeError, UnicodeError, RecursionError):
         report['pending_reviews'].append('history_metadata_incomplete')
     return report, refs

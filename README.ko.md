@@ -241,4 +241,6 @@ Codex와 Claude는 루트 AGENTS.md·CLAUDE.md에서 [같은 실행 절차](ko/o
 documents extra, 선택적 로컬 재현에는 browser extra와 Chromium이 필요하다.
 합성 테스트 결과는 실제 회사 점검이나 두 모델 호스트의 실행 비교 결과가 아니다.
 
+선택한 저장소는 [중립 manifest 예시](examples/repository-manifest.example.json)를 비공개 로컬 입력에 복사해 실제 소유 근거, 정확한 저장소·브랜치, Page 연결 근거, 배포 URL로 교체한다. `audit bind-repositories --manifest ... --scope ...`는 같은 case에 선택을 저장하고, `audit preflight --scope ...`는 inventory·history·원본 파일·패치·배포에 부족한 scope를 표시한다. 확인되지 않은 소유나 유사한 검색명만으로 저장소·Page 연결을 승인하지 않는다. 점검은 tree inventory → 나열된 원본 파일 → 최대 5개 최근 commit과 `.patch` → 선언된 배포 순서로 근거를 남기며 전체 과거 이력을 보장하지 않는다. `run`·`resume`의 `--inspection-only`는 새 발견 없이 기존 점검 작업을 처리한다. 같은 case를 재개할 때마다 명시적 budget, 현재 scope, 새 control이 필요하다. `audit report --final`은 미완료여도 보고서를 저장하고 종료 코드 3을 반환한다. 모호한 넓은 이름 검색 결과는 검토 후보로 남고 임의 계정 확장은 자동 실행되지 않으며, 계정·작업 증가에 각각 상한이 있다.
+
 변경 사항과 검증 범위는 [구현 결과](IMPLEMENTATION-AUDIT.ko.md)에 기록했다.

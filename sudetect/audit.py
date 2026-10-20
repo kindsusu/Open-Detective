@@ -143,7 +143,9 @@ class Case:
         if scope is not None:
             try:
                 scope.authorize(url)
-                state, policy_id = "ready", scope.policy_id
+                from .repository_workflow import repository_job_authorized
+                if repository_job_authorized(self, url, scope) is not False:
+                    state, policy_id = "ready", scope.policy_id
             except PolicyError:
                 pass
         suffix = Path(urlsplit(url).path).suffix.lower()
@@ -152,6 +154,8 @@ class Case:
             priority = 1
         if job_type == "repository_history":
             priority = 5
+        if job_type == "repository_patch":
+            priority = 4
         if review_reason and state == "ready":
             state = "blocked_input"
         return self.queue.enqueue(job_type, ref, scope_id=self.scope_id,
@@ -235,8 +239,11 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     from .asset_trace import extract_references
     from .transport import fetch
     from .gate_review import review_gate, _capability
+    from .repository_workflow import repository_job_authorized
     url = case.locators.get(case.scope_id, job["asset_ref"])
     scope.authorize(url)
+    if repository_job_authorized(case, url, scope) is False:
+        raise PolicyError("repository binding authorization required")
     cached = case.prior_result(job)
     if cached and not (job["job_type"] == "content_review" and cached[1].get("gaps")):
         _project_observation(case, job, cached[1])
@@ -249,6 +256,8 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     # would lose the exact final base URL and resolve relative dependencies wrong.
     def collect(target, active_scope, **kwargs):
         active_scope.authorize(target)
+        if repository_job_authorized(case, target, active_scope) is False:
+            raise PolicyError("repository binding authorization required")
         if any(isinstance(item, dict) and item.get("url") == target for item in case.meta["intake"].get("excluded_urls", [])):
             raise PolicyError("operator excluded target")
         if target in case.transient_responses:
@@ -285,6 +294,9 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
         if analysis_kind == "repository_history":
             from .repository_history import analyze_history
             profile, refs = analyze_history(body, url)
+        elif analysis_kind == "repository_patch":
+            from .repository_history import analyze_repository_patch
+            profile = analyze_repository_patch(body, url, case.locators, case.scope_id)
         elif analysis_kind == "repository_tree":
             from .repository_assets import analyze_tree
             profile, locations = analyze_tree(body, url)
@@ -436,7 +448,7 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
                 queued = case.enqueue_url(candidate, parent=job["job_id"], evidence=evidence,
                     depth=depth if relationship == "redirect" else depth + 1,
                     redirect_count=redirect_count + 1 if relationship == "redirect" else 0, scope=scope,
-                    job_type="repository_tree" if relationship == "repository_snapshot" else "capture",
+                    job_type={"repository_snapshot": "repository_tree", "repository_patch": "repository_patch"}.get(relationship, "capture"),
                     document_base_ref=document_base_ref if relationship in {"script_src", "redirect"} else None,
                     review_reason="SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" if affected_material_stop else None)
                 if queued is None:
@@ -601,7 +613,23 @@ def _channel_complete(case, channel):
     return bool(jobs) and all(j["state"] in {"completed", "not_applicable"} for j in jobs)
 
 
-def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=None, api_fetch=None, agent="cli", wait_for_retry=False):
+def _patch_lineage_blocked(case, job):
+    if (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"]) != "repository_patch":
+        return False
+    url = case.locators.get(case.scope_id, job["asset_ref"])
+    prefix = url.rsplit("/", 1)[0]
+    for row in case.ledger.db.execute("SELECT report_json FROM audit_results"):
+        report = json.loads(row[0])
+        if report.get("hold_repository_patch_lineage") and report.get("target_id"):
+            prior = case.locators.get(case.scope_id, report["target_id"])
+            if prior.rsplit("/", 1)[0] == prefix:
+                return True
+    return False
+
+
+def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=None, api_fetch=None, agent="cli", wait_for_retry=False, inspection_only=False):
+    from .repository_workflow import preflight, repository_job_authorized
+    readiness = preflight(case, scope)
     run_id = case.queue.start_run(budget)
     review_context = _review_context(scope, capability, case.queue.get_run(run_id)["budget"])
     worker = agent + "-" + uuid.uuid4().hex
@@ -614,7 +642,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
     try:
         # Previously blocked scope jobs become ready only after current authorization.
         for job in case.queue.status()["jobs"]:
-            if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history"} and scope:
+            if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch"} and scope:
                 previous = case.prior_result(job)
                 if previous and previous[1].get("engine_review_version", 0) < 2:
                     candidate = case.locators.get(case.scope_id, job["asset_ref"])
@@ -633,7 +661,10 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                 if "SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" in (job.get("checkpoint") or {}).get("reason_codes", []):
                     continue
                 try:
-                    scope.authorize(case.locators.get(case.scope_id, job["asset_ref"]))
+                    candidate = case.locators.get(case.scope_id, job["asset_ref"])
+                    scope.authorize(candidate)
+                    if repository_job_authorized(case, candidate, scope) is False:
+                        continue
                 except (PolicyError, ValueError):
                     continue
                 case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
@@ -655,7 +686,9 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                         continue
                     case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
         while True:
-            job = case.queue.claim(run_id, worker_id=worker)
+            job = case.queue.claim(run_id, worker_id=worker, job_types=(frozenset({
+                "capture", "repository_tree", "repository_history", "repository_patch", "content_review"
+            }) if inspection_only else None))
             if job is None:
                 status = case.queue.status()
                 current = case.queue.get_run(run_id)
@@ -679,7 +712,10 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                                 if "SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" in (target.get("checkpoint") or {}).get("reason_codes", []):
                                     continue
                                 try:
-                                    scope.authorize(case.locators.get(case.scope_id, target["asset_ref"]))
+                                    candidate = case.locators.get(case.scope_id, target["asset_ref"])
+                                    scope.authorize(candidate)
+                                    if repository_job_authorized(case, candidate, scope) is False:
+                                        continue
                                 except (PolicyError, ValueError):
                                     continue
                                 case.queue.unblock(target["job_id"], policy_id=scope.policy_id)
@@ -689,9 +725,14 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                             "channel_plan_complete": True, "public_index_exhaustive": False}))
                     else:
                         state, error = "blocked_input", "CHANNEL_IMPORT_REQUIRED"
-                elif job["job_type"] in {"capture", "repository_tree", "repository_history", "content_review"} and scope is not None:
-                    refs.append(_capture(case, job, scope, run_id, capability, fetcher))
-                    if job["job_type"] == "content_review":
+                elif job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "content_review"} and scope is not None:
+                    if _patch_lineage_blocked(case, job):
+                        state, error = "blocked_input", "SENSITIVE_PATCH_LINEAGE_REVIEW"
+                        job["checkpoint"] = {**(job.get("checkpoint") or {}),
+                                             "reason_codes": [error]}
+                    else:
+                        refs.append(_capture(case, job, scope, run_id, capability, fetcher))
+                    if job["job_type"] == "content_review" and error != "SENSITIVE_PATCH_LINEAGE_REVIEW":
                         latest = case.prior_result(job)
                         gaps = latest[1].get("gaps", []) if latest else ["review_incomplete"]
                         if gaps:
@@ -730,7 +771,8 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
         case.transient_responses.clear()
         if scope is not None:
             scope._budget = original_budget
-    return {"run_id": run_id, "run": case.queue.get_run(run_id), **case_status(case)}
+    return {"run_id": run_id, "run": case.queue.get_run(run_id),
+            "inspection_only": inspection_only, "preflight": readiness, **case_status(case)}
 
 
 def case_status(case):
@@ -760,7 +802,37 @@ def case_status(case):
                   latest_target_count=len(latest), incomplete_target_count=incomplete_targets,
                   unresolved_reason_counts=dict(sorted(reasons.items())),
                   completion_definition="bounded_scheduled_work_only_not_company_wide_or_publication_approval")
+    from .repository_workflow import repository_status
+    status["repository_review"] = repository_status(case)
+    if status["repository_review"].get("repositories"):
+        status["complete"] = bool(status["complete"] and status["repository_review"].get("complete", False))
+    status["next_actions"] = _next_actions(status)
     return status
+
+
+def _next_actions(status):
+    """Explicit resolution work, never an automatic scope or budget expansion."""
+    reasons = status.get("unresolved_reason_counts", {})
+    actions = []
+    current = status.get("current_run") or {}
+    limits = current.get("budget") or {}
+    if (any("BUDGET" in reason.upper() for reason in reasons)
+            or current.get("reason") in {"budget_exhausted", "time_exhausted", "jobs_exhausted"}
+            or any(current.get(key, 0) >= limits.get("max_" + key, float("inf"))
+                   for key in ("requests", "download_bytes", "analysis_bytes"))):
+        actions.append({"action": "resume_with_explicit_budget", "requires": "review_remaining_work_and_current_scope"})
+    if status.get("next_action_at"):
+        actions.append({"action": "resume_after", "at": status["next_action_at"],
+                        "requires": "fresh_scope_controls_and_explicit_budget"})
+    if any("scope" in reason.lower() for reason in reasons):
+        actions.append({"action": "review_missing_scope", "requires": "repository_preflight_and_ownership_evidence"})
+    if any("RATE" in reason or "RETRY" in reason or "REMAINING" in reason for reason in reasons):
+        actions.append({"action": "inspect_retry_state", "requires": "provider_due_time_and_new_budget"})
+    if any("INPUT" in reason or "REVIEW" in reason for reason in reasons):
+        actions.append({"action": "resolve_review_gaps", "requires": "actual_missing_evidence_or_dependency"})
+    if status.get("search_work_remaining"):
+        actions.append({"action": "review_remaining_discovery", "requires": "relevance_review_before_expansion"})
+    return actions
 
 
 def report_case(case):
@@ -781,7 +853,7 @@ def main(argv=None):
     from .probe import _SafeParser
     parser = _SafeParser(prog="open-detective audit")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "plan", "run", "resume", "worker", "import", "status", "report", "evaluate"):
+    for name in ("init", "plan", "run", "resume", "worker", "import", "status", "report", "evaluate", "bind-repositories", "preflight"):
         command = sub.add_parser(name)
         command.add_argument("--case", required=True)
         if name == "init":
@@ -795,11 +867,19 @@ def main(argv=None):
             command.add_argument("--capabilities")
             command.add_argument("--channel-health")
             command.add_argument("--agent", choices=("cli", "codex", "claude"), default="cli")
+            command.add_argument("--inspection-only", action="store_true")
+        elif name == "bind-repositories":
+            command.add_argument("--manifest", required=True)
+            command.add_argument("--scope")
+        elif name == "preflight":
+            command.add_argument("--scope", required=True)
         elif name == "import":
             command.add_argument("--input", required=True)
             command.add_argument("--channel-health", required=True)
         elif name == "report":
             command.add_argument("--output", required=True)
+            command.add_argument("--final", action="store_true",
+                                 help="require completed inspection; still export gaps on failure")
         elif name == "evaluate":
             command.add_argument("--reference", required=True)
         else:
@@ -815,17 +895,29 @@ def main(argv=None):
                         scope=Scope.load(args.scope) if args.scope else None,
                         capability=read_json(args.capabilities) if args.capabilities else None,
                         health=read_json(args.channel_health) if args.channel_health else None, agent=args.agent,
-                        wait_for_retry=args.command == "worker")
+                        wait_for_retry=args.command == "worker", inspection_only=args.inspection_only)
+                elif args.command == "bind-repositories":
+                    from .repository_workflow import bind_repositories
+                    answer = bind_repositories(case, read_json(args.manifest),
+                        scope=Scope.load(args.scope) if args.scope else None)
+                elif args.command == "preflight":
+                    from .repository_workflow import preflight
+                    answer = preflight(case, Scope.load(args.scope))
                 elif args.command == "import":
                     answer = import_channel(case, read_json(args.input), read_json(args.channel_health))
                 elif args.command == "report":
                     # Resolve both sides: Windows short directory names and
                     # lexical '..' aliases can identify the same state file.
                     if Path(args.output).resolve() in {(case.root / name).resolve() for name in (
-                            "case.json", "search-plan.json", "ledger.sqlite", "locators.sqlite")}:
+                            "case.json", "search-plan.json", "repository-bindings.json", "ledger.sqlite", "locators.sqlite")}:
                         raise ValueError("case_state_overwrite_rejected")
                     answer = report_case(case)
+                    answer["final_review_status"] = "complete" if answer["coverage"]["complete"] else "incomplete"
                     write_json(args.output, answer)
+                    if args.final and not answer["coverage"]["complete"]:
+                        print(json.dumps({"status": "incomplete", "report_written": True,
+                                          "reason": "final_review_requirements_unmet"}))
+                        return 3
                     answer = {"status": "written", "result_count": len(answer["results"])}
                 elif args.command == "evaluate":
                     # This is the only code path that opens the held-out reference.

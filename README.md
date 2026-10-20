@@ -231,6 +231,17 @@ Codex and Claude share [one audit workflow](ops/audit-workflow.md) through the r
 `AGENTS.md` and `CLAUDE.md` adapters. `audit init/plan/run/resume/worker/import/status/report/evaluate`
 preserves jobs in the existing ledger, follows scoped static dependencies and PDF
 links, and reports failed/blocked/partial work without declaring it clean.
+For selected repositories, `audit bind-repositories --manifest ... --scope ...`
+records explicit ownership, branch, and Page/deployment associations in the same
+case; `audit preflight --scope ...` lists missing grants before capture. Copy the
+[neutral manifest](examples/repository-manifest.example.json) to a private local
+file and replace its example values. Inspection covers the repository tree,
+emitted raw files, a bounded recent history window with `.patch` content, and
+declared deployments. `run` and `resume` accept `--inspection-only`; each resumed
+interval needs an explicit budget, current scope, and fresh controls. `audit
+report --final` saves the report and exits 3 if coverage remains incomplete.
+Ambiguous broad-name search hits remain review candidates and do not authorize
+arbitrary owner expansion; account and job fanout have separate caps.
 `gate-review` separately reviews captured HTML and capability-authorized isolated
 client gates; unsupported flows stay pending. Install the `documents` extra for PDF
 text extraction and the `browser` extra plus Chromium for optional local replay.
