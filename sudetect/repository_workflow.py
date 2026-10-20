@@ -275,18 +275,32 @@ def _job_result(case, jobs, url):
     if not relevant:
         return "not_scheduled", None
     job = relevant[-1]
-    if job["state"] != "succeeded":
-        return job["state"], None
-    result = _verified_result(case, job)
-    return ("succeeded", result) if result else ("result_missing", None)
+    result = _latest_committed_report(case, relevant, ref)
+    latest_missing = job["state"] == "succeeded" and _verified_result(case, job) is None
+    return ("result_missing" if latest_missing else job["state"], result)
+
+
+def _latest_committed_report(case, jobs, asset_ref):
+    """Read only observations whose result ref was committed to its job."""
+    refs = {job["job_id"]: set(job["result_refs"]) for job in jobs
+            if job["asset_ref"] == asset_ref and job["result_refs"]}
+    if not refs:
+        return None
+    placeholders = ",".join("?" for _ in refs)
+    rows = case.ledger.db.execute(
+        f"SELECT job_id,result_ref,report_json FROM audit_results WHERE job_id IN ({placeholders}) ORDER BY rowid DESC",
+        tuple(refs))
+    for job_id, result_ref, report_json in rows:
+        if result_ref not in refs[job_id]:
+            continue
+        report = json.loads(report_json)
+        if isinstance(report, dict) and report.get("target_id") == asset_ref:
+            return report
+    return None
 
 
 def _verified_result(case, job):
-    prior = case.prior_result(job)
-    if not prior or prior[0] not in job["result_refs"]:
-        return None
-    report = prior[1]
-    return report if report.get("target_id") == job["asset_ref"] else None
+    return _latest_committed_report(case, [job], job["asset_ref"])
 
 
 def _capture_state(result, *, metadata=False):
@@ -319,6 +333,10 @@ def repository_status(case):
         return {"status": "not_bound", "complete": False, "repositories": [],
                 "next_steps": ["bind_operator_repository_manifest"]}
     jobs = case.queue.status()["jobs"]
+    content_jobs_by_asset = {}
+    for job in jobs:
+        if job["job_type"] in {"capture", "content_review"}:
+            content_jobs_by_asset.setdefault(job["asset_ref"], []).append(job)
     rows = []
     for row in manifest["repositories"]:
         needed = _required(row)
@@ -335,17 +353,30 @@ def repository_status(case):
         tree_job_ids = {job["job_id"] for job in jobs if job["asset_ref"] == tree_ref}
         file_jobs = [job for job in jobs if job["parent_job_id"] in tree_job_ids and job["job_type"] == "capture"]
         file_states = []
+        file_body_complete = 0
+        file_analysis_complete = 0
         for job in file_jobs:
-            result = _verified_result(case, job) if job["state"] == "succeeded" else None
-            file_states.append(_capture_state(result) if result else job["state"])
+            related = content_jobs_by_asset[job["asset_ref"]]
+            latest = related[-1]
+            latest_state = ("result_missing" if latest["state"] == "succeeded" and
+                            _verified_result(case, latest) is None else latest["state"])
+            result = _latest_committed_report(case, related, job["asset_ref"])
+            file_states.append(latest_state)
+            if result and result.get("capture_complete"):
+                file_body_complete += 1
+            if _capture_state(result) == "evidenced_complete":
+                file_analysis_complete += 1
         expected = stages["inventory"]["files_identified"]
-        file_complete = sum(value == "evidenced_complete" for value in file_states)
+        file_complete = file_analysis_complete
         inventory_state = stages["inventory"]["state"]
         content_state = ("evidenced_complete" if inventory_state == "evidenced_complete" and file_complete == expected
+                         and all(state == "succeeded" for state in file_states)
                          else "partial" if file_jobs else "blocked_or_pending" if inventory_state in
                          {"blocked_scope", "blocked_input", "failed_terminal", "retry_wait"} else "not_scheduled")
         stages["content"] = {"state": content_state,
                              "files_required": expected, "files_captured_complete": file_complete,
+                             "files_body_captured_complete": file_body_complete,
+                             "file_job_states": {state: file_states.count(state) for state in sorted(set(file_states))},
                              "files_scheduled": len(file_jobs)}
         history_ref = case.locators.put(case.scope_id, needed["history"])
         history_ids = {candidate["job_id"] for candidate in jobs if candidate["asset_ref"] == history_ref}

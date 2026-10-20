@@ -1,8 +1,9 @@
 """Synthetic operator binding and repository coverage checks."""
+import json
 import tempfile
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+import uuid
 
 from sudetect.audit import Case, init_case
 from sudetect.policy import Scope
@@ -12,6 +13,18 @@ from sudetect.repository_workflow import (bind_repositories, preflight,
 
 SLUG = "nebula-sales/guide"
 OWNER = "operator:confirmed-ownership"
+
+
+def commit_report(case, job, report, *, state="succeeded", attach=True):
+    """Attach synthetic evidence using the same job/result-reference invariant."""
+    reference = "fixture:" + uuid.uuid4().hex
+    report = {"target_id": job["asset_ref"], **report}
+    case.ledger.db.execute("INSERT INTO audit_results VALUES(?,?,?)",
+                           (reference, job["job_id"], json.dumps(report)))
+    case.ledger.db.execute("UPDATE audit_jobs SET state=?,result_refs=? WHERE job_id=?",
+                           (state, json.dumps([reference] if attach else []), job["job_id"]))
+    case.ledger.db.commit()
+    return reference
 
 
 def manifest(*, ownership="confirmed", deployments=None):
@@ -94,22 +107,82 @@ class RepositoryWorkflowTests(unittest.TestCase):
             tree_job = next(job for job in case.queue.status()["jobs"] if job["job_type"] == "repository_tree")
             file_job = case.enqueue_url(f"https://raw.githubusercontent.com/{SLUG}/main/one.json",
                                         parent=tree_job["job_id"], scope=scope())
-            case.ledger.db.execute("UPDATE audit_jobs SET state='succeeded',result_refs='[\"fixture:result\"]' WHERE job_id IN (?,?)",
-                                   (tree_job["job_id"], file_job))
-            case.ledger.db.commit()
-            def result(job):
-                if job["job_id"] == tree_job["job_id"]:
-                    return "fixture:result", {"target_id": job["asset_ref"], "status": "COMPLETE", "files_emitted": 2,
-                                            "capture_complete": True, "analysis_complete": True, "gaps": []}
-                if job["job_id"] == file_job:
-                    return "fixture:result", {"target_id": job["asset_ref"], "capture_complete": True,
-                                            "analysis_complete": True, "gaps": []}
-                return None
-            with patch.object(case, "prior_result", side_effect=result):
-                content = repository_status(case)["repositories"][0]["stages"]["content"]
+            commit_report(case, tree_job, {"status": "COMPLETE", "files_emitted": 2,
+                "capture_complete": True, "analysis_complete": True, "gaps": []})
+            file = next(job for job in case.queue.status()["jobs"] if job["job_id"] == file_job)
+            commit_report(case, file, {"capture_complete": True, "analysis_complete": True, "gaps": []})
+            content = repository_status(case)["repositories"][0]["stages"]["content"]
             self.assertEqual(content["files_required"], 2)
             self.assertEqual(content["files_captured_complete"], 1)
             self.assertEqual(content["state"], "partial")
+
+    def test_later_committed_review_improves_file_analysis_without_parent_link(self):
+        with Case(self.root) as case:
+            bind_repositories(case, manifest(), scope())
+            tree = next(job for job in case.queue.status()["jobs"] if job["job_type"] == "repository_tree")
+            file_id = case.enqueue_url(f"https://raw.githubusercontent.com/{SLUG}/main/one.json",
+                                       parent=tree["job_id"], scope=scope())
+            file = next(job for job in case.queue.status()["jobs"] if job["job_id"] == file_id)
+            commit_report(case, tree, {"status": "COMPLETE", "files_emitted": 1,
+                "capture_complete": True, "analysis_complete": True, "gaps": []})
+            commit_report(case, file, {"capture_complete": True, "analysis_complete": False,
+                "gaps": ["analysis_byte_limit"]})
+            content = repository_status(case)["repositories"][0]["stages"]["content"]
+            self.assertEqual(1, content["files_body_captured_complete"])
+            self.assertEqual(0, content["files_captured_complete"])
+            self.assertEqual("partial", content["state"])
+
+            review_id = case.queue.enqueue("content_review", file["asset_ref"], scope_id=case.scope_id,
+                                           dedupe_key="fixture:later-review")
+            review = next(job for job in case.queue.status()["jobs"] if job["job_id"] == review_id)
+            self.assertIsNone(review["parent_job_id"])
+            commit_report(case, review, {"capture_complete": True, "analysis_complete": True, "gaps": []})
+            content = repository_status(case)["repositories"][0]["stages"]["content"]
+            self.assertEqual(1, content["files_body_captured_complete"])
+            self.assertEqual(1, content["files_captured_complete"])
+            self.assertEqual("evidenced_complete", content["state"])
+
+            failed_id = case.queue.enqueue("content_review", file["asset_ref"], scope_id=case.scope_id,
+                                           dedupe_key="fixture:later-failed", state="failed_terminal")
+            content = repository_status(case)["repositories"][0]["stages"]["content"]
+            self.assertEqual(1, content["files_body_captured_complete"])
+            self.assertEqual(1, content["files_captured_complete"])
+            self.assertEqual({"failed_terminal": 1}, content["file_job_states"])
+            self.assertEqual("partial", content["state"])
+
+    def test_uncommitted_review_cannot_inflate_content_counts(self):
+        with Case(self.root) as case:
+            bind_repositories(case, manifest(), scope())
+            tree = next(job for job in case.queue.status()["jobs"] if job["job_type"] == "repository_tree")
+            file_id = case.enqueue_url(f"https://raw.githubusercontent.com/{SLUG}/main/one.json",
+                                       parent=tree["job_id"], scope=scope())
+            file = next(job for job in case.queue.status()["jobs"] if job["job_id"] == file_id)
+            commit_report(case, tree, {"status": "COMPLETE", "files_emitted": 1,
+                "capture_complete": True, "analysis_complete": True, "gaps": []})
+            commit_report(case, file, {"capture_complete": False, "analysis_complete": False,
+                "gaps": ["capture_incomplete"]})
+            review_id = case.queue.enqueue("content_review", file["asset_ref"], scope_id=case.scope_id,
+                                           dedupe_key="fixture:uncommitted")
+            review = next(job for job in case.queue.status()["jobs"] if job["job_id"] == review_id)
+            commit_report(case, review, {"capture_complete": True, "analysis_complete": True,
+                                         "gaps": []}, attach=False)
+            content = repository_status(case)["repositories"][0]["stages"]["content"]
+            self.assertEqual(0, content["files_body_captured_complete"])
+            self.assertEqual(0, content["files_captured_complete"])
+            self.assertEqual({"result_missing": 1}, content["file_job_states"])
+            self.assertEqual("partial", content["state"])
+
+    def test_latest_blocked_inventory_keeps_earlier_partial_evidence(self):
+        with Case(self.root) as case:
+            bind_repositories(case, manifest(), scope())
+            tree = next(job for job in case.queue.status()["jobs"] if job["job_type"] == "repository_tree")
+            commit_report(case, tree, {"status": "PARTIAL", "files_emitted": 3,
+                "capture_complete": True, "analysis_complete": False, "gaps": ["repository_tree_incomplete"]})
+            case.queue.enqueue("content_review", tree["asset_ref"], scope_id=case.scope_id,
+                               dedupe_key="fixture:blocked-tree-review", state="blocked_input")
+            inventory = repository_status(case)["repositories"][0]["stages"]["inventory"]
+            self.assertEqual("blocked_input", inventory["state"])
+            self.assertEqual(3, inventory["files_identified"])
 
     def test_conflicting_rebind_is_rejected(self):
         with Case(self.root) as case:
@@ -145,18 +218,14 @@ class RepositoryWorkflowTests(unittest.TestCase):
             patch_id = case.enqueue_url(f"https://github.com/{SLUG}/commit/{'a'*40}.patch",
                                         parent=history["job_id"], scope=scope(), job_type="repository_patch")
             ids = (tree["job_id"], history["job_id"], deployment["job_id"], file_id, patch_id)
-            case.ledger.db.executemany("UPDATE audit_jobs SET state='succeeded',result_refs='[\"fixture:result\"]' WHERE job_id=?", [(i,) for i in ids])
-            case.ledger.db.commit()
-            def result(job):
-                base = {"target_id": job["asset_ref"], "capture_complete": True,
-                        "analysis_complete": True, "gaps": []}
+            for job in (j for j in case.queue.status()["jobs"] if j["job_id"] in ids):
+                base = {"capture_complete": True, "analysis_complete": True, "gaps": []}
                 if job["job_id"] == tree["job_id"]:
                     base.update(status="COMPLETE", files_emitted=1)
                 if job["job_id"] == history["job_id"]:
                     base.update(commits_examined=1, gaps=["history_window_not_exhaustive"])
-                return "fixture:result", base
-            with patch.object(case, "prior_result", side_effect=result):
-                status = repository_status(case)
+                commit_report(case, job, base)
+            status = repository_status(case)
             self.assertTrue(status["complete"], status)
             self.assertFalse(status["repositories"][0]["stages"]["history"]["window_exhaustive"])
 
