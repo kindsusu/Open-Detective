@@ -34,7 +34,9 @@ def patch_requires_material_hold(signal_codes):
     """Labels/UI hints alone do not prove personal data or a usable secret."""
     non_material = {"CONFIDENTIAL_MARKER_CANDIDATE", "HIDDEN_DOM_PRESENT",
                     "LOGIN_FORM_INDICATOR", "RUNTIME_ENDPOINT_UNRESOLVED",
-                    "RUNTIME_ENDPOINT_CANDIDATE", "KR_BUSINESS_NUMBER_CANDIDATE"}
+                    "RUNTIME_ENDPOINT_CANDIDATE", "KR_BUSINESS_NUMBER_CANDIDATE",
+                    "STRUCTURED_DATA_PARSE_INCOMPLETE", "JSON_PARSE_INCOMPLETE",
+                    "HTML_PARSE_INCOMPLETE"}
     return not signal_codes or bool(set(signal_codes) - non_material)
 MAX_DURATION = 60
 _SHA = re.compile(r"[0-9a-f]{40}")

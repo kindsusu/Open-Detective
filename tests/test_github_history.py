@@ -6,7 +6,8 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from sudetect.classifiers import analyze as classify
-from sudetect.github_history import CodeError, analyze_repository_patch, discover_history
+from sudetect.github_history import (CodeError, analyze_repository_patch, discover_history,
+                                     patch_requires_material_hold)
 from sudetect.locators import LocatorStore
 from sudetect.policy import Scope
 
@@ -81,6 +82,16 @@ class GitHubHistoryTests(unittest.TestCase):
     def tearDown(self):
         self.store.close()
         self.tmp.cleanup()
+
+    def test_structure_parse_diagnostic_does_not_hold_without_material_signal(self):
+        non_material = {"HIDDEN_DOM_PRESENT", "KR_BUSINESS_NUMBER_CANDIDATE",
+                        "STRUCTURED_DATA_PARSE_INCOMPLETE"}
+        self.assertFalse(patch_requires_material_hold(non_material))
+        for code in ("CLIENT_PASSWORD_CANDIDATE", "KR_PHONE_VALUE_CANDIDATE",
+                     "KR_VEHICLE_PLATE_CANDIDATE"):
+            with self.subTest(code=code):
+                self.assertTrue(patch_requires_material_hold(non_material | {code}))
+        self.assertTrue(patch_requires_material_hold(set()))
 
     def test_metadata_mode_never_requests_commit_detail_or_patch(self):
         fake = Fake()
