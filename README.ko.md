@@ -239,6 +239,7 @@ Codex와 Claude는 루트 AGENTS.md·CLAUDE.md에서 [같은 실행 절차](ko/o
 미완료로 남긴다. 별도 gate-review는 수집한 HTML과 승인된 클라이언트 게이트를
 격리 검토하며 지원하지 않는 흐름은 pending으로 기록한다. PDF 텍스트 추출에는
 documents extra, 선택적 로컬 재현에는 browser extra와 Chromium이 필요하다.
+대형 저장소 재검사는 budget의 `max_repository_files`와 `max_patch_bytes`를 명시적으로 높일 수 있으며 scope와 총예산 제한은 유지된다. 선택적 `media` extra는 로컬 OCR을 추가하고 인식 원문 대신 신호·건수·검사 범위를 기록한다. OCR 완료, 지원 언어, 정적 텍스트 분석, 전체 시각 검토는 구분한다.
 합성 테스트 결과는 실제 회사 점검이나 두 모델 호스트의 실행 비교 결과가 아니다.
 
 선택한 저장소는 [중립 manifest 예시](examples/repository-manifest.example.json)를 비공개 로컬 입력에 복사해 실제 소유 근거, 정확한 저장소·브랜치, Page 연결 근거, 배포 URL로 교체한다. `audit bind-repositories --manifest ... --scope ...`는 같은 case에 선택을 저장하고, `audit preflight --scope ...`는 inventory·history·원본 파일·패치·배포에 부족한 scope를 표시한다. 확인되지 않은 소유나 유사한 검색명만으로 저장소·Page 연결을 승인하지 않는다. 점검은 tree inventory → 나열된 원본 파일 → 최대 5개 최근 commit과 `.patch` → 선언된 배포 순서로 근거를 남기며 전체 과거 이력을 보장하지 않는다. `run`·`resume`의 `--inspection-only`는 새 발견 없이 기존 점검 작업을 처리한다. 같은 case를 재개할 때마다 명시적 budget, 현재 scope, 새 control이 필요하다. `audit report --final`은 미완료여도 보고서를 저장하고 종료 코드 3을 반환한다. 모호한 넓은 이름 검색 결과는 검토 후보로 남고 임의 계정 확장은 자동 실행되지 않으며, 계정·작업 증가에 각각 상한이 있다.

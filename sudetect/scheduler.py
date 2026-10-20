@@ -25,7 +25,8 @@ FINAL = frozenset({"succeeded", "failed_terminal", "cancelled"})
 CLAIMABLE = frozenset({"ready", "retry_wait"})
 LIMITS = {"max_requests": 100, "max_download_bytes": 50_000_000,
           "max_analysis_bytes": 50_000_000, "max_seconds": 3600,
-          "max_attempts": 3, "max_jobs": 1000}
+          "max_attempts": 3, "max_jobs": 1000,
+          "max_repository_files": 1000, "max_patch_bytes": 524288}
 _IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _REASONS = frozenset({"no_ready_work", "budget_exhausted", "time_exhausted", "jobs_exhausted", "scope_expired",
                       "ready_exhausted", "input_required", "environment_failure", "user_stop"})
@@ -180,6 +181,8 @@ class Scheduler:
                     raise LedgerError("max_seconds must be finite and positive")
             else:
                 _integer(value, name)
+        if limits["max_repository_files"] > 10_000 or limits["max_patch_bytes"] > 134_217_728:
+            raise LedgerError("repository review limit exceeds supported maximum")
         run_id = f"ar_{uuid.uuid4().hex}"
         when = _now()
         with self._transaction():

@@ -19,6 +19,7 @@ from .structured_data import inspect_static_json
 MAX_MANIFEST_BYTES = 1_048_576
 MAX_ASSETS = 100
 MAX_CONTENT_BYTES = 262_144
+MAX_STRUCTURE_BYTES = 4 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _LOCATOR_REF = re.compile(r"^(?:opaque:[0-9a-f]{32}|hmac-sha256:[0-9a-f]{64})$")
 _CATEGORIES = {
@@ -70,11 +71,15 @@ class _MarkupStructure(HTMLParser):
         self._cell: list[str] | None = None
         self.visible_chunks: list[str] = []
         self.truncated = False
+        self._active_script_parts: list[str] = []
+        self._script_chars = 0
+        self._visible_chars = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "script":
             self.in_script = True
             self.json_script = (dict(attrs).get("type") or "").casefold() in {"application/json", "application/ld+json"}
+            self._active_script_parts = []
         if tag == "style": self.style_depth += 1
         if tag == "table":
             self.table_depth += 1
@@ -87,14 +92,26 @@ class _MarkupStructure(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not self.in_script and not self.style_depth:
             self.text_terms.update(_terms(data))
-            if len(self.visible_chunks) < 4096: self.visible_chunks.append(data)
-            else: self.truncated = True
+            remaining = MAX_STRUCTURE_BYTES - self._visible_chars
+            if len(data) > remaining: self.truncated = True
+            if remaining > 0:
+                self.visible_chunks.append(data[:remaining])
+                self._visible_chars += min(len(data), remaining)
             if self._cell is not None: self._cell.append(data)
-        elif self.json_script and len(self.json_chunks) < 16: self.json_chunks.append(data)
-        elif not self.json_script and len(self.script_chunks) < 16: self.script_chunks.append(data)
+        elif self.in_script:
+            remaining = MAX_STRUCTURE_BYTES - self._script_chars
+            if len(data) > remaining: self.truncated = True
+            if remaining > 0:
+                self._active_script_parts.append(data[:remaining])
+                self._script_chars += min(len(data), remaining)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "script": self.in_script = self.json_script = False
+        if tag == "script":
+            if self.in_script:
+                target = self.json_chunks if self.json_script else self.script_chunks
+                target.append("".join(self._active_script_parts))
+            self._active_script_parts = []
+            self.in_script = self.json_script = False
         if tag == "style" and self.style_depth: self.style_depth -= 1
         if tag in {"td", "th"} and self._cell is not None:
             self._cells.append(" ".join(self._cell).strip()); self._cell = None

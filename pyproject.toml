@@ -13,6 +13,15 @@ dependencies = []
 [project.optional-dependencies]
 browser = ["playwright==1.58.0"]
 documents = ["pypdf>=5,<7"]
+media = [
+  "rapidocr-onnxruntime==1.4.4",
+  "winrt-Windows.Foundation==3.2.1; sys_platform == 'win32'",
+  "winrt-Windows.Foundation.Collections==3.2.1; sys_platform == 'win32'",
+  "winrt-Windows.Globalization==3.2.1; sys_platform == 'win32'",
+  "winrt-Windows.Graphics.Imaging==3.2.1; sys_platform == 'win32'",
+  "winrt-Windows.Media.Ocr==3.2.1; sys_platform == 'win32'",
+  "winrt-Windows.Storage.Streams==3.2.1; sys_platform == 'win32'",
+]
 test = ["jsonschema>=4.23,<5"]
 
 [project.scripts]

@@ -385,10 +385,12 @@ def repository_status(case):
         patch_jobs = [job for job in jobs if job["job_type"] == "repository_patch" and job["parent_job_id"] in history_ids]
         patch_complete = 0
         for job in patch_jobs:
-            if job["state"] == "succeeded":
-                result = _verified_result(case, job)
-                if result and _capture_state(result) == "evidenced_complete":
-                    patch_complete += 1
+            related = [candidate for candidate in jobs if candidate["asset_ref"] == job["asset_ref"]
+                       and candidate["job_type"] in {"repository_patch", "content_review"}]
+            result = _latest_committed_report(case, related, job["asset_ref"])
+            if (related[-1]["state"] == "succeeded" and _verified_result(case, related[-1]) is not None
+                    and result and _capture_state(result) == "evidenced_complete"):
+                patch_complete += 1
         expected_patches = stages["history"]["commits_examined"]
         stages["patch"] = {"state": "evidenced_complete" if expected_patches and patch_complete == expected_patches else
                            "partial" if patch_jobs else "blocked_or_pending" if stages["history"]["state"] in

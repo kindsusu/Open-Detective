@@ -98,6 +98,15 @@ crash. They count redirects and retries. Actual capture sizes remain observation
 reservations are not reported as downloaded bytes. A retry must reserve a new
 attempt, because a crashed request cannot be assumed not to have occurred.
 
+For a reviewed large repository, a run budget may explicitly set
+`max_repository_files` (default 1,000; maximum 10,000) and `max_patch_bytes`
+(default 524,288; maximum 134,217,728). The patch capture is also bounded by
+the scope's `max_bytes` and the aggregate download/analysis budgets. Raising a
+file cap does not resolve a provider-truncated Git tree. Review the actual
+remaining work before increasing limits; the defaults do not increase on retry.
+Large captures use a bounded transient response cache rather than retaining
+every downloaded image in memory.
+
 Ready work is processed until the interval ends or there is no eligible work.
 `retry_wait`, `blocked_scope`, `blocked_input`, failures, and partial analysis remain
 visible and prevent an overall complete claim. Use the saved due time for a later
@@ -131,7 +140,7 @@ URLs and operator account inputs retain their independent priority.
 When a persisted seed plan is upgraded to version 2, migration adds missing-prefix
 jobs idempotently and retains completed jobs. For a previously successful capture
 with no `engine_review_version`, schedule one engine review under the current scope
-and budget using the `engine-review:2:asset` deduplication key. Resuming the same
+and budget using the `engine-review:3:asset` deduplication key. Resuming the same
 engine-review version must not fetch the asset again.
 
 For an authorized repository candidate, the common audit may request up to five
@@ -164,8 +173,22 @@ omitted image remains an explicit media/OCR gap. The default capture limit remai
 widens the approved scope or budget automatically. Do not claim image review or OCR
 coverage from text extraction or projection alone.
 
-The gate parser is bounded to 4 MiB. If the original response exceeds that bound,
-retain an explicit gap instead of implying that the entire response was parsed.
+Raster images and supported inline base64 images have an optional local OCR pass.
+Install the `media` extra for Windows OCR bindings and the bundled RapidOCR
+fallback, or provide a trusted local Tesseract installation with the requested
+language data. Windows uses installed language packs, including Korean when
+available. OCR output is
+classified in memory; reports contain signal codes, coverage, and counts rather
+than recognized text. The bundled RapidOCR model does not cover Korean, so a
+Korean request retains `ocr_requested_language_not_covered`. OCR completion is
+separate from full visual, barcode, and embedded-metadata review. Missing engines,
+unsupported formats, pixel/byte/time limits and language gaps remain explicit.
+
+The standalone gate parser defaults to 4 MiB. The common audit passes an explicit
+limit up to 32 MiB, still bounded by the scope, so an already captured large HTML
+file can be inspected without substituting a projection for its original hash.
+Responses exceeding the selected limit retain an explicit gap. This static
+review does not authorize a live gate mutation or credential test.
 
 Keep capture, text/analysis, structure, media, gate, sensitivity, publication
 approval, and server authorization as separate review dimensions. `NOT_INSPECTED`,

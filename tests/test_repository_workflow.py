@@ -192,6 +192,29 @@ class RepositoryWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "binding_conflict"):
                 bind_repositories(case, altered, scope())
 
+    def test_patch_followup_uses_committed_latest_result(self):
+        with Case(self.root) as case:
+            bind_repositories(case, manifest(), scope())
+            history = next(j for j in case.queue.status()["jobs"] if j["job_type"] == "repository_history")
+            commit_report(case, history, {"capture_complete": True, "analysis_complete": True,
+                "commits_examined": 1, "gaps": ["history_window_not_exhaustive"]})
+            patch_id = case.enqueue_url(f"https://github.com/{SLUG}/commit/{'a'*40}.patch",
+                parent=history["job_id"], scope=scope(), job_type="repository_patch")
+            job = next(j for j in case.queue.status()["jobs"] if j["job_id"] == patch_id)
+            commit_report(case, job, {"capture_complete": False, "analysis_complete": False,
+                                     "gaps": ["capture_incomplete"]})
+            review_id = case.queue.enqueue("content_review", job["asset_ref"], scope_id=case.scope_id,
+                dedupe_key="fixture:patch-followup")
+            review = next(j for j in case.queue.status()["jobs"] if j["job_id"] == review_id)
+            commit_report(case, review, {"capture_complete": True, "analysis_complete": True, "gaps": []})
+            stage = repository_status(case)["repositories"][0]["stages"]["patch"]
+            self.assertEqual(1, stage["patches_captured_complete"])
+            self.assertEqual("evidenced_complete", stage["state"])
+            case.queue.enqueue("content_review", job["asset_ref"], scope_id=case.scope_id,
+                dedupe_key="fixture:patch-failed", state="failed_terminal")
+            stage = repository_status(case)["repositories"][0]["stages"]["patch"]
+            self.assertEqual("partial", stage["state"])
+
     def test_expiry_renewal_and_bound_url_guard(self):
         with Case(self.root) as case:
             first = manifest()

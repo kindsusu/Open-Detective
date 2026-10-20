@@ -2,11 +2,29 @@ import json
 import unittest
 
 from sudetect.asset_profile import profile_content
-from sudetect.classifiers import analyze
+from sudetect.classifiers import _HTMLSignals, analyze
 from sudetect.structured_data import inspect_static_json
 
 
 class StaticStructuredDataTests(unittest.TestCase):
+    def test_many_short_scripts_are_analyzed_without_chunk_count_cutoff(self):
+        body = '<html>' + ''.join(
+            '<script>const rate' + str(index) + ' = {"price":' + str(index) + '};</script>'
+            for index in range(24)) + '</html>'
+        report = analyze(body.encode(), 'text/html').report
+        self.assertTrue(report['analysis_complete'])
+        self.assertEqual(24, report['asset_profile']['static_json_literals']['literal_count'])
+        pricing = next(row for row in report['asset_profile']['business_data_categories']
+                       if row['category'] == 'pricing')
+        self.assertEqual(24, pricing['filled_field_count'])
+
+    def test_split_json_script_is_reassembled_before_parsing(self):
+        parser = _HTMLSignals()
+        parser.feed('<script type="application/json">{"price":')
+        parser.feed('42}</script>')
+        self.assertEqual(['{"price":42}'], parser.json_chunks)
+        self.assertFalse(parser.truncated)
+
     def test_multiple_literals_count_roots_and_canonical_filled_fields(self):
         body = '''<script>
         const cars = [{"vehicle_model":"모형 A", "lease_rate":0, "price":120},
@@ -32,6 +50,7 @@ class StaticStructuredDataTests(unittest.TestCase):
         self.assertEqual(1, report["asset_profile"]["static_json_literals"]["root_item_count"])
         self.assertEqual(1, next(row for row in report["asset_profile"]["business_data_categories"]
                                  if row["category"] == "pricing")["filled_field_count"])
+        self.assertFalse(report['structure_analysis_complete'])
         self.assertIn("image_or_base64_review", report["pending_reviews"])
 
     def test_template_calculation_and_field_names_are_separate(self):

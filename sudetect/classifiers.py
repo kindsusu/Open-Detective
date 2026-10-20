@@ -116,6 +116,9 @@ class _HTMLSignals(HTMLParser):
         self.hidden_chunks = []
         self.input_values = []
         self._stack = []
+        self._active_script_parts = []
+        self._script_chars = 0
+        self._body_chars = 0
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -135,6 +138,7 @@ class _HTMLSignals(HTMLParser):
             self.scripts += 1
             self.script_depth = True
             self.json_depth = (a.get("type") or "").lower() in ("application/json", "application/ld+json")
+            self._active_script_parts = []
         attr = "src" if tag in ("script", "iframe") else "href" if tag in ("a", "link") else None
         if attr and a.get(attr) and len(self.links) < MAX_LINKS:
             self.links.append((tag, a[attr]))
@@ -142,6 +146,10 @@ class _HTMLSignals(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "style" and self.style_depth: self.style_depth -= 1
         if tag == "script":
+            if self.script_depth:
+                target = self.json_chunks if self.json_depth else self.script_chunks
+                target.append("".join(self._active_script_parts))
+            self._active_script_parts = []
             self.script_depth = False
             self.json_depth = False
         for index in range(len(self._stack) - 1, -1, -1):
@@ -151,20 +159,21 @@ class _HTMLSignals(HTMLParser):
                 break
 
     def handle_data(self, data):
-        if self.json_depth:
-            if len(self.json_chunks) < 16:
-                self.json_chunks.append(data)
-            else:
+        if self.script_depth:
+            remaining = MAX_STRUCTURE_BYTES - self._script_chars
+            if len(data) > remaining:
                 self.truncated = True
-        elif self.script_depth:
-            if len(self.script_chunks) < 16:
-                self.script_chunks.append(data)
-            else:
-                self.truncated = True
+            if remaining > 0:
+                self._active_script_parts.append(data[:remaining])
+                self._script_chars += min(len(data), remaining)
         elif not self.style_depth:
             target = self.hidden_chunks if self.hidden_depth else self.visible_chunks
-            if len(target) < 4096: target.append(data)
-            else: self.truncated = True
+            remaining = MAX_STRUCTURE_BYTES - self._body_chars
+            if len(data) > remaining:
+                self.truncated = True
+            if remaining > 0:
+                target.append(data[:remaining])
+                self._body_chars += min(len(data), remaining)
 
 
 @dataclass

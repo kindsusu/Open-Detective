@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import time
 from urllib.parse import urljoin, urlsplit
@@ -37,11 +38,17 @@ class _RetryCapture(Exception):
 
 
 def _review_context(scope, capability, budget):
-    values = {"engine_review_version": 2, "policy": scope.policy_id if scope else None, "max_bytes": scope.max_bytes if scope else None,
+    from .media_review import _windows_ocr_available
+    values = {"engine_review_version": 3, "policy": scope.policy_id if scope else None, "max_bytes": scope.max_bytes if scope else None,
               "capability": capability, "pdf": importlib.util.find_spec("pypdf") is not None,
               "browser": importlib.util.find_spec("playwright") is not None,
               "browser_path": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
-              "analysis_budget": budget.get("max_analysis_bytes"), "download_budget": budget.get("max_download_bytes")}
+              "ocr_rapidocr": importlib.util.find_spec("rapidocr_onnxruntime") is not None,
+              "ocr_windows": _windows_ocr_available(),
+              "ocr_tesseract": shutil.which("tesseract"),
+              "analysis_budget": budget.get("max_analysis_bytes"), "download_budget": budget.get("max_download_bytes"),
+              "repository_files": budget.get("max_repository_files", 1000),
+              "patch_bytes": budget.get("max_patch_bytes", 524288)}
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
@@ -268,13 +275,21 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             return case.transient_responses[target]
         response = fetcher(target, active_scope) if fetcher else fetch(target, active_scope, **kwargs)
         if response.observation.get("capture_complete") and response.observation.get("http_status") == 200:
-            case.transient_responses[target] = response
+            # A long image/file pass must not retain its entire download in RAM.
+            cache_limit = 64 * 1024 * 1024
+            if len(response.body) <= cache_limit:
+                cache_bytes = sum(len(item.body) for item in case.transient_responses.values())
+                while case.transient_responses and cache_bytes + len(response.body) > cache_limit:
+                    oldest = next(iter(case.transient_responses))
+                    cache_bytes -= len(case.transient_responses.pop(oldest).body)
+                case.transient_responses[target] = response
         return response
     analysis_kind = (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"])
+    review_limits = case.queue.get_run(run_id)["budget"]
     capture_options = {"follow_redirects": False}
     if analysis_kind == "repository_patch":
         from .github_history import MAX_PATCH_BYTES
-        capture_options["max_bytes"] = min(scope.max_bytes, MAX_PATCH_BYTES)
+        capture_options["max_bytes"] = min(scope.max_bytes, review_limits.get("max_patch_bytes", MAX_PATCH_BYTES))
     elif analysis_kind in {"repository_tree", "repository_history"}:
         capture_options["max_bytes"] = min(scope.max_bytes,
             8_388_608 if analysis_kind == "repository_tree" else 2_097_152)
@@ -292,7 +307,7 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             ctype = hint
             observation["media_type_basis"] = "path_hint_for_offline_analysis"
     observation["policy_id"] = scope.policy_id
-    observation["engine_review_version"] = 2
+    observation["engine_review_version"] = 3
     gaps, refs = [], []
     redirect_ref = result.headers.get("location") if observation.get("http_status") in {301, 302, 303, 307, 308} else None
     if result.headers.get("content-encoding", "identity").lower() not in {"", "identity"}:
@@ -307,10 +322,11 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             profile, refs = analyze_history(body, url)
         elif analysis_kind == "repository_patch":
             from .repository_history import analyze_repository_patch
-            profile = analyze_repository_patch(body, url, case.locators, case.scope_id)
+            profile = analyze_repository_patch(body, url, case.locators, case.scope_id,
+                max_bytes=min(scope.max_bytes, review_limits.get("max_patch_bytes", 524288)))
         elif analysis_kind == "repository_tree":
             from .repository_assets import analyze_tree
-            profile, locations = analyze_tree(body, url)
+            profile, locations = analyze_tree(body, url, max_files=review_limits.get("max_repository_files", 1000))
             profile.update(content="NOT_INSPECTED", analysis_complete=profile["status"] == "COMPLETE")
             refs = [("repository_file", location) for location in locations]
             if profile["status"] != "COMPLETE":
@@ -325,6 +341,11 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
                 gaps.extend(reference_gaps)
             else:
                 gaps.append("document_reference_analysis_budget_exhausted")
+        elif ctype.lower().startswith("image/") or Path(urlsplit(url).path).suffix.lower() in {
+                ".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".bmp", ".tif", ".tiff", ".ico"}:
+            from .media_review import analyze_image
+            profile = analyze_image(body, ctype, capture_complete=capture_complete,
+                max_bytes=min(scope.max_bytes, 32 * 1024 * 1024))
         elif (ctype.lower().startswith("text/") or any(kind in ctype.lower() for kind in (
                 "json", "javascript", "xml", "ecmascript"))):
             analysis_body, analysis_capture_complete = body, capture_complete
@@ -344,6 +365,17 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             profile = analysis.report
             if projection_metadata:
                 profile["media_projection"] = projection_metadata
+                from .media_review import analyze_inline_images
+                inline_review = analyze_inline_images(body, max_seconds=120.0)
+                profile["inline_image_review"] = inline_review
+                gaps.extend(inline_review.get("pending_reviews", []))
+                if (inline_review.get("inline_images_found") == inline_review.get("ocr_completed")
+                        and not set(inline_review.get("pending_reviews", [])) & {
+                            "ocr_requested_language_not_covered", "ocr_text_byte_limit"}):
+                    gaps = [gap for gap in gaps if gap != "inline_image_ocr_unexamined"]
+                if inline_review.get("content") == "SENSITIVE_CANDIDATE":
+                    profile["content"] = "SENSITIVE_CANDIDATE"
+                profile.setdefault("signals", []).extend(inline_review.get("signals", []))
             refs, unresolved, base = extract_references(analysis_body, ctype)
             gaps.extend(unresolved)
             if base:
@@ -373,11 +405,12 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
                     replay = case.ledger.db.execute("INSERT OR IGNORE INTO audit_gate_attempts VALUES(?,?)",
                         (job["job_id"], datetime.now(timezone.utc).isoformat())).rowcount == 1
             gate = review_gate(body, ctype, original_url, scope=scope, capability=capability,
-                               replay_browser=replay)
+                               replay_browser=replay, max_bytes=min(scope.max_bytes, 32 * 1024 * 1024))
             profile["gate_review"] = gate
             if gate.get("auth_ui_present") and not gate.get("client_gate_tested"):
                 gaps.append("gate_review_incomplete")
-            if gate.get("reason") in {"response_missing_or_oversize", "unsupported_encoding", "html_parse_incomplete"}:
+            if gate.get("reason") in {"response_missing_or_oversize", "unsupported_encoding", "html_parse_incomplete",
+                                      "script_static_analysis_incomplete"}:
                 gaps.append("gate_structure_unexamined")
             if gate.get("encrypted_payload_observed"):
                 gaps.append("encrypted_payload_unexamined")
@@ -625,13 +658,15 @@ def _channel_complete(case, channel):
 
 
 def _patch_lineage_blocked(case, job):
+    from .github_history import patch_requires_material_hold
     if (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"]) != "repository_patch":
         return False
     url = case.locators.get(case.scope_id, job["asset_ref"])
     prefix = url.rsplit("/", 1)[0]
     for row in case.ledger.db.execute("SELECT report_json FROM audit_results"):
         report = json.loads(row[0])
-        if report.get("hold_repository_patch_lineage") and report.get("target_id"):
+        if (report.get("hold_repository_patch_lineage") and report.get("target_id")
+                and patch_requires_material_hold(report.get("signal_codes", []))):
             prior = case.locators.get(case.scope_id, report["target_id"])
             if prior.rsplit("/", 1)[0] == prefix:
                 return True
@@ -661,7 +696,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                         case.ledger._event("AUDIT_MEDIA_PRIORITY_UPDATED", job["job_id"], {"priority": 1})
             if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch"} and scope:
                 previous = case.prior_result(job)
-                if previous and previous[1].get("engine_review_version", 0) < 2:
+                if previous and previous[1].get("engine_review_version", 0) < 3:
                     candidate = case.locators.get(case.scope_id, job["asset_ref"])
                     try:
                         scope.authorize(candidate)
@@ -670,7 +705,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                     case.queue.enqueue("content_review", job["asset_ref"], scope_id=case.scope_id,
                         policy_id=scope.policy_id, parent_job_id=job["job_id"],
                         origin_evidence_ref=previous[0], state="ready", priority=25,
-                        dedupe_key="engine-review:2:" + job["asset_ref"],
+                        dedupe_key="engine-review:3:" + job["asset_ref"],
                         checkpoint={"analysis_kind": job["job_type"], "depth": (job.get("checkpoint") or {}).get("depth", 0),
                                     "document_base_ref": (job.get("checkpoint") or {}).get("document_base_ref"),
                                     "reason_codes": ["engine_review_upgrade"], "context_digest": review_context})
@@ -689,6 +724,15 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                 case.queue.unblock(job["job_id"])
             if job["state"] == "blocked_input" and job["job_type"] == "channel_review" and _channel_complete(case, job["asset_ref"]):
                 case.queue.unblock(job["job_id"])
+            if (job["state"] == "blocked_input" and scope and
+                    "SENSITIVE_PATCH_LINEAGE_REVIEW" in (job.get("checkpoint") or {}).get("reason_codes", [])
+                    and not _patch_lineage_blocked(case, job)):
+                try:
+                    candidate = scope.authorize(case.locators.get(case.scope_id, job["asset_ref"]))
+                    if repository_job_authorized(case, candidate, scope) is not False:
+                        case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
+                except PolicyError:
+                    pass
             if job["state"] == "blocked_input" and job["job_type"] == "content_review" and scope:
                 checkpoint = job.get("checkpoint") or {}
                 reasons = set(checkpoint.get("reason_codes", []))
@@ -811,7 +855,7 @@ def case_status(case):
             codes = (job.get("checkpoint") or {}).get("reason_codes", [])
             reasons.update(set(codes or [job.get("last_error_code") or job["state"]]))
     incomplete_targets = sum(bool(item.get("gaps")) or not item.get("capture_complete")
-                             or not item.get("analysis_complete") or item.get("engine_review_version", 0) < 2
+                             or not item.get("analysis_complete") or item.get("engine_review_version", 0) < 3
                              for item in latest.values())
     status.update(queue_complete=status["complete"], complete=bool(status["complete"] and search_complete and not search_remaining and not incomplete_targets),
                   search_complete=search_complete,

@@ -191,7 +191,7 @@ class GitHubHistoryTests(unittest.TestCase):
         self.assertEqual(1, len(result["commits"][0]["changed_files"]))
 
     def test_zero_count_hunks_and_quoted_space_path(self):
-        body = "\n".join([f"From {SHA} Mon Sep 17 00:00:00 2001", "diff --git a/data/old b/data/new",
+        body = "\n".join([f"From {SHA} Mon Sep 17 00:00:00 2001", 'diff --git "a/data/space name.json" "b/data/space name.json"',
                           '--- /dev/null', '+++ "b/data/space name.json"',
                           "@@ -0,0 +1 @@", "+https://added.example.test/", ""])
         result = discover_history(manifest(), self.store, inspect_patches=True, scope=scope(), fetcher=Fake(patch=body))
@@ -200,16 +200,18 @@ class GitHubHistoryTests(unittest.TestCase):
         self.assertEqual("added", commit["changed_files"][0]["status"])
         self.assertEqual("https://added.example.test/", self.store.get("fixture-history", commit["literal_url_changes"]["introduced_locator_refs"][0]))
 
-    def test_binary_and_rename_only_are_explicit_gaps(self):
+    def test_binary_remains_gap_and_rename_only_is_complete_metadata(self):
         header = f"From {SHA} Mon Sep 17 00:00:00 2001\n"
         cases = [(header + "diff --git a/a.png b/a.png\nGIT binary patch\nliteral 3\nabc\n", "binary_patch_not_inspected"),
-                 (header + "diff --git a/old b/new\nrename from old\nrename to new\n", "patch_has_no_text_hunks"),
+                 (header + "diff --git a/old b/new\nrename from old\nrename to new\n", None),
                  (patch_text("-old", "+new") + "diff --git a/a.png b/a.png\nBinary files a/a.png and b/a.png differ\n", "binary_patch_not_inspected")]
         for body, expected in cases:
             with self.subTest(expected=expected):
                 result = discover_history(manifest(), self.store, inspect_patches=True, scope=scope(), fetcher=Fake(patch=body))
-                self.assertEqual("incomplete", result["commits"][0]["patch_inspection"])
-                self.assertIn(expected, {g["reason"] for g in result["coverage_gaps"]})
+                self.assertEqual("value_free_summary" if expected is None else "incomplete",
+                                 result["commits"][0]["patch_inspection"])
+                if expected is not None:
+                    self.assertIn(expected, {g["reason"] for g in result["coverage_gaps"]})
                 self.assertNotIn("literal_url_changes", result["commits"][0])
 
     def test_analysis_limit_blocks_urls_after_classifier_window(self):

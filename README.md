@@ -245,5 +245,9 @@ arbitrary owner expansion; account and job fanout have separate caps.
 `gate-review` separately reviews captured HTML and capability-authorized isolated
 client gates; unsupported flows stay pending. Install the `documents` extra for PDF
 text extraction and the `browser` extra plus Chromium for optional local replay.
+Large-repository rechecks may explicitly increase `max_repository_files` and
+`max_patch_bytes` in the run budget; scope and aggregate limits still apply.
+The optional `media` extra adds local OCR with value-free reports. OCR completion,
+language coverage, static text analysis, and full visual review remain separate.
 These synthetic-tested features do not imply a completed live audit or actual
 Codex-versus-Claude host comparison. See [gate review](ops/gate-review.md).

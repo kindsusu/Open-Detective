@@ -176,9 +176,10 @@ def _scan_js(source: str) -> tuple[list[Any], bool]:
         try:
             value = json.loads(candidate)
         except (ValueError, RecursionError):
-            # A JavaScript object is not necessarily JSON; later literals remain eligible.
-            if re.match(r'\{\s*"|\[\s*(?:\{|"|-?\d|true\b|false\b|null\b)', candidate):
-                complete = False
+            # JavaScript object syntax can contain unquoted keys, comments,
+            # functions, or expressions. Keep scanning later literals, but do
+            # not report full structural coverage after skipping this one.
+            complete = False
             pos = end
             continue
         values.append(value)

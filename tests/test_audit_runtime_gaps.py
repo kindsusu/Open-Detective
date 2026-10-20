@@ -83,7 +83,7 @@ class RuntimeGapTests(unittest.TestCase):
             self.assertEqual(1, len(calls))
             run_case(case, {'max_requests': 1}, scope=policy(), fetcher=fetched)
             self.assertEqual(2, len(calls))
-            self.assertEqual(1, sum(j['dedupe_key'].startswith('engine-review:2:') for j in case.queue.status()['jobs']))
+            self.assertEqual(1, sum(j['dedupe_key'].startswith('engine-review:3:') for j in case.queue.status()['jobs']))
             run_case(case, {'max_requests': 1}, scope=policy(), fetcher=fetched)
             self.assertEqual(2, len(calls))
 

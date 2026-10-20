@@ -79,3 +79,20 @@ class CompletionTests(unittest.TestCase):
                 run_case(case, {"max_requests": 1}, scope=active, inspection_only=True)
             self.assertEqual(calls[url]["max_bytes"], 524288)
             self.assertFalse(calls[url]["follow_redirects"])
+
+    def test_expanded_patch_limit_still_obeys_scope(self):
+        calls = {}
+        def capture(url, active_scope, **kwargs):
+            calls[url] = kwargs
+            return response(url, active_scope)
+        url = "https://seed.test/expanded.patch"
+        active = policy()
+        active.max_bytes = 1048576
+        with Case(self.root) as case:
+            job_id = case.enqueue_url(url, scope=active, job_type="repository_patch")
+            case.ledger.db.execute("UPDATE audit_jobs SET priority=100 WHERE job_id=?", (job_id,))
+            case.ledger.db.commit()
+            with patch("sudetect.transport.fetch", side_effect=capture):
+                run_case(case, {"max_requests": 1, "max_patch_bytes": 33554432},
+                    scope=active, inspection_only=True)
+            self.assertEqual(calls[url]["max_bytes"], active.max_bytes)
