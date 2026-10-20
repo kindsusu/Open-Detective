@@ -31,6 +31,9 @@ _RETRY_REASONS = {"request budget exhausted", "timeout", "dns_failure", "connect
                   "connection_refused", "request timed out", "transport_error"}
 _RETRY_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
 _COOLDOWN_HTTP_STATUSES = frozenset({429, 503})
+_INSPECTION_JOB_TYPES = frozenset({
+    "capture", "repository_tree", "repository_history", "repository_patch",
+    "repository_commit_detail", "content_review"})
 _MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp",
                    ".tif", ".tiff", ".svg", ".woff", ".woff2", ".ttf", ".ico"}
 
@@ -892,13 +895,19 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                         scope.authorize(candidate)
                     except PolicyError:
                         continue
-                    case.queue.enqueue("content_review", job["asset_ref"], scope_id=case.scope_id,
-                        policy_id=scope.policy_id, parent_job_id=job["job_id"],
-                        origin_evidence_ref=previous[0], state="ready", priority=25,
-                        dedupe_key="engine-review:3:" + job["asset_ref"],
-                        checkpoint={"analysis_kind": job["job_type"], "depth": (job.get("checkpoint") or {}).get("depth", 0),
-                                    "document_base_ref": (job.get("checkpoint") or {}).get("document_base_ref"),
-                                    "reason_codes": ["engine_review_upgrade"], "context_digest": review_context})
+                    upgrade_key = "engine-review:3:" + job["asset_ref"]
+                    # enqueue() resumes an existing blocked_input job. A review
+                    # with unchanged context must remain blocked until its actual
+                    # missing evidence or dependencies change.
+                    if not case.ledger.db.execute(
+                            "SELECT 1 FROM audit_jobs WHERE dedupe_key=? LIMIT 1", (upgrade_key,)).fetchone():
+                        case.queue.enqueue("content_review", job["asset_ref"], scope_id=case.scope_id,
+                            policy_id=scope.policy_id, parent_job_id=job["job_id"],
+                            origin_evidence_ref=previous[0], state="ready", priority=25,
+                            dedupe_key=upgrade_key, resume_existing=False,
+                            checkpoint={"analysis_kind": job["job_type"], "depth": (job.get("checkpoint") or {}).get("depth", 0),
+                                        "document_base_ref": (job.get("checkpoint") or {}).get("document_base_ref"),
+                                        "reason_codes": ["engine_review_upgrade"], "context_digest": review_context})
             if job["state"] == "blocked_scope" and scope is not None:
                 if "SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" in (job.get("checkpoint") or {}).get("reason_codes", []):
                     continue
@@ -937,14 +946,19 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                         continue
                     case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
         while True:
-            job = case.queue.claim(run_id, worker_id=worker, job_types=(frozenset({
-                "capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail", "content_review"
-            }) if inspection_only else None))
+            job = case.queue.claim(run_id, worker_id=worker,
+                job_types=_INSPECTION_JOB_TYPES if inspection_only else None)
             if job is None:
                 status = case.queue.status()
                 current = case.queue.get_run(run_id)
-                if wait_for_retry and status["next_action_at"] and current["state"] == "running":
-                    delay = datetime.fromisoformat(status["next_action_at"].replace("Z", "+00:00")).timestamp() - time.time()
+                next_action = status["next_action_at"]
+                if inspection_only:
+                    eligible_retries = [item["next_eligible_at"] for item in status["jobs"]
+                        if item["job_type"] in _INSPECTION_JOB_TYPES and item["state"] == "retry_wait"
+                        and item.get("next_eligible_at")]
+                    next_action = min(eligible_retries) if eligible_retries else None
+                if wait_for_retry and next_action and current["state"] == "running":
+                    delay = datetime.fromisoformat(next_action.replace("Z", "+00:00")).timestamp() - time.time()
                     remaining = current["budget"]["max_seconds"] - (time.monotonic() - started)
                     if 0 < delay < remaining and current["requests"] < current["budget"]["max_requests"]:
                         time.sleep(min(5, delay))

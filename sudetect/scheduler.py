@@ -128,7 +128,8 @@ class Scheduler:
                 policy_id: str | None = None, parent_job_id: str | None = None,
                 origin_evidence_ref: str | None = None, capabilities_required: tuple[str, ...] = (),
                 priority: int = 0, estimated_cost: int = 1, state: str = "ready",
-                dedupe_key: str | None = None, checkpoint: Any = None) -> str:
+                dedupe_key: str | None = None, checkpoint: Any = None,
+                resume_existing: bool = True) -> str:
         for name, value in (("job_type", job_type), ("asset_ref", asset_ref), ("scope_id", scope_id)):
             if not isinstance(value, str) or not _IDENT.fullmatch(value):
                 raise LedgerError(f"valid {name} required")
@@ -138,6 +139,8 @@ class Scheduler:
             raise LedgerError("valid origin_evidence_ref required")
         if state not in STATES - {"running"}:
             raise LedgerError("invalid initial job state")
+        if not isinstance(resume_existing, bool):
+            raise LedgerError("resume_existing must be boolean")
         if isinstance(priority, bool) or not isinstance(priority, int):
             raise LedgerError("priority must be integer")
         _integer(estimated_cost, "estimated_cost")
@@ -153,7 +156,7 @@ class Scheduler:
             if existing:
                 if (existing["job_type"], existing["asset_ref"], existing["scope_id"]) != (job_type, asset_ref, scope_id):
                     raise LedgerError("dedupe key collision")
-                if state == "ready" and existing["state"] in {"pending", "blocked_scope", "blocked_input"}:
+                if resume_existing and state == "ready" and existing["state"] in {"pending", "blocked_scope", "blocked_input"}:
                     when = _now()
                     self.db.execute("UPDATE audit_jobs SET state='ready',next_eligible_at=NULL,updated_at=? WHERE job_id=?", (when, existing["job_id"]))
                     self._event("AUDIT_JOB_RESUMED", existing["job_id"], {"state": "ready", "checkpoint": json.loads(existing["checkpoint"]) if existing["checkpoint"] else None})
