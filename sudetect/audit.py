@@ -270,7 +270,15 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
         if response.observation.get("capture_complete") and response.observation.get("http_status") == 200:
             case.transient_responses[target] = response
         return response
-    result = collect(url, scope, follow_redirects=False)
+    analysis_kind = (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"])
+    capture_options = {"follow_redirects": False}
+    if analysis_kind == "repository_patch":
+        from .github_history import MAX_PATCH_BYTES
+        capture_options["max_bytes"] = min(scope.max_bytes, MAX_PATCH_BYTES)
+    elif analysis_kind in {"repository_tree", "repository_history"}:
+        capture_options["max_bytes"] = min(scope.max_bytes,
+            8_388_608 if analysis_kind == "repository_tree" else 2_097_152)
+    result = collect(url, scope, **capture_options)
     body, observation = result.body, dict(result.observation)
     capture_complete = bool(observation.get("capture_complete"))
     observation["target_id"] = job["asset_ref"]
@@ -294,7 +302,6 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
         gaps.append("analysis_budget_exhausted")
         profile = {"content": "NOT_INSPECTED", "analysis_complete": False}
     else:
-        analysis_kind = (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"])
         if analysis_kind == "repository_history":
             from .repository_history import analyze_history
             profile, refs = analyze_history(body, url)

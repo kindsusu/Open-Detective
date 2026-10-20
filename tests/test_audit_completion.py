@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from sudetect.audit import Case, init_case, main, run_case
 from test_audit import policy, response
@@ -61,3 +62,20 @@ class CompletionTests(unittest.TestCase):
             self.assertEqual(job["priority"], 1)
             self.assertEqual(job["state"], "blocked_scope")
             self.assertEqual(job["attempts"], 0)
+
+    def test_patch_capture_is_bounded_before_transport(self):
+        calls = {}
+        def capture(url, active_scope, **kwargs):
+            calls[url] = kwargs
+            return response(url, active_scope)
+        url = "https://seed.test/change.patch"
+        active = policy()
+        active.max_bytes = 33554432
+        with Case(self.root) as case:
+            job_id = case.enqueue_url(url, scope=active, job_type="repository_patch")
+            case.ledger.db.execute("UPDATE audit_jobs SET priority=100 WHERE job_id=?", (job_id,))
+            case.ledger.db.commit()
+            with patch("sudetect.transport.fetch", side_effect=capture):
+                run_case(case, {"max_requests": 1}, scope=active, inspection_only=True)
+            self.assertEqual(calls[url]["max_bytes"], 524288)
+            self.assertFalse(calls[url]["follow_redirects"])
