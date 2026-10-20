@@ -999,6 +999,16 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                     refs.append(exc.reference)
                 state, error = "retry_wait", "TRANSPORT_RETRY"
                 retry_due = exc.due_at
+            except sqlite3.OperationalError as exc:
+                code = getattr(exc, "sqlite_errorcode", None)
+                if isinstance(code, int) and (code & 0xff) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                    state, error = "retry_wait", "STATE_STORE_BUSY"
+                    delay = min(60, 5 * (2 ** min(max(job["attempts"] - 1, 0), 4)))
+                    retry_due = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+                else:
+                    state, error = "failed_terminal", "STATE_STORE_ERROR"
+            except sqlite3.Error:
+                state, error = "failed_terminal", "STATE_STORE_ERROR"
             except (ValueError, OSError, ImportError):
                 state, error = "blocked_input", "HANDLER_INPUT_OR_DEPENDENCY_FAILED"
             except Exception:
