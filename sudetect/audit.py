@@ -158,6 +158,8 @@ class Case:
             priority = 5
         if job_type == "repository_patch":
             priority = 4
+        if job_type == "repository_tree" and depth > 0:
+            priority = 2
         if review_reason and state == "ready":
             state = "blocked_input"
         return self.queue.enqueue(job_type, ref, scope_id=self.scope_id,

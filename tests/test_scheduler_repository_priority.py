@@ -45,6 +45,25 @@ class RepositoryPriorityTests(unittest.TestCase):
         self.assertEqual([history, patch, image],
                          [self.queue.claim(run)["job_id"] for _ in range(3)])
 
+    def test_current_tree_then_history_patch_then_historical_snapshot(self):
+        image = self.queue.enqueue("capture", "image:one", scope_id="fixture", priority=1)
+        snapshot = self.queue.enqueue("repository_tree", "tree:snapshot", scope_id="fixture",
+                                      priority=20, checkpoint={"depth": 1})
+        snapshot_review = self.queue.enqueue("content_review", "tree:snapshot-review", scope_id="fixture",
+                                             priority=20, checkpoint={"analysis_kind": "repository_tree", "depth": 1})
+        patch = self.queue.enqueue("repository_patch", "patch:one", scope_id="fixture", priority=4)
+        history = self.queue.enqueue("repository_history", "history:one", scope_id="fixture", priority=5)
+        current = self.queue.enqueue("repository_tree", "tree:current", scope_id="fixture",
+                                     priority=0, checkpoint={"depth": 0})
+        current_review = self.queue.enqueue("content_review", "tree:current-review", scope_id="fixture",
+                                            priority=0, checkpoint={"analysis_kind": "repository_tree", "depth": 0})
+        run = self.queue.start_run({"max_requests": 7, "max_jobs": 7})
+        self.assertEqual([current, current_review, history, patch, snapshot, snapshot_review, image],
+                         [self.queue.claim(run)["job_id"] for _ in range(7)])
+        stored = {job["job_id"]: job for job in self.queue.status()["jobs"]}
+        self.assertEqual(20, stored[snapshot]["priority"])
+        self.assertEqual(20, stored[snapshot_review]["priority"])
+
     def test_inspection_filter_and_existing_age_bonus_remain_effective(self):
         aged = self.queue.enqueue("capture", "capture:aged", scope_id="fixture", priority=20)
         self.ledger.db.execute("UPDATE audit_jobs SET created_at='2000-01-01T00:00:00Z' WHERE job_id=?", (aged,))

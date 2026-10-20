@@ -240,15 +240,16 @@ class Scheduler:
                 self.db.execute("UPDATE audit_jobs SET state=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='LEASE_EXPIRED',updated_at=? WHERE job_id=?", (new_state, now, row["job_id"]))
                 self._event("AUDIT_LEASE_EXPIRED", row["job_id"], {"state": new_state, "reason_code": "LEASE_EXPIRED"})
             remaining = run["budget"]["max_requests"] - run["requests"]
-            # Effective floors keep repository metadata and its resumed reviews
-            # ahead of low-priority media without rewriting persisted priorities.
-            # The existing age bonus and ready/retry eligibility still apply.
+            # Current inventory takes precedence. Historical snapshot trees are
+            # intentionally lower than history and patch jobs even when an older
+            # job persisted priority 20. Age and eligibility still apply.
             rows = self.db.execute("""SELECT j.* FROM audit_jobs j
                 WHERE j.state IN ('ready','retry_wait') AND (j.next_eligible_at IS NULL OR j.next_eligible_at<=?)
                 ORDER BY ((CASE
                     WHEN j.job_type='repository_tree' OR
                          (j.job_type='content_review' AND json_extract(j.checkpoint,'$.analysis_kind')='repository_tree')
-                         THEN MAX(j.priority,40)
+                         THEN CASE WHEN CAST(json_extract(j.checkpoint,'$.depth') AS INTEGER)>0
+                                   THEN 2 ELSE MAX(j.priority,40) END
                     WHEN j.job_type='content_review' AND json_extract(j.checkpoint,'$.analysis_kind')='repository_history'
                          THEN MAX(j.priority,5)
                     WHEN j.job_type='content_review' AND json_extract(j.checkpoint,'$.analysis_kind')='repository_patch'
