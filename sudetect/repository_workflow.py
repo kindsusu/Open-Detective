@@ -282,6 +282,11 @@ def _job_result(case, jobs, url):
 
 def _latest_committed_report(case, jobs, asset_ref):
     """Read only observations whose result ref was committed to its job."""
+    entry = _latest_committed_result(case, jobs, asset_ref)
+    return entry[0] if entry else None
+
+
+def _latest_committed_result(case, jobs, asset_ref):
     refs = {job["job_id"]: set(job["result_refs"]) for job in jobs
             if job["asset_ref"] == asset_ref and job["result_refs"]}
     if not refs:
@@ -295,8 +300,28 @@ def _latest_committed_report(case, jobs, asset_ref):
             continue
         report = json.loads(report_json)
         if isinstance(report, dict) and report.get("target_id") == asset_ref:
-            return report
+            return report, result_ref, job_id
     return None
+
+
+def _empty_review_supersedes_stale_lineage_hold(case, job, entry):
+    """Count only a later, committed empty review over an older lineage hold."""
+    if not entry or job["state"] != "blocked_input" or "SENSITIVE_PATCH_LINEAGE_REVIEW" not in (
+            (job.get("checkpoint") or {}).get("reason_codes") or []):
+        return False
+    report, result_ref, result_job_id = entry
+    if (report.get("observation_kind") != "derived_review" or
+            report.get("empty_patch_review_basis") != "exact_commit_detail_zero_file_list" or
+            report.get("content_review") != "no_changed_files_verified"):
+        return False
+    result_sequence = next((row[0] for row in case.ledger.db.execute(
+        "SELECT sequence,payload_json FROM events WHERE event_type='AUDIT_RESULT' "
+        "AND entity_id=? ORDER BY sequence DESC", (result_job_id,))
+        if json.loads(row[1]).get("result_ref") == result_ref), None)
+    last_job_sequence = case.ledger.db.execute(
+        "SELECT MAX(sequence) FROM events WHERE entity_id=?", (job["job_id"],)).fetchone()[0]
+    return (result_sequence is not None and last_job_sequence is not None and
+            result_sequence > last_job_sequence)
 
 
 def _verified_result(case, job):
@@ -388,9 +413,13 @@ def repository_status(case):
         for job in patch_jobs:
             related = [candidate for candidate in jobs if candidate["asset_ref"] == job["asset_ref"]
                        and candidate["job_type"] in {"repository_patch", "content_review"}]
-            result = _latest_committed_report(case, related, job["asset_ref"])
-            if (related[-1]["state"] == "succeeded" and _verified_result(case, related[-1]) is not None
-                    and result and _capture_state(result) == "evidenced_complete"):
+            entry = _latest_committed_result(case, related, job["asset_ref"])
+            result = entry[0] if entry else None
+            latest = related[-1]
+            latest_succeeded = (latest["state"] == "succeeded" and
+                                _verified_result(case, latest) is not None)
+            if (result and _capture_state(result) == "evidenced_complete" and
+                    (latest_succeeded or _empty_review_supersedes_stale_lineage_hold(case, latest, entry))):
                 patch_complete += 1
                 patch_empty_verified += result.get("content_review") == "no_changed_files_verified"
         expected_patches = stages["history"]["commits_examined"]

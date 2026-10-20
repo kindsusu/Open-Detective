@@ -215,6 +215,39 @@ class RepositoryWorkflowTests(unittest.TestCase):
             stage = repository_status(case)["repositories"][0]["stages"]["patch"]
             self.assertEqual("partial", stage["state"])
 
+    def test_empty_review_supersedes_only_older_lineage_hold(self):
+        with Case(self.root) as case:
+            bind_repositories(case, manifest(), scope())
+            history = next(j for j in case.queue.status()["jobs"] if j["job_type"] == "repository_history")
+            commit_report(case, history, {"capture_complete": True, "analysis_complete": True,
+                "commits_examined": 1, "gaps": ["history_window_not_exhaustive"]})
+            patch_id = case.enqueue_url(f"https://github.com/{SLUG}/commit/{'a'*40}.patch",
+                parent=history["job_id"], scope=scope(), job_type="repository_patch")
+            patch = next(j for j in case.queue.status()["jobs"] if j["job_id"] == patch_id)
+            review_id = case.queue.enqueue("content_review", patch["asset_ref"], scope_id=case.scope_id,
+                dedupe_key="fixture:empty-derived-review")
+            blocked_id = case.queue.enqueue("content_review", patch["asset_ref"], scope_id=case.scope_id,
+                dedupe_key="fixture:older-lineage-hold", state="blocked_input",
+                checkpoint={"reason_codes": ["SENSITIVE_PATCH_LINEAGE_REVIEW"]})
+            review = next(j for j in case.queue.status()["jobs"] if j["job_id"] == review_id)
+            reference = commit_report(case, review, {"capture_complete": True, "analysis_complete": True,
+                "gaps": [], "content_review": "no_changed_files_verified",
+                "observation_kind": "derived_review",
+                "empty_patch_review_basis": "exact_commit_detail_zero_file_list"})
+            with case.ledger.db:
+                case.ledger._event("AUDIT_RESULT", review_id, {"result_ref": reference})
+            self.assertEqual(blocked_id, [j for j in case.queue.status()["jobs"]
+                if j["asset_ref"] == patch["asset_ref"]][-1]["job_id"])
+            stage = repository_status(case)["repositories"][0]["stages"]["patch"]
+            self.assertEqual(1, stage["patches_captured_complete"])
+            self.assertEqual(1, stage["patches_empty_verified"])
+            self.assertEqual("evidenced_complete", stage["state"])
+            case.queue.enqueue("content_review", patch["asset_ref"], scope_id=case.scope_id,
+                dedupe_key="fixture:newer-lineage-hold", state="blocked_input",
+                checkpoint={"reason_codes": ["SENSITIVE_PATCH_LINEAGE_REVIEW"]})
+            stage = repository_status(case)["repositories"][0]["stages"]["patch"]
+            self.assertEqual("partial", stage["state"])
+
     def test_expiry_renewal_and_bound_url_guard(self):
         with Case(self.root) as case:
             first = manifest()

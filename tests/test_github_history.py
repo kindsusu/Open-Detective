@@ -5,7 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
-from sudetect.github_history import CodeError, discover_history
+from sudetect.classifiers import analyze as classify
+from sudetect.github_history import CodeError, analyze_repository_patch, discover_history
 from sudetect.locators import LocatorStore
 from sudetect.policy import Scope
 
@@ -214,12 +215,20 @@ class GitHubHistoryTests(unittest.TestCase):
                     self.assertIn(expected, {g["reason"] for g in result["coverage_gaps"]})
                 self.assertNotIn("literal_url_changes", result["commits"][0])
 
-    def test_analysis_limit_blocks_urls_after_classifier_window(self):
+    def test_long_line_reports_structure_gap_after_complete_text_scan(self):
         body = patch_text("-old", "+" + "x" * 262144 + " https://outside.example.test/")
         result = discover_history(manifest(), self.store, inspect_patches=True, scope=scope(), fetcher=Fake(patch=body))
-        self.assertEqual("stopped_analysis_limit", result["commits"][0]["content_review"])
+        self.assertEqual("text_reviewed_structure_pending", result["commits"][0]["content_review"])
+        with patch("sudetect.github_history.analyze", wraps=classify) as scanner:
+            reviewed = analyze_repository_patch(body.encode(),
+                f"https://github.com/fixture/repo/commit/{SHA}.patch", self.store, "fixture-history")
+        self.assertTrue(reviewed["text_analysis_complete"])
+        self.assertTrue(any(b"https://outside.example.test/" in call.args[0]
+                            for call in scanner.call_args_list))
         self.assertNotIn("literal_url_changes", result["commits"][0])
-        self.assertIn("patch_analysis_limit_reached", {g["reason"] for g in result["coverage_gaps"]})
+        reasons = {g["reason"] for g in result["coverage_gaps"]}
+        self.assertIn("patch_structure_parse_incomplete", reasons)
+        self.assertNotIn("patch_analysis_limit_reached", reasons)
 
     def test_plaintext_transport_path_is_bounded_and_anonymous(self):
         calls = []

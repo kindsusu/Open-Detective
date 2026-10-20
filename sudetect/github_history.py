@@ -215,8 +215,9 @@ def _patch_url_parts(url):
 def _review_changed_lines(changed_lines):
     """Inspect bounded text chunks across a complete diff, including late lines.
 
-    An overlong line, truncated image projection, or incomplete classifier chunk
-    remains a gap. The projection is only analysis text; image pixels stay unreviewed.
+    An overlong line leaves a structure gap after its full text is scanned.
+    Truncated projection or incomplete classifier text remains an analysis gap.
+    The projection is only analysis text; image pixels stay unreviewed.
     """
     changed = "\n".join(changed_lines).encode("utf-8")
     media_skipped = False
@@ -237,7 +238,7 @@ def _review_changed_lines(changed_lines):
     for line in text.splitlines():
         row_bytes = len(line.encode("utf-8")) + 1
         if row_bytes > limit:
-            limit_reached = True
+            structure_incomplete = True
             if current:
                 chunks.append("\n".join(current))
                 current, current_bytes = [], 0

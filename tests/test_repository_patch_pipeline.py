@@ -3,7 +3,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch as mock_patch
 
+from sudetect.classifiers import analyze as classify
 from sudetect.github_history import analyze_repository_patch
 from sudetect.locators import LocatorStore
 from sudetect.repository_history import analyze_history
@@ -195,11 +197,28 @@ class RepositoryPatchPipelineTests(unittest.TestCase):
         self.assertIn("patch_structure_parse_incomplete", reviewed["pending_reviews"])
         self.assertNotIn("patch_analysis_limit_reached", reviewed["pending_reviews"])
 
-    def test_oversized_changed_line_remains_actual_analysis_limit(self):
+    def test_oversized_changed_line_reports_structure_gap_after_full_text_scan(self):
         body = patch("diff --git a/x.txt b/x.txt", "--- a/x.txt", "+++ b/x.txt",
                      "@@ -0,0 +1 @@", "+" + "x" * 330000)
         reviewed = analyze_repository_patch(body, URL, self.store, "fixture", max_bytes=2 * 1024 * 1024)
         self.assertFalse(reviewed["analysis_complete"])
+        self.assertTrue(reviewed["text_analysis_complete"])
+        self.assertIn("patch_structure_parse_incomplete", reviewed["pending_reviews"])
+        self.assertNotIn("patch_analysis_limit_reached", reviewed["pending_reviews"])
+
+    def test_classifier_text_truncation_remains_analysis_limit(self):
+        body = patch("diff --git a/x.txt b/x.txt", "--- a/x.txt", "+++ b/x.txt",
+                     "@@ -0,0 +1 @@", "+ordinary text")
+
+        def incomplete_text(*args, **kwargs):
+            result = classify(*args, **kwargs)
+            result.report["text_analysis_complete"] = False
+            return result
+
+        with mock_patch("sudetect.github_history.analyze", side_effect=incomplete_text):
+            reviewed = self.review(body)
+        self.assertFalse(reviewed["analysis_complete"])
+        self.assertEqual("stopped_analysis_limit", reviewed["content_review"])
         self.assertIn("patch_analysis_limit_reached", reviewed["pending_reviews"])
 
     def test_oversized_single_line_scans_late_sensitive_signal_but_remains_partial(self):
