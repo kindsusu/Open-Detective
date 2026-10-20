@@ -781,8 +781,6 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     observation["retry_required"] = retry
     reference = case.save_result(job, observation)
     _project_observation(case, job, observation)
-    if analysis_kind == "repository_commit_detail" and observation.get("empty_patch_target_ref"):
-        _queue_empty_patch_reconciliation(case, job, observation, reference, scope)
     if retry:
         raise _RetryCapture(reference)
     return reference
@@ -809,8 +807,7 @@ def _reconcile_empty_patch(case, job, scope):
             patch_job["job_type"] not in {"repository_patch", "content_review"} or
             detail_job["job_type"] != "repository_commit_detail" or
             detail_job["state"] != "succeeded" or
-            patch_job["asset_ref"] != job["asset_ref"] or
-            detail_job["parent_job_id"] != patch_job["job_id"]):
+            patch_job["asset_ref"] != job["asset_ref"]):
         return None
     patch_url = case.locators.get(case.scope_id, patch_job["asset_ref"])
     detail_url = case.locators.get(case.scope_id, detail_job["asset_ref"])
@@ -831,8 +828,8 @@ def _reconcile_empty_patch(case, job, scope):
             detail[1].get("capture_complete") is not True or
             detail[1].get("analysis_complete") is not True or
             detail[1].get("empty_diff_verified") is not True or
-            detail[1].get("empty_patch_target_ref") != patch_job["asset_ref"] or
-            detail[1].get("empty_patch_source_result_ref") != source[0] or
+            detail[1].get("files_observed") != 0 or
+            detail[1].get("file_list_page_complete") is not True or
             detail[1].get("gaps")):
         return None
     reviewed = dict(source[1])
@@ -852,18 +849,60 @@ def _reconcile_empty_patch(case, job, scope):
     return reference
 
 
-def _queue_empty_patch_reconciliation(case, detail_job, observation, detail_ref, scope):
+def _verified_empty_detail(case, patch_url, scope):
+    """Find a committed zero-file API result for this exact commit under current scope."""
+    from .repository_commit import commit_detail_url
+    detail_url = commit_detail_url(patch_url)
+    if detail_url is None:
+        return None
+    try:
+        scope.authorize(patch_url)
+        scope.authorize(detail_url)
+    except PolicyError:
+        return None
+    for candidate in case.queue.status()["jobs"]:
+        if (candidate["job_type"] != "repository_commit_detail" or
+                candidate["state"] != "succeeded" or candidate["scope_id"] != case.scope_id or
+                case.locators.get(case.scope_id, candidate["asset_ref"]) != detail_url):
+            continue
+        committed = case.prior_result(candidate)
+        if not committed or committed[0] not in candidate["result_refs"]:
+            continue
+        report = committed[1]
+        if (report.get("target_id") == candidate["asset_ref"] and
+                report.get("document_type") == "repository_commit_detail" and
+                report.get("capture_complete") is True and report.get("http_status") == 200 and
+                report.get("analysis_complete") is True and
+                report.get("empty_diff_verified") is True and
+                report.get("file_list_page_complete") is True and
+                report.get("files_observed") == 0 and not report.get("gaps")):
+            return candidate, committed[0]
+    return None
+
+
+def _queue_empty_patch_reconciliation(case, source, detail_job, detail_ref, scope):
     """Resume the outstanding patch review when detail evidence resolves it."""
     jobs = case.queue.status()["jobs"]
-    source_id = detail_job["parent_job_id"]
-    source = next((item for item in jobs if item["job_id"] == source_id), None)
-    if source is None:
+    source_id = source["job_id"]
+    if source["scope_id"] != case.scope_id:
+        return
+    source_result = case.prior_result(source)
+    if (not source_result or source_result[0] not in source["result_refs"] or
+            source_result[1].get("target_id") != source["asset_ref"] or
+            source_result[1].get("document_type") != "repository_patch" or
+            source_result[1].get("capture_complete") is not True or
+            source_result[1].get("http_status") != 200 or
+            "header_only_patch_requires_commit_detail" not in source_result[1].get("gaps", [])):
+        return
+    patch_url = case.locators.get(case.scope_id, source["asset_ref"])
+    matched = _verified_empty_detail(case, patch_url, scope)
+    if matched is None or matched[0]["job_id"] != detail_job["job_id"] or matched[1] != detail_ref:
         return
     checkpoint = {"analysis_kind": "repository_patch_empty_reconcile",
                   "source_patch_job_id": source_id,
                   "detail_job_id": detail_job["job_id"], "reason_codes": []}
     blocked = next((item for item in jobs if item["job_type"] == "content_review" and
-                    item["asset_ref"] == observation["empty_patch_target_ref"] and
+                    item["asset_ref"] == source["asset_ref"] and
                     item["state"] == "blocked_input" and
                     (item["job_id"] == source_id or item["parent_job_id"] == source_id) and
                     "header_only_patch_requires_commit_detail" in
@@ -876,7 +915,7 @@ def _queue_empty_patch_reconciliation(case, detail_job, observation, detail_ref,
                                {"detail_result_ref": detail_ref})
         case.queue.unblock(blocked["job_id"], policy_id=scope.policy_id)
     else:
-        case.queue.enqueue("content_review", observation["empty_patch_target_ref"],
+        case.queue.enqueue("content_review", source["asset_ref"],
             scope_id=case.scope_id, policy_id=scope.policy_id, parent_job_id=detail_job["job_id"],
             origin_evidence_ref=detail_ref, state="ready", priority=2,
             dedupe_key="empty-patch-review:" + detail_job["job_id"], checkpoint=checkpoint)
@@ -1011,11 +1050,15 @@ def _channel_complete(case, channel):
     return bool(jobs) and all(j["state"] in {"completed", "not_applicable"} for j in jobs)
 
 
-def _patch_lineage_blocked(case, job):
+def _patch_lineage_blocked(case, job, scope=None):
     from .github_history import patch_requires_material_hold
     if (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"]) != "repository_patch":
         return False
     url = case.locators.get(case.scope_id, job["asset_ref"])
+    # A complete, exact-SHA zero-file API result establishes that this commit
+    # has no changed material. It does not release any neighboring commit.
+    if scope is not None and _verified_empty_detail(case, url, scope) is not None:
+        return False
     prefix = url.rsplit("/", 1)[0]
     for row in case.ledger.db.execute("SELECT report_json FROM audit_results"):
         report = json.loads(row[0])
@@ -1087,7 +1130,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                 case.queue.unblock(job["job_id"])
             if (job["state"] == "blocked_input" and scope and
                     "SENSITIVE_PATCH_LINEAGE_REVIEW" in (job.get("checkpoint") or {}).get("reason_codes", [])
-                    and not _patch_lineage_blocked(case, job)):
+                    and not _patch_lineage_blocked(case, job, scope)):
                 try:
                     candidate = scope.authorize(case.locators.get(case.scope_id, job["asset_ref"]))
                     if repository_job_authorized(case, candidate, scope) is not False:
@@ -1160,7 +1203,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                     else:
                         state, error = "blocked_input", "EMPTY_PATCH_EVIDENCE_INCOMPLETE"
                 elif job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail", "content_review"} and scope is not None:
-                    if _patch_lineage_blocked(case, job):
+                    if _patch_lineage_blocked(case, job, scope):
                         state, error = "blocked_input", "SENSITIVE_PATCH_LINEAGE_REVIEW"
                         job["checkpoint"] = {**(job.get("checkpoint") or {}),
                                              "reason_codes": [error]}
@@ -1206,6 +1249,33 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                     due = max(due, min(future))
             finished = case.queue.finish(job["job_id"], job["lease_owner"], state=state, result_refs=refs,
                                          error_code=error, next_eligible_at=due, checkpoint=job.get("checkpoint"))
+            if (finished and scope is not None and
+                    (job["job_type"] in {"repository_patch", "repository_commit_detail"} or
+                     job["job_type"] == "content_review" and
+                     (job.get("checkpoint") or {}).get("analysis_kind") == "repository_patch")):
+                current = next((item for item in case.queue.status()["jobs"]
+                                if item["job_id"] == job["job_id"]), None)
+                if current and (current["job_type"] == "repository_patch" or
+                        current["job_type"] == "content_review" and
+                        (current.get("checkpoint") or {}).get("analysis_kind") == "repository_patch"):
+                    patch_url = case.locators.get(case.scope_id, current["asset_ref"])
+                    matched = _verified_empty_detail(case, patch_url, scope)
+                    if matched:
+                        _queue_empty_patch_reconciliation(case, current, matched[0], matched[1], scope)
+                elif current and current["job_type"] == "repository_commit_detail":
+                    detail = case.prior_result(current)
+                    if detail and detail[1].get("empty_diff_verified") is True:
+                        from .repository_commit import commit_detail_url
+                        detail_url = case.locators.get(case.scope_id, current["asset_ref"])
+                        for source in reversed(case.queue.status()["jobs"]):
+                            if source["job_type"] not in {"repository_patch", "content_review"}:
+                                continue
+                            if (source["job_type"] == "content_review" and
+                                    (source.get("checkpoint") or {}).get("analysis_kind") != "repository_patch"):
+                                continue
+                            patch_url = case.locators.get(case.scope_id, source["asset_ref"])
+                            if commit_detail_url(patch_url) == detail_url:
+                                _queue_empty_patch_reconciliation(case, source, current, detail[0], scope)
             if not finished:
                 with case.ledger.db:
                     case.ledger._event("AUDIT_LATE_WORKER", job["job_id"], {"reason_code": "LEASE_LOST"})

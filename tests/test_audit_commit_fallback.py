@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch as mock_patch
 
-from sudetect.audit import Case, init_case, run_case
+from sudetect.audit import Case, init_case, run_case, _verified_empty_detail
 from sudetect.policy import Scope
 from sudetect.repository_commit import commit_detail_url
 from sudetect.repository_workflow import _capture_state, _latest_committed_report
@@ -222,6 +222,76 @@ class AuditCommitFallbackTests(unittest.TestCase):
                      fetcher=lambda url, current, **kwargs: observed(url, current, status=200,
                          body=sensitive, headers={"content-type": "text/plain"}), inspection_only=True)
             ocr.assert_not_called()
+
+    def test_independent_zero_file_detail_releases_only_exact_patch(self):
+        other_sha = "c" * 40
+        other_url = PATCH.replace(SHA, other_sha)
+        sensitive_sha = "d" * 40
+        sensitive_url = PATCH.replace(SHA, sensitive_sha)
+        empty = (f"From {SHA} Mon Sep 17 00:00:00 2001\nFrom: Fixture <f@example.test>\n"
+                 "Date: Tue, 1 Jan 2030 00:00:00 +0000\nSubject: [PATCH] empty\n\n").encode()
+        sensitive = (f"From {sensitive_sha} Mon Sep 17 00:00:00 2001\nFrom: Fixture <f@example.test>\n"
+                     "Date: Tue, 1 Jan 2030 00:00:00 +0000\nSubject: [PATCH] sensitive\n\n---\n"
+                     "diff --git a/x.txt b/x.txt\n--- /dev/null\n+++ b/x.txt\n@@ -0,0 +1 @@\n"
+                     "+ghp_" + "x" * 24 + "\n").encode()
+        detail = json.dumps({"sha": SHA, "parents": [{"sha": PARENT}], "files": []}).encode()
+        calls = []
+
+        def fetch(url, active, **kwargs):
+            calls.append(url)
+            if url == DETAIL:
+                return observed(url, active, status=200, body=detail)
+            if url == PATCH:
+                return observed(url, active, status=200, body=empty,
+                                headers={"content-type": "text/plain"})
+            if url == sensitive_url:
+                return observed(url, active, status=200, body=sensitive,
+                                headers={"content-type": "text/plain"})
+            raise AssertionError("unapproved fixture request")
+
+        with Case(self.root) as case:
+            active = scope()
+            case.enqueue_url(DETAIL, scope=active, job_type="repository_commit_detail")
+            run_case(case, {"max_requests": 2, "max_jobs": 2}, scope=active,
+                     fetcher=fetch, inspection_only=True)
+            self.assertIsNotNone(_verified_empty_detail(case, PATCH, active))
+            self.assertIsNone(_verified_empty_detail(case, other_url, active))
+            denied = Scope.from_dict({"policy_id": "fixture-no-api", "expires_at": "2099-01-01T00:00:00Z",
+                "targets": [{"origin": "https://github.com", "owner": "fixture",
+                    "ownership_evidence": "fixture:owner", "path_prefixes": ["/fixture/repo/commit/"]}]})
+            self.assertIsNone(_verified_empty_detail(case, PATCH, denied))
+            case.enqueue_url(sensitive_url, scope=active, job_type="repository_patch")
+            run_case(case, {"max_requests": 2, "max_jobs": 2}, scope=active,
+                     fetcher=fetch, inspection_only=True)
+            case.enqueue_url(PATCH, scope=active, job_type="repository_patch")
+            run_case(case, {"max_requests": 2, "max_jobs": 3}, scope=active,
+                     fetcher=fetch, inspection_only=True)
+            case.enqueue_url(other_url, scope=active, job_type="repository_patch")
+            run_case(case, {"max_requests": 1, "max_jobs": 1}, scope=active,
+                     fetcher=fetch, inspection_only=True)
+            self.assertEqual([DETAIL, sensitive_url, PATCH], calls)
+            jobs = case.queue.status()["jobs"]
+            reconciled = next(job for job in jobs if (job.get("checkpoint") or {}).get("analysis_kind")
+                              == "repository_patch_empty_reconcile")
+            self.assertEqual("succeeded", reconciled["state"])
+            other = next(job for job in jobs if job["job_type"] == "repository_patch" and
+                         job["asset_ref"] == case.locators.put(case.scope_id, other_url))
+            self.assertEqual("blocked_input", other["state"])
+
+    def test_uncommitted_detail_report_is_not_zero_file_evidence(self):
+        with Case(self.root) as case:
+            active = scope()
+            case.enqueue_url(DETAIL, scope=active, job_type="repository_commit_detail")
+            job = next(item for item in case.queue.status()["jobs"]
+                       if item["job_type"] == "repository_commit_detail")
+            fake = {"target_id": job["asset_ref"], "document_type": "repository_commit_detail",
+                    "capture_complete": True, "http_status": 200, "analysis_complete": True,
+                    "empty_diff_verified": True, "file_list_page_complete": True,
+                    "files_observed": 0, "gaps": []}
+            with case.ledger.db:
+                case.ledger.db.execute("INSERT INTO audit_results VALUES(?,?,?)",
+                                       ("audit:uncommitted-fixture", job["job_id"], json.dumps(fake)))
+            self.assertIsNone(_verified_empty_detail(case, PATCH, active))
 
 
 if __name__ == "__main__":
