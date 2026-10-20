@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 from html.parser import HTMLParser
 import importlib.util
@@ -28,13 +29,90 @@ from .scheduler import Scheduler
 
 _RETRY_REASONS = {"request budget exhausted", "timeout", "dns_failure", "connection_reset",
                   "connection_refused", "request timed out", "transport_error"}
+_RETRY_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
+_COOLDOWN_HTTP_STATUSES = frozenset({429, 503})
 _MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp",
                    ".tif", ".tiff", ".svg", ".woff", ".woff2", ".ttf", ".ico"}
 
 
 class _RetryCapture(Exception):
-    def __init__(self, reference):
+    def __init__(self, reference=None, due_at=None):
         self.reference = reference
+        self.due_at = due_at
+
+
+def _origin(url):
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc.lower()}"
+
+
+def _retry_due(header, attempts, *, now=None):
+    """Return bounded local backoff without shortening a valid provider delay."""
+    now = now or datetime.now(timezone.utc)
+    seconds = min(15 * 60, 30 * (2 ** min(max(attempts - 1, 0), 5)))
+    due = now + timedelta(seconds=seconds)
+    if isinstance(header, str) and len(header) <= 128:
+        value = header.strip()
+        if re.fullmatch(r"\d{1,8}", value):
+            due = max(due, now + timedelta(seconds=int(value)))
+        else:
+            try:
+                date = parsedate_to_datetime(value)
+                if date.tzinfo is not None:
+                    due = max(due, date.astimezone(timezone.utc))
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return due.isoformat()
+
+
+def _origin_cooldown(case, url):
+    row = case.ledger.db.execute("SELECT due_at FROM audit_origin_cooldown WHERE origin=?", (_origin(url),)).fetchone()
+    if row and datetime.fromisoformat(row[0]) > datetime.now(timezone.utc):
+        return row[0]
+    return None
+
+
+def _defer_ready_origin(case, origin, due_at):
+    """Persist a provider pause without claiming jobs or spending attempts."""
+    with case.queue._transaction():
+        rows = case.ledger.db.execute("""SELECT job_id,asset_ref,state,next_eligible_at
+            FROM audit_jobs WHERE state IN ('ready','retry_wait')""").fetchall()
+        for row in rows:
+            try:
+                target = case.locators.get(case.scope_id, row["asset_ref"])
+            except (KeyError, ValueError):
+                continue  # Discovery and channel jobs have no URL locator.
+            if _origin(target) != origin:
+                continue
+            current_due = row["next_eligible_at"]
+            if current_due and datetime.fromisoformat(current_due.replace("Z", "+00:00")) >= datetime.fromisoformat(due_at):
+                continue
+            case.ledger.db.execute("""UPDATE audit_jobs SET state='retry_wait',next_eligible_at=?,
+                last_error_code='ORIGIN_COOLDOWN',updated_at=? WHERE job_id=?""",
+                (due_at, datetime.now(timezone.utc).isoformat(), row["job_id"]))
+            case.ledger._event("AUDIT_JOB_DEFERRED", row["job_id"],
+                               {"reason_code": "ORIGIN_COOLDOWN", "next_eligible_at": due_at})
+
+
+def _set_origin_cooldown(case, url, due_at, status):
+    origin = _origin(url)
+    with case.ledger.db:
+        case.ledger.db.execute("""INSERT INTO audit_origin_cooldown(origin,due_at,status)
+            VALUES(?,?,?) ON CONFLICT(origin) DO UPDATE SET
+            due_at=MAX(audit_origin_cooldown.due_at,excluded.due_at),status=excluded.status""",
+            (origin, due_at, status))
+        case.ledger._event("AUDIT_ORIGIN_COOLDOWN", hashlib.sha256(origin.encode()).hexdigest(),
+                           {"http_status": status, "due_at": due_at})
+    effective_due = _origin_cooldown(case, url) or due_at
+    _defer_ready_origin(case, origin, effective_due)
+    return effective_due
+
+
+def _apply_active_cooldowns(case):
+    now = datetime.now(timezone.utc)
+    for origin, due_at in case.ledger.db.execute("SELECT origin,due_at FROM audit_origin_cooldown"):
+        if datetime.fromisoformat(due_at) > now:
+            _defer_ready_origin(case, origin, due_at)
 
 
 def _review_context(scope, capability, budget):
@@ -98,6 +176,8 @@ class Case:
             BEGIN SELECT RAISE(ABORT,'audit results are append-only'); END;
             CREATE TABLE IF NOT EXISTS audit_gate_attempts(
                 job_id TEXT PRIMARY KEY, reserved_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS audit_origin_cooldown(
+                origin TEXT PRIMARY KEY, due_at TEXT NOT NULL, status INTEGER NOT NULL);
         """)
         self.ledger.db.commit()
 
@@ -165,15 +245,32 @@ class Case:
             priority = 5
         if job_type == "repository_patch":
             priority = 4
+        if job_type == "repository_commit_detail":
+            priority = 3
         if job_type == "repository_tree" and depth > 0:
             priority = 2
         if review_reason and state == "ready":
             state = "blocked_input"
-        return self.queue.enqueue(job_type, ref, scope_id=self.scope_id,
+        queued = self.queue.enqueue(job_type, ref, scope_id=self.scope_id,
             policy_id=policy_id, parent_job_id=parent, origin_evidence_ref=evidence,
             state=state, priority=priority, checkpoint={"depth": depth, "redirect_count": redirect_count,
                 "document_base_ref": document_base_ref, "reason_codes": [review_reason] if review_reason else []},
             dedupe_key=job_type + ":" + ref + ((":" + document_base_ref) if document_base_ref else ""))
+        if state == "ready":
+            cooldown = _origin_cooldown(self, url)
+            if cooldown:
+                # New work queued after a 503/429 pause must not burn an attempt
+                # merely to learn that the origin is still cooling down.
+                with self.queue._transaction():
+                    row = self.ledger.db.execute(
+                        "SELECT state FROM audit_jobs WHERE job_id=?", (queued,)).fetchone()
+                    if row and row["state"] == "ready":
+                        self.ledger.db.execute("""UPDATE audit_jobs SET state='retry_wait',next_eligible_at=?,
+                            last_error_code='ORIGIN_COOLDOWN',updated_at=? WHERE job_id=?""",
+                            (cooldown, datetime.now(timezone.utc).isoformat(), queued))
+                        self.ledger._event("AUDIT_JOB_DEFERRED", queued,
+                                           {"reason_code": "ORIGIN_COOLDOWN", "next_eligible_at": cooldown})
+        return queued
 
 
 def init_case(directory, intake, mode="discovery"):
@@ -273,6 +370,9 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             raise PolicyError("operator excluded target")
         if target in case.transient_responses:
             return case.transient_responses[target]
+        cooldown = _origin_cooldown(case, target)
+        if cooldown:
+            raise _RetryCapture(due_at=cooldown)
         response = fetcher(target, active_scope) if fetcher else fetch(target, active_scope, **kwargs)
         if response.observation.get("capture_complete") and response.observation.get("http_status") == 200:
             # A long image/file pass must not retain its entire download in RAM.
@@ -290,12 +390,38 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     if analysis_kind == "repository_patch":
         from .github_history import MAX_PATCH_BYTES
         capture_options["max_bytes"] = min(scope.max_bytes, review_limits.get("max_patch_bytes", MAX_PATCH_BYTES))
+    elif analysis_kind == "repository_commit_detail":
+        from .repository_commit import MAX_COMMIT_DETAIL_BYTES
+        capture_options["max_bytes"] = min(scope.max_bytes, MAX_COMMIT_DETAIL_BYTES)
     elif analysis_kind in {"repository_tree", "repository_history"}:
         capture_options["max_bytes"] = min(scope.max_bytes,
             8_388_608 if analysis_kind == "repository_tree" else 2_097_152)
     result = collect(url, scope, **capture_options)
     body, observation = result.body, dict(result.observation)
     capture_complete = bool(observation.get("capture_complete"))
+    http_status = observation.get("http_status")
+    if http_status in _RETRY_HTTP_STATUSES:
+        due = _retry_due(result.headers.get("retry-after"), job["attempts"])
+        if http_status in _COOLDOWN_HTTP_STATUSES:
+            due = _set_origin_cooldown(case, original_url, due, http_status)
+        observation.update(target_id=job["asset_ref"], content="NOT_INSPECTED", analysis_complete=False,
+            review_complete=False, retry_required=True, retry_after_at=due,
+            gaps=(["upstream_transient_status", "patch_source_unavailable"]
+                  if analysis_kind == "repository_patch" and http_status == 503
+                  else ["upstream_transient_status"]), engine_review_version=3,
+            policy_id=scope.policy_id)
+        if analysis_kind == "repository_patch" and http_status == 503:
+            from .repository_commit import commit_detail_url
+            detail = commit_detail_url(original_url)
+            if detail:
+                fallback = case.enqueue_url(detail, parent=job["job_id"],
+                    evidence="observation:" + observation["observation_id"],
+                    depth=(job.get("checkpoint") or {}).get("depth", 0),
+                    job_type="repository_commit_detail", scope=scope)
+                observation["commit_detail_fallback_queued"] = fallback is not None
+        reference = case.save_result(job, observation)
+        _project_observation(case, job, observation)
+        raise _RetryCapture(reference, due)
     observation["target_id"] = job["asset_ref"]
     ctype = result.headers.get("content-type", "")
     if ctype.split(";", 1)[0].lower() in {"", "text/plain", "application/octet-stream"}:
@@ -324,6 +450,10 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             from .repository_history import analyze_repository_patch
             profile = analyze_repository_patch(body, url, case.locators, case.scope_id,
                 max_bytes=min(scope.max_bytes, review_limits.get("max_patch_bytes", 524288)))
+        elif analysis_kind == "repository_commit_detail":
+            from .repository_commit import analyze_commit_detail
+            profile, refs = analyze_commit_detail(body, url, link_header=result.headers.get("link"),
+                max_bytes=min(scope.max_bytes, capture_options["max_bytes"]))
         elif analysis_kind == "repository_tree":
             from .repository_assets import analyze_tree
             profile, locations = analyze_tree(body, url, max_files=review_limits.get("max_repository_files", 1000))
@@ -341,6 +471,10 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
                 gaps.extend(reference_gaps)
             else:
                 gaps.append("document_reference_analysis_budget_exhausted")
+        elif "image/svg+xml" in ctype.lower() or Path(urlsplit(url).path).suffix.lower() == ".svg":
+            from .media_review import analyze_svg
+            profile = analyze_svg(body, capture_complete=capture_complete,
+                max_bytes=min(scope.max_bytes, 8_388_608))
         elif ctype.lower().startswith("image/") or Path(urlsplit(url).path).suffix.lower() in {
                 ".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".bmp", ".tif", ".tiff", ".ico"}:
             from .media_review import analyze_image
@@ -488,11 +622,12 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
         if urlsplit(candidate).scheme == "https":
             if relationship == "redirect" and redirect_count >= scope.max_redirects:
                 gaps.append("redirect_budget_exhausted")
-            elif depth < 3 or relationship == "redirect":
+            elif depth < 3 or relationship in {"redirect", "repository_commit_detail"}:
                 queued = case.enqueue_url(candidate, parent=job["job_id"], evidence=evidence,
-                    depth=depth if relationship == "redirect" else depth + 1,
+                    depth=depth if relationship in {"redirect", "repository_commit_detail"} else depth + 1,
                     redirect_count=redirect_count + 1 if relationship == "redirect" else 0, scope=scope,
-                    job_type={"repository_snapshot": "repository_tree", "repository_patch": "repository_patch"}.get(relationship, "capture"),
+                    job_type={"repository_snapshot": "repository_tree", "repository_patch": "repository_patch",
+                              "repository_commit_detail": "repository_commit_detail"}.get(relationship, "capture"),
                     document_base_ref=document_base_ref if relationship in {"script_src", "redirect"} else None,
                     review_reason="SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" if affected_material_stop else None)
                 if queued is None:
@@ -677,6 +812,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
     from .repository_workflow import preflight, repository_job_authorized
     readiness = preflight(case, scope)
     run_id = case.queue.start_run(budget)
+    _apply_active_cooldowns(case)
     review_context = _review_context(scope, capability, case.queue.get_run(run_id)["budget"])
     worker = agent + "-" + uuid.uuid4().hex
     original_budget = scope.budget if scope is not None else None
@@ -694,7 +830,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                     with case.ledger.db:
                         case.ledger.db.execute("UPDATE audit_jobs SET priority=1 WHERE job_id=? AND state NOT IN ('succeeded','running')", (job["job_id"],))
                         case.ledger._event("AUDIT_MEDIA_PRIORITY_UPDATED", job["job_id"], {"priority": 1})
-            if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch"} and scope:
+            if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail"} and scope:
                 previous = case.prior_result(job)
                 if previous and previous[1].get("engine_review_version", 0) < 3:
                     candidate = case.locators.get(case.scope_id, job["asset_ref"])
@@ -748,7 +884,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                     case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
         while True:
             job = case.queue.claim(run_id, worker_id=worker, job_types=(frozenset({
-                "capture", "repository_tree", "repository_history", "repository_patch", "content_review"
+                "capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail", "content_review"
             }) if inspection_only else None))
             if job is None:
                 status = case.queue.status()
@@ -760,7 +896,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                         time.sleep(min(5, delay))
                         continue
                 break
-            state, error, refs = "succeeded", None, []
+            state, error, refs, retry_due = "succeeded", None, [], None
             try:
                 if job["job_type"] == "discovery":
                     ref, state, error = _discover(case, job, run_id, health, api_fetch)
@@ -786,7 +922,7 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                             "channel_plan_complete": True, "public_index_exhaustive": False}))
                     else:
                         state, error = "blocked_input", "CHANNEL_IMPORT_REQUIRED"
-                elif job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "content_review"} and scope is not None:
+                elif job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail", "content_review"} and scope is not None:
                     if _patch_lineage_blocked(case, job):
                         state, error = "blocked_input", "SENSITIVE_PATCH_LINEAGE_REVIEW"
                         job["checkpoint"] = {**(job.get("checkpoint") or {}),
@@ -805,13 +941,17 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
             except PolicyError:
                 state, error = "blocked_scope", "SCOPE_OR_BUDGET_REJECTED"
             except _RetryCapture as exc:
-                refs.append(exc.reference)
+                if exc.reference:
+                    refs.append(exc.reference)
                 state, error = "retry_wait", "TRANSPORT_RETRY"
+                retry_due = exc.due_at
             except (ValueError, OSError, ImportError):
                 state, error = "blocked_input", "HANDLER_INPUT_OR_DEPENDENCY_FAILED"
             except Exception:
                 state, error = "failed_terminal", "HANDLER_FAILED"
-            due = datetime.fromtimestamp(time.time() + 60, timezone.utc).isoformat() if state == "retry_wait" else None
+            due = (retry_due if state == "retry_wait" and retry_due else
+                   datetime.fromtimestamp(time.time() + 60, timezone.utc).isoformat()
+                   if state == "retry_wait" else None)
             if due and job["job_type"] == "discovery":
                 remaining = read_json(case.root / "search-plan.json").get("jobs", [])
                 future = [item["next_eligible_at"] for item in remaining if item.get("next_eligible_at")]

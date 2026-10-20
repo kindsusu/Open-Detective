@@ -249,5 +249,9 @@ Large-repository rechecks may explicitly increase `max_repository_files` and
 `max_patch_bytes` in the run budget; scope and aggregate limits still apply.
 The optional `media` extra adds local OCR with value-free reports. OCR completion,
 language coverage, static text analysis, and full visual review remain separate.
+Transient HTTP errors retain retry state and provider cooldowns. An unavailable
+commit patch can fall back to scoped commit-file metadata and exact current/parent
+file revisions; this does not complete the missing patch-hunk review. SVG source
+is inspected without executing scripts or fetching linked resources.
 These synthetic-tested features do not imply a completed live audit or actual
 Codex-versus-Claude host comparison. See [gate review](ops/gate-review.md).

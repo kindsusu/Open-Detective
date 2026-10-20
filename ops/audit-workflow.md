@@ -107,6 +107,14 @@ remaining work before increasing limits; the defaults do not increase on retry.
 Large captures use a bounded transient response cache rather than retaining
 every downloaded image in memory.
 
+HTTP 429 and transient 5xx responses are retry observations, not inspected asset
+content. Valid `Retry-After` delays are preserved even when longer than local
+backoff. Origin cooldowns persist across workers and case resumes. An observed
+commit whose patch endpoint fails can produce a separately scoped commit-detail
+job. Validated metadata emits exact current and first-parent raw-file revisions;
+validated pagination remains bounded. This fallback does not reconstruct omitted
+patch hunks or resolve merge-parent coverage. Those gaps remain explicit.
+
 Ready work is processed until the interval ends or there is no eligible work.
 `retry_wait`, `blocked_scope`, `blocked_input`, failures, and partial analysis remain
 visible and prevent an overall complete claim. Use the saved due time for a later

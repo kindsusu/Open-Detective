@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Retry transient HTTP failures with persisted origin cooldowns and validated provider delays instead of analyzing error pages. When an observed commit patch is unavailable, inspect scoped commit-file metadata and exact current/parent file revisions without claiming that missing patch hunks were reviewed.
+- Inspect SVG source statically without executing scripts or loading linked resources; retain separate visual-review gaps.
 - Added explicit extended repository file/patch budgets, bounded transient capture caching, full-text patch chunk inspection, Git C-quoted path support, and committed follow-up patch coverage. Large HTML reviews preserve original-byte evidence while retaining genuine structure/runtime gaps.
 - Added optional local raster/inline-image OCR, including installed Windows Korean/English language packs and value-free results. OCR, language coverage, visual interpretation and metadata review are separate dimensions; unsupported or incomplete work remains visible.
 - Added operator-bound repository manifests, scope preflight, staged tree/raw-file/recent-history/`.patch`/deployment inspection, and `--inspection-only` audit runs. `audit report --final` saves incomplete gaps and exits 3 until completion requirements are met. Ambiguous broad-name hits remain review candidates under separate account and job fanout caps.

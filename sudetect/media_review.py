@@ -20,12 +20,42 @@ import time
 
 from .classifiers import analyze
 
+
+def analyze_svg(body: bytes, *, capture_complete: bool = True, max_bytes: int = 8_388_608) -> dict:
+    """Inspect vector source without rendering, resolving entities, or running scripts."""
+    import xml.etree.ElementTree as ET
+    report = {"media_type": "svg", "content": "NOT_INSPECTED", "signals": [],
+              "analysis_complete": False, "text_analysis_complete": False,
+              "image_review_complete": False, "ocr_state": "not_applicable_vector_source",
+              "pending_reviews": []}
+    if not capture_complete or len(body) > max_bytes:
+        report["pending_reviews"].append("svg_capture_or_byte_limit")
+        return report
+    try:
+        source = body.decode("utf-8", "strict")
+        if re.search(r"<!\s*(?:DOCTYPE|ENTITY)", source, re.I):
+            raise ValueError("entity declarations not inspected")
+        root = ET.fromstring(source)
+        if root.tag.rsplit("}", 1)[-1].lower() != "svg":
+            raise ValueError("not SVG")
+    except (ValueError, UnicodeError, ET.ParseError, RecursionError):
+        report["pending_reviews"].append("svg_parse_or_entity_review")
+        return report
+    classification = analyze(body, "text/plain", max_bytes=max_bytes).report
+    report.update(content=classification["content"], signals=classification["signals"],
+                  text_analysis_complete=classification["text_analysis_complete"])
+    report["pending_reviews"].extend(classification.get("pending_reviews", []))
+    report["pending_reviews"].append("svg_visual_review_required")
+    if re.search(r"(?:\bhref\s*=|<\s*(?:script|foreignObject)\b)", source, re.I):
+        report["pending_reviews"].append("svg_active_or_linked_content_unexamined")
+    return report
+
 DEFAULT_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
 DEFAULT_PIXELS = 25_000_000
 MAX_OCR_TEXT_BYTES = 262_144
 _OCR_CACHE: OrderedDict[tuple, dict] = OrderedDict()
-_OCR_CACHE_LIMIT = 128
+_OCR_CACHE_LIMIT = 2048
 _INLINE_IMAGE = re.compile(rb"data:image/(?:png|jpe?g|webp|gif|avif|bmp|tiff?|x-icon|vnd\.microsoft\.icon);base64,", re.I)
 _BASE64_PAYLOAD = re.compile(rb"[A-Za-z0-9+/=]+")
 
@@ -116,6 +146,18 @@ dependencies, size limits and extraction failures stay explicitly incomplete.
         pending.append("image_pixel_limit")
     if pending:
         return report
+    windows_available = tesseract_path is None and _windows_ocr_available()
+    rapidocr_available = (tesseract_path is None and not windows_available and
+                          importlib.util.find_spec("rapidocr_onnxruntime") is not None)
+    executable = None if windows_available or rapidocr_available else tesseract_path or shutil.which("tesseract")
+    backend = ("windows_ocr" if windows_available else "rapidocr_onnxruntime" if rapidocr_available
+               else "tesseract" if executable else "unavailable")
+    cache_key = (hashlib.sha256(body).digest(), backend, executable, language,
+                 max_bytes, max_pixels, bool(capture_complete))
+    cached = _OCR_CACHE.get(cache_key)
+    if cached is not None:
+        _OCR_CACHE.move_to_end(cache_key)
+        return copy.deepcopy(cached)
     ocr_body = body
     needs_decoder = (header is None or header[0] == "gif" or
                      (header[0] == "webp" and len(body) > 20 and body[12:16] == b"VP8X" and body[20] & 0x02))
@@ -147,18 +189,6 @@ dependencies, size limits and extraction failures stay explicitly incomplete.
     if remaining <= 0:
         pending.append("image_decode_time_limit")
         return report
-    windows_available = tesseract_path is None and _windows_ocr_available()
-    rapidocr_available = (tesseract_path is None and not windows_available and
-                          importlib.util.find_spec("rapidocr_onnxruntime") is not None)
-    executable = None if windows_available or rapidocr_available else tesseract_path or shutil.which("tesseract")
-    backend = ("windows_ocr" if windows_available else "rapidocr_onnxruntime" if rapidocr_available
-               else "tesseract" if executable else "unavailable")
-    cache_key = (hashlib.sha256(body).digest(), backend, executable, language,
-                 max_bytes, max_pixels, bool(capture_complete))
-    cached = _OCR_CACHE.get(cache_key)
-    if cached is not None:
-        _OCR_CACHE.move_to_end(cache_key)
-        return copy.deepcopy(cached)
     if windows_available or rapidocr_available:
         from .documents import _run_isolated
         worker = _windows_ocr_worker if windows_available else _rapidocr_worker

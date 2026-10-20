@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from sudetect.media_review import _OCR_CACHE, _image_header, _windows_ocr_available, analyze_image, analyze_inline_images
+from sudetect.media_review import _OCR_CACHE, _image_header, _windows_ocr_available, analyze_image, analyze_inline_images, analyze_svg
 
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + (20).to_bytes(4, "big") + (10).to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
@@ -16,6 +16,17 @@ JPEG = b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x0a\x00\x14" + b"\x01\x11\x00" * 3 + b
 class MediaReviewTests(unittest.TestCase):
     def setUp(self):
         _OCR_CACHE.clear()
+
+    def test_svg_inspects_source_without_rendering_or_resolving_entities(self):
+        result = analyze_svg(b'<svg xmlns="http://www.w3.org/2000/svg"><text>confidential</text></svg>')
+        self.assertTrue(result["text_analysis_complete"])
+        self.assertEqual("SENSITIVE_CANDIDATE", result["content"])
+        self.assertFalse(result["analysis_complete"])
+        linked = analyze_svg(b'<svg><image href="https://example.test/image.png"/></svg>')
+        self.assertIn("svg_active_or_linked_content_unexamined", linked["pending_reviews"])
+        entity = analyze_svg(b'<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///private">]><svg>&x;</svg>')
+        self.assertFalse(entity["text_analysis_complete"])
+        self.assertIn("svg_parse_or_entity_review", entity["pending_reviews"])
 
     def test_header_and_limits_do_not_require_decoder(self):
         self.assertEqual(("png", 20, 10), _image_header(PNG))

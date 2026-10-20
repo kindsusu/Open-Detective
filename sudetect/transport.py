@@ -241,6 +241,8 @@ def _safe_headers(response: http.client.HTTPResponse) -> dict[str, str]:
         ("Content-Disposition", "content-disposition"),
         ("X-Content-Type-Options", "x-content-type-options"),
         ("Vary", "vary"),
+        ("Retry-After", "retry-after"),
+        ("Link", "link"),
     ):
         value = response.getheader(source)
         if value is not None and len(value) <= 2048:
