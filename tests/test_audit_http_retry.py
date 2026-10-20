@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import uuid
 
-from sudetect.audit import Case, _retry_due, init_case, run_case
+from sudetect.audit import Case, _github_rate_limit_due, _retry_due, init_case, run_case
 from sudetect.policy import Scope
 from sudetect.transport import FetchResult
 
@@ -42,6 +42,82 @@ class AuditHttpRetryTests(unittest.TestCase):
                          datetime.fromisoformat(_retry_due(None, 8, now=now)))
         self.assertEqual(now + timedelta(days=14),
                          datetime.fromisoformat(_retry_due(str(14 * 86400), 1, now=now)))
+
+    def test_github_403_requires_confirmed_rate_limit_and_honors_later_delay(self):
+        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        reset = str(int((now + timedelta(minutes=5)).timestamp()))
+        headers = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": reset}
+        api = "https://api.github.com/repos/fixture/example/git/trees/main"
+        self.assertEqual(now + timedelta(minutes=5),
+                         datetime.fromisoformat(_github_rate_limit_due(api, 403, headers, 1, now=now)))
+        self.assertEqual(now + timedelta(minutes=8), datetime.fromisoformat(
+            _github_rate_limit_due(api, 403, {**headers, "retry-after": "480"}, 1, now=now)))
+        for url, metadata in ((api, {}), (api, {**headers, "x-ratelimit-remaining": "1"}),
+                              (api, {**headers, "x-ratelimit-reset": "invalid"}),
+                              (api, {**headers, "x-ratelimit-reset": str(int(now.timestamp()) - 1)}),
+                              ("https://fixture.test/", headers),
+                              ("https://api.github.com.evil.test/", headers)):
+            with self.subTest(url=url, metadata=metadata):
+                self.assertIsNone(_github_rate_limit_due(url, 403, metadata, 1, now=now))
+
+    def test_github_403_rate_limit_persists_origin_cooldown(self):
+        api = "https://api.github.com/repos/fixture/example/git/trees/main"
+        github_scope = Scope.from_dict({"policy_id": "retry-fixture", "expires_at": "2099-01-01T00:00:00Z",
+            "targets": [{"origin": "https://api.github.com", "owner": "fixture",
+                         "ownership_evidence": "fixture-evidence", "path_prefixes": ["/"]}],
+            "max_bytes": 1024 * 1024, "max_requests": 10})
+        calls = []
+        reset = datetime.now(timezone.utc) + timedelta(minutes=6)
+        def limited(url, active_scope):
+            active_scope.authorize(url)
+            active_scope.budget.consume()
+            calls.append(url)
+            return FetchResult({"observation_id": str(uuid.uuid4()),
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "policy_id": active_scope.policy_id, "access": "ACCESS_DENIED_OBSERVED",
+                "capture_complete": True, "http_status": 403, "reason": "access_denied_status",
+                "redirects": []}, b"synthetic provider response",
+                {"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(int(reset.timestamp()))})
+        with Case(self.root) as case:
+            first = case.enqueue_url(api, scope=github_scope)
+            run_case(case, {"max_requests": 1, "max_jobs": 1}, scope=github_scope,
+                     fetcher=limited, inspection_only=True)
+            job = next(job for job in case.queue.status()["jobs"] if job["job_id"] == first)
+            self.assertEqual("retry_wait", job["state"])
+            self.assertGreater(datetime.fromisoformat(job["next_eligible_at"]),
+                               datetime.now(timezone.utc) + timedelta(minutes=5))
+            saved = case.ledger.db.execute("SELECT report_json FROM audit_results").fetchone()[0]
+            self.assertIn("provider_rate_limited", saved)
+            self.assertNotIn("synthetic provider response", saved)
+            second = case.enqueue_url(api + "-second", scope=github_scope)
+            deferred = next(job for job in case.queue.status()["jobs"] if job["job_id"] == second)
+            self.assertEqual("retry_wait", deferred["state"])
+            self.assertEqual(0, deferred["attempts"])
+        with Case(self.root) as case:
+            result = run_case(case, {"max_requests": 1, "max_jobs": 1}, scope=github_scope,
+                              fetcher=limited, inspection_only=True)
+            self.assertEqual(0, result["run"]["requests"])
+            self.assertEqual(1, len(calls))
+
+    def test_plain_403_is_not_retried_or_cooldown(self):
+        calls = []
+        def denied(url, active_scope):
+            active_scope.authorize(url)
+            active_scope.budget.consume()
+            calls.append(url)
+            return FetchResult({"observation_id": str(uuid.uuid4()),
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "policy_id": active_scope.policy_id, "access": "ACCESS_DENIED_OBSERVED",
+                "capture_complete": True, "http_status": 403, "reason": "access_denied_status",
+                "redirects": []}, b"denied", {"content-type": "text/plain"})
+        with Case(self.root) as case:
+            run_case(case, {"max_requests": 1, "max_jobs": 1}, scope=scope(),
+                     fetcher=denied, inspection_only=True)
+            capture = next(job for job in case.queue.status()["jobs"] if job["job_type"] == "capture")
+            self.assertNotEqual("retry_wait", capture["state"])
+            self.assertEqual(0, case.ledger.db.execute(
+                "SELECT COUNT(*) FROM audit_origin_cooldown").fetchone()[0])
+            self.assertEqual(1, len(calls))
 
     def test_503_is_retry_without_content_analysis_and_origin_cooldown_persists(self):
         calls = []

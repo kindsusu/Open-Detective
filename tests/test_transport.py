@@ -85,6 +85,35 @@ class TransportTests(unittest.TestCase):
                          record[0][2]["User-Agent"])
         self.assertEqual("text/plain", result.headers["content-type"])
 
+    def test_only_numeric_github_rate_headers_are_returned(self):
+        github_scope = scope(targets=[{
+            "origin": "https://api.github.com", "owner": "team",
+            "ownership_evidence": "record-id", "path_prefixes": ["/"],
+        }])
+        result = fetch(
+            "https://api.github.com/", github_scope,
+            resolver=lambda host, port: ["93.184.216.34"],
+            connection_factory=factory([FakeResponse(403, b"", {
+                "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1792500000",
+                "X-RateLimit-Resource": "private-value"})], []),
+        )
+        self.assertEqual("0", result.headers["x-ratelimit-remaining"])
+        self.assertEqual("1792500000", result.headers["x-ratelimit-reset"])
+        self.assertEqual(0, result.observation["rate_limit_remaining"])
+        self.assertEqual(1792500000, result.observation["rate_limit_reset_epoch"])
+        self.assertNotIn("private-value", str(result.headers))
+        invalid = fetch(
+            "https://api.github.com/", scope(targets=[{
+                "origin": "https://api.github.com", "owner": "team",
+                "ownership_evidence": "record-id", "path_prefixes": ["/"],
+            }]),
+            resolver=lambda host, port: ["93.184.216.34"],
+            connection_factory=factory([FakeResponse(403, b"", {
+                "X-RateLimit-Remaining": "0; secret", "X-RateLimit-Reset": "tomorrow"})], []),
+        )
+        self.assertNotIn("x-ratelimit-remaining", invalid.headers)
+        self.assertNotIn("x-ratelimit-reset", invalid.headers)
+
     def test_every_dns_answer_must_be_public(self):
         record = []
         result = fetch(

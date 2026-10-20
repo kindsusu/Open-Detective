@@ -247,6 +247,13 @@ def _safe_headers(response: http.client.HTTPResponse) -> dict[str, str]:
         value = response.getheader(source)
         if value is not None and len(value) <= 2048:
             result[target] = clean_text(value, 2048)
+    # GitHub's numeric rate-limit metadata is transient. Reject arbitrary header
+    # text here so it can neither leak into a report nor influence retry timing.
+    for source, target in (("X-RateLimit-Remaining", "x-ratelimit-remaining"),
+                           ("X-RateLimit-Reset", "x-ratelimit-reset")):
+        value = response.getheader(source)
+        if isinstance(value, str) and len(value) <= 16 and value.isascii() and value.isdecimal():
+            result[target] = value
     return result
 
 
@@ -376,6 +383,11 @@ def fetch(
                 "reason": "response_observed" if complete else "response_truncated",
             }
         )
+        if host == "api.github.com":
+            if "x-ratelimit-remaining" in headers:
+                observation["rate_limit_remaining"] = int(headers["x-ratelimit-remaining"])
+            if "x-ratelimit-reset" in headers:
+                observation["rate_limit_reset_epoch"] = int(headers["x-ratelimit-reset"])
         if not complete:
             observation["prefix_sha256"] = hashlib.sha256(body).hexdigest()
 

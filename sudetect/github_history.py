@@ -220,7 +220,8 @@ def _review_changed_lines(changed_lines):
     """
     changed = "\n".join(changed_lines).encode("utf-8")
     media_skipped = False
-    complete = True
+    limit_reached = False
+    structure_incomplete = False
     if re.search(br"data:image/", changed, re.I):
         from .media_projection import project_inline_images
         projection = project_inline_images((changed[index:index + 65_536]
@@ -229,14 +230,14 @@ def _review_changed_lines(changed_lines):
         if projection.skipped_images:
             changed = projection.projected
             media_skipped = True
-        complete = not projection.wire_truncated and not projection.projected_truncated
+        limit_reached = projection.wire_truncated or projection.projected_truncated
     text = changed.decode("utf-8", "strict")
     chunks, current, current_bytes = [], [], 0
     limit = MAX_ANALYSIS_BYTES - 4096
     for line in text.splitlines():
         row_bytes = len(line.encode("utf-8")) + 1
         if row_bytes > limit:
-            complete = False
+            limit_reached = True
             if current:
                 chunks.append("\n".join(current))
                 current, current_bytes = [], 0
@@ -267,10 +268,11 @@ def _review_changed_lines(changed_lines):
         for report in reports:
             signals.update(row["code"] for row in report["signals"])
             sensitive |= report["content"] == "SENSITIVE_CANDIDATE"
-            complete &= bool(report["analysis_complete"])
+            limit_reached |= not bool(report["text_analysis_complete"])
+            structure_incomplete |= not bool(report["structure_analysis_complete"])
         if sensitive and patch_requires_material_hold(signals):
             break
-    return signals, sensitive, complete, media_skipped
+    return signals, sensitive, limit_reached, structure_incomplete, media_skipped
 
 
 def _parse_patch(body, repository, sha, locator_store, scope_id):
@@ -404,16 +406,19 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
         if saw_file_marker:
             return {"changed_files": files, "content_review": "not_inspected"}, "patch_has_no_text_hunks"
         return {"changed_files": files, "content_review": "metadata_only"}, None
-    signal_set, sensitive, complete, media_skipped = _review_changed_lines(changed_lines)
+    signal_set, sensitive, limit_reached, structure_incomplete, media_skipped = _review_changed_lines(changed_lines)
     signals = sorted(signal_set)
     if sensitive and patch_requires_material_hold(signals):
         return {"changed_files": files, "content_review": "stopped_sensitive_candidate",
                 "signal_codes": signals}, None
     if saw_binary:
         return {"changed_files": files, "content_review": "not_inspected"}, "binary_patch_not_inspected"
-    if not complete:
+    if limit_reached:
         return {"changed_files": files, "content_review": "stopped_analysis_limit",
                 "signal_codes": signals}, "patch_analysis_limit_reached"
+    if structure_incomplete:
+        return {"changed_files": files, "content_review": "text_reviewed_structure_pending",
+                "signal_codes": signals}, "patch_structure_parse_incomplete"
     if media_skipped:
         return {"changed_files": files, "content_review": "text_reviewed_media_pending",
                 "signal_codes": signals}, "inline_image_ocr_unexamined"

@@ -174,6 +174,22 @@ class RepositoryPatchPipelineTests(unittest.TestCase):
         self.assertTrue(reviewed["hold_repository_patch_lineage"])
         self.assertNotIn("literal_url_changes", reviewed)
 
+    def test_partial_js_literal_is_structure_gap_not_byte_limit(self):
+        body = patch("diff --git a/x.js b/x.js", "--- a/x.js", "+++ b/x.js",
+                     "@@ -0,0 +1 @@", "+const rows = [{")
+        reviewed = self.review(body)
+        self.assertFalse(reviewed["analysis_complete"])
+        self.assertEqual("text_reviewed_structure_pending", reviewed["content_review"])
+        self.assertIn("patch_structure_parse_incomplete", reviewed["pending_reviews"])
+        self.assertNotIn("patch_analysis_limit_reached", reviewed["pending_reviews"])
+
+    def test_oversized_changed_line_remains_actual_analysis_limit(self):
+        body = patch("diff --git a/x.txt b/x.txt", "--- a/x.txt", "+++ b/x.txt",
+                     "@@ -0,0 +1 @@", "+" + "x" * 330000)
+        reviewed = analyze_repository_patch(body, URL, self.store, "fixture", max_bytes=2 * 1024 * 1024)
+        self.assertFalse(reviewed["analysis_complete"])
+        self.assertIn("patch_analysis_limit_reached", reviewed["pending_reviews"])
+
     def test_oversized_single_line_scans_late_sensitive_signal_but_remains_partial(self):
         body = patch("diff --git a/x.js b/x.js", "--- /dev/null", "+++ b/x.js",
                      "@@ -0,0 +1 @@", "+const data = '" + "x" * 330000 +

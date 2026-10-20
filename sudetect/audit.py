@@ -68,6 +68,26 @@ def _retry_due(header, attempts, *, now=None):
     return due.isoformat()
 
 
+def _github_rate_limit_due(url, status, headers, attempts, *, now=None):
+    """Recognize only a confirmed, timed GitHub API rate-limit response."""
+    if status != 403 or urlsplit(url).hostname != "api.github.com":
+        return None
+    if headers.get("x-ratelimit-remaining") != "0":
+        return None
+    reset = headers.get("x-ratelimit-reset")
+    if not isinstance(reset, str) or not reset.isascii() or not re.fullmatch(r"\d{1,12}", reset):
+        return None
+    now = now or datetime.now(timezone.utc)
+    try:
+        provider_due = datetime.fromtimestamp(int(reset), timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    if provider_due <= now:
+        return None
+    local_due = datetime.fromisoformat(_retry_due(headers.get("retry-after"), attempts, now=now))
+    return max(local_due, provider_due).isoformat()
+
+
 def _origin_cooldown(case, url):
     row = case.ledger.db.execute("SELECT due_at FROM audit_origin_cooldown WHERE origin=?", (_origin(url),)).fetchone()
     if row and datetime.fromisoformat(row[0]) > datetime.now(timezone.utc):
@@ -457,13 +477,18 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     body, observation = result.body, dict(result.observation)
     capture_complete = bool(observation.get("capture_complete"))
     http_status = observation.get("http_status")
-    if http_status in _RETRY_HTTP_STATUSES:
-        due = _retry_due(result.headers.get("retry-after"), job["attempts"])
-        if http_status in _COOLDOWN_HTTP_STATUSES:
+    github_rate_due = _github_rate_limit_due(original_url, http_status, result.headers, job["attempts"])
+    if http_status in _RETRY_HTTP_STATUSES or github_rate_due:
+        due = github_rate_due or _retry_due(result.headers.get("retry-after"), job["attempts"])
+        if http_status in _COOLDOWN_HTTP_STATUSES or github_rate_due:
             due = _set_origin_cooldown(case, original_url, due, http_status)
+        if github_rate_due:
+            observation["access"] = "INDETERMINATE"
+            observation["reason"] = "provider_rate_limited"
         observation.update(target_id=job["asset_ref"], content="NOT_INSPECTED", analysis_complete=False,
             review_complete=False, retry_required=True, retry_after_at=due,
-            gaps=(["upstream_transient_status", "patch_source_unavailable"]
+            gaps=(["provider_rate_limited"] if github_rate_due else
+                  ["upstream_transient_status", "patch_source_unavailable"]
                   if analysis_kind == "repository_patch" and http_status == 503
                   else ["upstream_transient_status"]), engine_review_version=3,
             policy_id=scope.policy_id)
