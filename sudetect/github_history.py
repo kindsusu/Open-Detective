@@ -438,7 +438,8 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
                 "signal_codes": signals}, "patch_analysis_limit_reached"
     if structure_incomplete:
         return {"changed_files": files, "content_review": "text_reviewed_structure_pending",
-                "signal_codes": signals}, "patch_structure_parse_incomplete"
+                "signal_codes": signals,
+                "pending_reviews": ["inline_image_ocr_unexamined"] if media_skipped else []}, "patch_structure_parse_incomplete"
     if media_skipped:
         return {"changed_files": files, "content_review": "text_reviewed_media_pending",
                 "signal_codes": signals}, "inline_image_ocr_unexamined"

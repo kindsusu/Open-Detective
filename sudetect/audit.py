@@ -534,7 +534,8 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             profile = analyze_repository_patch(body, url, case.locators, case.scope_id,
                 max_bytes=min(scope.max_bytes, review_limits.get("max_patch_bytes", 524288)))
             if (capture_complete and http_status == 200 and
-                    profile.get("content_review") == "text_reviewed_media_pending" and
+                    profile.get("content_review") in {"text_reviewed_media_pending",
+                                                     "text_reviewed_structure_pending"} and
                     "inline_image_ocr_unexamined" in profile.get("pending_reviews", []) and
                     not profile.get("hold_repository_patch_lineage")):
                 from .media_review import analyze_inline_images

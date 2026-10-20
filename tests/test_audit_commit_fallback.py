@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch as mock_patch
 
 from sudetect.audit import Case, init_case, run_case, _verified_empty_detail
+from sudetect.github_history import analyze_repository_patch
 from sudetect.policy import Scope
 from sudetect.repository_commit import commit_detail_url
 from sudetect.repository_workflow import _capture_state, _latest_committed_report
@@ -222,6 +223,59 @@ class AuditCommitFallbackTests(unittest.TestCase):
                      fetcher=lambda url, current, **kwargs: observed(url, current, status=200,
                          body=sensitive, headers={"content-type": "text/plain"}), inspection_only=True)
             ocr.assert_not_called()
+
+    def test_patch_structure_gap_keeps_media_gap_until_ocr(self):
+        body = (f"From {SHA} Mon Sep 17 00:00:00 2001\nFrom: Fixture <f@example.test>\n"
+                "Date: Tue, 1 Jan 2030 00:00:00 +0000\nSubject: [PATCH] image\n\n---\n"
+                "diff --git a/x.js b/x.js\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/x.js\n@@ -0,0 +1,2 @@\n"
+                "+const rows = [{\n+const image = \"data:image/png;base64," + "A" * 350000 + "\";\n").encode()
+        complete = {"inline_images_found": 1, "ocr_completed": 1,
+                    "pending_reviews": ["image_visual_and_metadata_review_required"],
+                    "content": "NOT_INSPECTED", "signals": []}
+        with Case(self.root) as case, mock_patch("sudetect.media_review.analyze_inline_images", return_value=complete) as ocr:
+            active = scope()
+            initial = analyze_repository_patch(body, PATCH, case.locators, case.scope_id,
+                                               max_bytes=active.max_bytes)
+            self.assertIn("patch_structure_parse_incomplete", initial["pending_reviews"])
+            self.assertIn("inline_image_ocr_unexamined", initial["pending_reviews"])
+            case.enqueue_url(PATCH, scope=active, job_type="repository_patch")
+            run_case(case, {"max_requests": 1, "max_jobs": 2}, scope=active,
+                     fetcher=lambda url, current, **kwargs: observed(url, current, status=200,
+                         body=body, headers={"content-type": "text/plain"}), inspection_only=True)
+            ocr.assert_called_once()
+            report = next(json.loads(row[0]) for row in case.ledger.db.execute(
+                "SELECT report_json FROM audit_results") if json.loads(row[0]).get("document_type") == "repository_patch")
+            self.assertEqual("text_reviewed_structure_pending", report["content_review"])
+            self.assertNotIn("inline_image_ocr_unexamined", report["gaps"])
+            self.assertIn("patch_structure_parse_incomplete", report["gaps"])
+            self.assertIn("image_visual_and_metadata_review_required", report["gaps"])
+            self.assertFalse(report["analysis_complete"])
+
+    def test_patch_invalid_or_incomplete_capture_never_runs_inline_ocr(self):
+        valid = (f"From {SHA} Mon Sep 17 00:00:00 2001\nFrom: Fixture <f@example.test>\n"
+                 "Date: Tue, 1 Jan 2030 00:00:00 +0000\nSubject: [PATCH] image\n\n---\n"
+                 "diff --git a/x.html b/x.html\n--- /dev/null\n+++ b/x.html\n@@ -0,0 +1 @@\n"
+                 '+<img src="data:image/png;base64,' + "A" * 350000 + '">\n').encode()
+        for invalid, capture_complete in ((True, True), (False, False)):
+            with self.subTest(invalid=invalid, capture_complete=capture_complete):
+                with tempfile.TemporaryDirectory() as root:
+                    case_root = Path(root) / "case"
+                    init_case(case_root, {"scope_id": "fixture", "identity": {
+                        "company_en": "Fixture", "domains": []}})
+                    with Case(case_root) as case, mock_patch("sudetect.media_review.analyze_inline_images") as ocr:
+                        active = scope()
+                        case.enqueue_url(PATCH, scope=active, job_type="repository_patch")
+                        body = valid.replace(b"diff --git a/x.html b/x.html", b"diff --git broken") if invalid else valid
+                        def fetch(url, current, **kwargs):
+                            result = observed(url, current, status=200, body=body,
+                                              headers={"content-type": "text/plain"})
+                            if not capture_complete:
+                                result.observation["capture_complete"] = False
+                            return result
+                        run_case(case, {"max_requests": 1, "max_jobs": 2}, scope=active,
+                                 fetcher=fetch, inspection_only=True)
+                        ocr.assert_not_called()
 
     def test_independent_zero_file_detail_releases_only_exact_patch(self):
         other_sha = "c" * 40
