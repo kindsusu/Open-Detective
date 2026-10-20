@@ -170,6 +170,7 @@ class Case:
         self.ledger.db.execute("""CREATE TABLE IF NOT EXISTS audit_results(
             result_ref TEXT PRIMARY KEY, job_id TEXT NOT NULL, report_json TEXT NOT NULL)""")
         self.ledger.db.executescript("""
+            CREATE INDEX IF NOT EXISTS audit_results_by_job ON audit_results(job_id);
             CREATE TRIGGER IF NOT EXISTS audit_results_no_update BEFORE UPDATE ON audit_results
             BEGIN SELECT RAISE(ABORT,'audit results are append-only'); END;
             CREATE TRIGGER IF NOT EXISTS audit_results_no_delete BEFORE DELETE ON audit_results
