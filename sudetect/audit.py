@@ -213,6 +213,46 @@ class Case:
                                      (job["job_id"],)).fetchone()
         return (row[0], json.loads(row[1])) if row and not json.loads(row[1]).get("retry_required") else None
 
+    def reusable_child_review(self, job, scope, context_digest, run_started_at):
+        """Find a committed review of this run's same capture, never a new observation."""
+        if job["job_type"] != "capture" or self.ledger.db.execute(
+                "SELECT 1 FROM audit_results WHERE job_id=? LIMIT 1", (job["job_id"],)).fetchone():
+            return None
+        checkpoint = job.get("checkpoint") or {}
+        rows = self.ledger.db.execute("""SELECT job_id,state,checkpoint,result_refs FROM audit_jobs
+            WHERE parent_job_id=? AND job_type='content_review' AND asset_ref=?
+            AND scope_id=? AND policy_id=? AND state IN ('succeeded','blocked_input')""",
+            (job["job_id"], job["asset_ref"], self.scope_id, scope.policy_id)).fetchall()
+        start = datetime.fromisoformat(run_started_at.replace("Z", "+00:00"))
+        for child in rows:
+            child_checkpoint = json.loads(child["checkpoint"] or "{}")
+            if (child_checkpoint.get("analysis_kind") != checkpoint.get("analysis_kind", "capture")
+                    or child_checkpoint.get("document_base_ref") != checkpoint.get("document_base_ref")
+                    or child_checkpoint.get("depth", 0) != checkpoint.get("depth", 0)
+                    or child_checkpoint.get("context_digest") != context_digest):
+                continue
+            committed = set(json.loads(child["result_refs"]))
+            if not committed:
+                continue
+            for row in self.ledger.db.execute("""SELECT result_ref,report_json FROM audit_results
+                    WHERE job_id=? ORDER BY rowid DESC LIMIT 1""", (child["job_id"],)):
+                if row["result_ref"] not in committed:
+                    continue
+                report = json.loads(row["report_json"])
+                try:
+                    observed = datetime.fromisoformat(report["observed_at"].replace("Z", "+00:00"))
+                except (KeyError, AttributeError, TypeError, ValueError):
+                    continue
+                if (observed.tzinfo is not None and observed >= start
+                        and report.get("target_id") == job["asset_ref"]
+                        and report.get("policy_id") == scope.policy_id
+                        and report.get("engine_review_version") == 3
+                        and report.get("capture_complete") is True
+                        and report.get("retry_required") is False
+                        and isinstance(report.get("observation_id"), str)):
+                    return row["result_ref"], report
+        return None
+
     def enqueue_url(self, url, *, parent=None, evidence=None, depth=0, redirect_count=0, scope=None, job_type="capture", document_base_ref=None, review_reason=None):
         try:
             url, _ = _normalize_url(url)
@@ -352,10 +392,23 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     scope.authorize(url)
     if repository_job_authorized(case, url, scope) is False:
         raise PolicyError("repository binding authorization required")
+    if any(isinstance(item, dict) and item.get("url") == url for item in case.meta["intake"].get("excluded_urls", [])):
+        raise PolicyError("operator excluded target")
     cached = case.prior_result(job)
     if cached and not (job["job_type"] == "content_review" and cached[1].get("gaps")):
         _project_observation(case, job, cached[1])
         return cached[0]
+    if job["job_type"] == "capture":
+        current_run = case.queue.get_run(run_id)
+        reusable = case.reusable_child_review(job, scope,
+            _review_context(scope, capability, current_run["budget"]), current_run["started_at"])
+        if reusable:
+            source_ref, source_report = reusable
+            reused = {**source_report, "reused_result_ref": source_ref}
+            # Preserve the original observation ID/time and every partial gap.
+            # The child already projected that observation; this is an audit
+            # result for the pending job, not a second network observation.
+            return case.save_result(job, reused)
     original_url = url
     document_base_ref = (job.get("checkpoint") or {}).get("document_base_ref")
     document_base = case.locators.get(case.scope_id, document_base_ref) if document_base_ref else None

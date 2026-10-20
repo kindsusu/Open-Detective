@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reuse a committed direct-child file review for a still-uncaptured duplicate only within the same active review interval and settings. Preserve original observation identity, incomplete dimensions, and the explicit result reference without inventing another HTTP observation.
 - Retry transient HTTP failures with persisted origin cooldowns and validated provider delays instead of analyzing error pages. When an observed commit patch is unavailable, inspect scoped commit-file metadata and exact current/parent file revisions without claiming that missing patch hunks were reviewed.
 - Inspect SVG source statically without executing scripts or loading linked resources; retain separate visual-review gaps.
 - Added explicit extended repository file/patch budgets, bounded transient capture caching, full-text patch chunk inspection, Git C-quoted path support, and committed follow-up patch coverage. Large HTML reviews preserve original-byte evidence while retaining genuine structure/runtime gaps.
