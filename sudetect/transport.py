@@ -34,7 +34,12 @@ ConnectionFactory = Callable[[str, int, str, float], http.client.HTTPSConnection
 
 
 def _default_resolver(host: str, port: int, timeout: float) -> list[str]:
-    """Bound getaddrinfo wall time without leaving a process-blocking worker."""
+    """Bound DNS time and discard only paired well-known-prefix NAT64 duplicates.
+
+    A synthetic 64:ff9b::/96 answer is ignored only when its embedded IPv4 is
+    also present as a public A answer in this same resolution. All remaining
+    addresses still pass through _resolve_public's fail-closed validation.
+    """
     result: queue.Queue[object] = queue.Queue(maxsize=1)
 
     def run() -> None:
@@ -51,7 +56,26 @@ def _default_resolver(host: str, port: int, timeout: float) -> list[str]:
         answer = result.get(timeout=max(0.001, timeout))
     except queue.Empty:
         raise PolicyError("DNS resolution timed out") from None
-    return sorted({item[4][0] for item in answer})
+    addresses = {item[4][0] for item in answer}
+    public_v4 = set()
+    for value in addresses:
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError:
+            continue  # Preserve invalid answers for _resolve_public to reject.
+        if isinstance(parsed, ipaddress.IPv4Address) and parsed.is_global and not parsed.is_reserved:
+            public_v4.add(parsed)
+    prefix = ipaddress.IPv6Network("64:ff9b::/96")
+    for value in tuple(addresses):
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if isinstance(parsed, ipaddress.IPv6Address) and parsed in prefix:
+            embedded = ipaddress.IPv4Address(int(parsed) & 0xffffffff)
+            if embedded in public_v4:
+                addresses.remove(value)
+    return sorted(addresses)
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
