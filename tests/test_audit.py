@@ -236,15 +236,20 @@ class AuditTests(unittest.TestCase):
             calls.append(url)
             item = response(url, scope)
             if urlsplit(url).hostname == "api.github.com":
-                item.body = json.dumps({"tree": [{"path": "private-plan.pdf", "type": "blob", "sha": "a" * 40, "size": 17}], "truncated": False}).encode()
+                item.body = json.dumps({"tree": [
+                    {"path": "private-plan.pdf", "type": "blob", "sha": "a" * 40, "size": 17},
+                    {"path": "price list.pdf", "type": "blob", "sha": "b" * 40, "size": 17},
+                ], "truncated": False}).encode()
                 item.headers = {"content-type": "application/json"}
             return item
         with Case(self.root) as case:
             run_case(case, {"max_requests": 45, "max_jobs": 20}, scope=scoped, fetcher=files, api_fetch=metadata)
             self.assertIn("https://api.github.com/repos/nebula-sales/guide/git/trees/release-v2?recursive=1", calls)
             self.assertIn("https://raw.githubusercontent.com/nebula-sales/guide/release-v2/private-plan.pdf", calls)
+            self.assertIn("https://raw.githubusercontent.com/nebula-sales/guide/release-v2/price%20list.pdf", calls)
             report = json.dumps(report_case(case))
             self.assertNotIn("private-plan.pdf", report)
+            self.assertNotIn("price list.pdf", report)
 
     def test_redirect_uses_response_url_not_html_base_and_honors_limit(self):
         for maximum in (0, 1):
