@@ -27,6 +27,8 @@ from .scheduler import Scheduler
 
 _RETRY_REASONS = {"request budget exhausted", "timeout", "dns_failure", "connection_reset",
                   "connection_refused", "request timed out", "transport_error"}
+_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp",
+                   ".tif", ".tiff", ".svg", ".woff", ".woff2", ".ttf", ".ico"}
 
 
 class _RetryCapture(Exception):
@@ -150,7 +152,7 @@ class Case:
                 pass
         suffix = Path(urlsplit(url).path).suffix.lower()
         priority = 30 if suffix in {".pdf", ".json", ".csv", ".js", ".mjs", ".html", ".htm"} else 20
-        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".woff", ".woff2", ".ttf", ".ico"}:
+        if suffix in _MEDIA_SUFFIXES:
             priority = 1
         if job_type == "repository_history":
             priority = 5
@@ -642,6 +644,12 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
     try:
         # Previously blocked scope jobs become ready only after current authorization.
         for job in case.queue.status()["jobs"]:
+            if job["job_type"] == "capture" and job["state"] not in {"succeeded", "running"} and job["priority"] != 1:
+                target = case.locators.get(case.scope_id, job["asset_ref"])
+                if Path(urlsplit(target).path).suffix.lower() in _MEDIA_SUFFIXES:
+                    with case.ledger.db:
+                        case.ledger.db.execute("UPDATE audit_jobs SET priority=1 WHERE job_id=? AND state NOT IN ('succeeded','running')", (job["job_id"],))
+                        case.ledger._event("AUDIT_MEDIA_PRIORITY_UPDATED", job["job_id"], {"priority": 1})
             if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch"} and scope:
                 previous = case.prior_result(job)
                 if previous and previous[1].get("engine_review_version", 0) < 2:

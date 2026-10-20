@@ -50,3 +50,14 @@ class CompletionTests(unittest.TestCase):
             code = main(["report", "--case", str(self.root), "--output", str(output)])
         self.assertEqual(code, 2)
         self.assertEqual(output.read_text(encoding="utf-8"), "{}")
+
+    def test_resume_lowers_legacy_media_priority_without_removing_work(self):
+        with Case(self.root) as case:
+            media = case.enqueue_url("https://seed.test/vehicle.avif")
+            case.ledger.db.execute("UPDATE audit_jobs SET priority=20 WHERE job_id=?", (media,))
+            case.ledger.db.commit()
+            run_case(case, {"max_requests": 1}, inspection_only=True)
+            job = next(j for j in case.queue.status()["jobs"] if j["job_id"] == media)
+            self.assertEqual(job["priority"], 1)
+            self.assertEqual(job["state"], "blocked_scope")
+            self.assertEqual(job["attempts"], 0)
