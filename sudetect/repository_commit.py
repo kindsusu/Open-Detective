@@ -99,6 +99,7 @@ def analyze_commit_detail(body: bytes, url: str, *, link_header: str | None = No
     report = {"document_type": "repository_commit_detail", "content": "NOT_INSPECTED",
               "analysis_complete": False, "file_list_page_complete": False,
               "patch_content_review": "not_inspected", "files_observed": 0,
+              "empty_diff_verified": False,
               "file_urls_emitted": 0, "status_counts": {}, "parent_count": None,
               "first_parent_observed": False, "inline_patch_missing": 0,
               "pending_reviews": ["commit_patch_hunks_not_reviewed"],
@@ -177,6 +178,16 @@ def analyze_commit_detail(body: bytes, url: str, *, link_header: str | None = No
         report["pending_reviews"].append("commit_pagination_unverified")
     report["next_page_observed"] = bool(next_url)
     report["file_list_page_complete"] = not invalid_rows and not invalid_next
+    stats = payload.get("stats")
+    stats_consistent = (stats is None or isinstance(stats, dict) and
+                        all(type(stats.get(key)) is int and stats[key] == 0
+                            for key in ("total", "additions", "deletions")))
+    if (page == 1 and not payload["files"] and stats_consistent and len(parents) <= 1
+            and not next_url and not invalid_next and not invalid_rows):
+        report["empty_diff_verified"] = True
+        report["patch_content_review"] = "no_changed_files_verified"
+        report["analysis_complete"] = True
+        report["pending_reviews"].remove("commit_patch_hunks_not_reviewed")
     report["file_urls_emitted"] = sum(kind == "repository_file" for kind, _ in refs)
     report["pending_reviews"] = sorted(set(report["pending_reviews"]))
     return report, refs

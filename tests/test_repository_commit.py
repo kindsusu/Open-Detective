@@ -10,9 +10,9 @@ PATCH = f"https://github.com/fixture/repo/commit/{SHA}.patch"
 DETAIL = f"https://api.github.com/repos/fixture/repo/commits/{SHA}?per_page=100&page=1"
 
 
-def payload(files, *, sha=SHA, parents=None):
+def payload(files, *, sha=SHA, parents=None, stats=None):
     return json.dumps({"sha": sha, "parents": [{"sha": PARENT}] if parents is None else parents,
-                       "files": files}, ensure_ascii=False).encode()
+                       "files": files, **({"stats": stats} if stats is not None else {})}, ensure_ascii=False).encode()
 
 
 class CommitDetailFallbackTests(unittest.TestCase):
@@ -104,6 +104,25 @@ class CommitDetailFallbackTests(unittest.TestCase):
         for limit in (0, True, 32 * 1024 * 1024 + 1):
             with self.subTest(limit=limit), self.assertRaises(ValueError):
                 analyze_commit_detail(body, DETAIL, max_bytes=limit)
+
+    def test_zero_file_commit_requires_zero_stats_and_complete_first_page(self):
+        zeros = {"total": 0, "additions": 0, "deletions": 0}
+        report, refs = analyze_commit_detail(payload([], stats=zeros), DETAIL)
+        self.assertTrue(report["empty_diff_verified"])
+        self.assertTrue(report["analysis_complete"])
+        self.assertEqual("no_changed_files_verified", report["patch_content_review"])
+        self.assertEqual([], refs)
+        self.assertNotIn("commit_patch_hunks_not_reviewed", report["pending_reviews"])
+        self.assertTrue(analyze_commit_detail(payload([]), DETAIL)[0]["empty_diff_verified"])
+        for body, link in (
+            (payload([], stats={"total": 1, "additions": 0, "deletions": 0}), None),
+            (payload([], stats=zeros, parents=[{"sha": PARENT}, {"sha": "c" * 40}]), None),
+            (payload([], stats=zeros), f'<{DETAIL.replace("page=1", "page=2")}>; rel="next"'),
+        ):
+            with self.subTest(body=body[:40], link=link):
+                report, _ = analyze_commit_detail(body, DETAIL, link_header=link)
+                self.assertFalse(report["empty_diff_verified"])
+                self.assertFalse(report["analysis_complete"])
 
 
 if __name__ == "__main__":

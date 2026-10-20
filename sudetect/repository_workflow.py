@@ -384,6 +384,7 @@ def repository_status(case):
                          and job["parent_job_id"] in history_ids]
         patch_jobs = [job for job in jobs if job["job_type"] == "repository_patch" and job["parent_job_id"] in history_ids]
         patch_complete = 0
+        patch_empty_verified = 0
         for job in patch_jobs:
             related = [candidate for candidate in jobs if candidate["asset_ref"] == job["asset_ref"]
                        and candidate["job_type"] in {"repository_patch", "content_review"}]
@@ -391,12 +392,14 @@ def repository_status(case):
             if (related[-1]["state"] == "succeeded" and _verified_result(case, related[-1]) is not None
                     and result and _capture_state(result) == "evidenced_complete"):
                 patch_complete += 1
+                patch_empty_verified += result.get("content_review") == "no_changed_files_verified"
         expected_patches = stages["history"]["commits_examined"]
         stages["patch"] = {"state": "evidenced_complete" if expected_patches and patch_complete == expected_patches else
                            "partial" if patch_jobs else "blocked_or_pending" if stages["history"]["state"] in
                            {"blocked_scope", "blocked_input", "failed_terminal", "retry_wait"} else "not_inspected",
                            "patches_required": expected_patches, "patches_scheduled": len(patch_jobs),
                            "patches_captured_complete": patch_complete,
+                           "patches_empty_verified": patch_empty_verified,
                            "snapshots_scheduled": len(snapshot_jobs), "history_window_exhaustive": False}
         deployments = [_job_result(case, jobs, url) for url in needed["deployments"]]
         complete_deployments = sum(state == "succeeded" and _capture_state(report) == "evidenced_complete" for state, report in deployments)

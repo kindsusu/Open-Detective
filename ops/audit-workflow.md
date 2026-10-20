@@ -110,6 +110,13 @@ every downloaded image in memory.
 HTTP 429 and transient 5xx responses are retry observations, not inspected asset
 content. Valid `Retry-After` delays are preserved even when longer than local
 backoff. Origin cooldowns persist across workers and case resumes. An observed
+GitHub API 403 is retried only when numeric rate-limit headers confirm zero
+remaining requests and a future reset time. The reset and any later valid
+`Retry-After` are honored; ordinary access-denied responses are not automatically
+retried. Numeric rate metadata remains in the observation for diagnosis. Do not
+substitute an authenticated response for anonymous exposure evidence.
+
+An observed
 commit whose patch endpoint fails can produce a separately scoped commit-detail
 job. Validated metadata emits exact current and first-parent raw-file revisions;
 validated pagination remains bounded. This fallback does not reconstruct omitted

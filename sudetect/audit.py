@@ -530,12 +530,63 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             profile, refs = analyze_history(body, url)
         elif analysis_kind == "repository_patch":
             from .repository_history import analyze_repository_patch
+            from .github_history import patch_requires_material_hold
             profile = analyze_repository_patch(body, url, case.locators, case.scope_id,
                 max_bytes=min(scope.max_bytes, review_limits.get("max_patch_bytes", 524288)))
+            if (capture_complete and http_status == 200 and
+                    profile.get("content_review") == "text_reviewed_media_pending" and
+                    "inline_image_ocr_unexamined" in profile.get("pending_reviews", []) and
+                    not profile.get("hold_repository_patch_lineage")):
+                from .media_review import analyze_inline_images
+                inline_review = analyze_inline_images(body, max_seconds=120.0)
+                profile["inline_image_review"] = inline_review
+                profile["pending_reviews"].extend(inline_review.get("pending_reviews", []))
+                if (inline_review.get("inline_images_found", 0) > 0 and
+                        inline_review.get("inline_images_found") == inline_review.get("ocr_completed") and
+                        not set(inline_review.get("pending_reviews", [])) & {
+                            "ocr_requested_language_not_covered", "ocr_text_byte_limit"}):
+                    profile["pending_reviews"].remove("inline_image_ocr_unexamined")
+                if inline_review.get("content") == "SENSITIVE_CANDIDATE":
+                    profile["content"] = "SENSITIVE_CANDIDATE"
+                profile.setdefault("signal_codes", []).extend(
+                    signal["code"] for signal in inline_review.get("signals", []))
+                if (inline_review.get("content") == "SENSITIVE_CANDIDATE" and
+                        patch_requires_material_hold(profile["signal_codes"])):
+                    profile["hold_repository_patch_lineage"] = True
+                    profile["pending_reviews"].append("sensitive_candidate_stop")
+                profile["pending_reviews"] = sorted(set(profile["pending_reviews"]))
+                profile["analysis_complete"] = False
+            if (capture_complete and http_status == 200 and
+                    "header_only_patch_requires_commit_detail" in profile.get("pending_reviews", [])):
+                from .repository_commit import commit_detail_url
+                detail = commit_detail_url(original_url)
+                if detail:
+                    fallback = case.enqueue_url(detail, parent=job["job_id"],
+                        evidence="observation:" + observation["observation_id"],
+                        depth=(job.get("checkpoint") or {}).get("depth", 0),
+                        job_type="repository_commit_detail", scope=scope)
+                    profile["commit_detail_fallback_queued"] = fallback is not None
         elif analysis_kind == "repository_commit_detail":
             from .repository_commit import analyze_commit_detail
             profile, refs = analyze_commit_detail(body, url, link_header=result.headers.get("link"),
                 max_bytes=min(scope.max_bytes, capture_options["max_bytes"]))
+            if profile.get("empty_diff_verified") and job.get("parent_job_id"):
+                parent = next((candidate for candidate in case.queue.status()["jobs"]
+                               if candidate["job_id"] == job["parent_job_id"] and
+                               (candidate["job_type"] == "repository_patch" or
+                                candidate["job_type"] == "content_review" and
+                                (candidate.get("checkpoint") or {}).get("analysis_kind") == "repository_patch")), None)
+                if parent:
+                    from .repository_commit import commit_detail_url
+                    patch_url = case.locators.get(case.scope_id, parent["asset_ref"])
+                    source = case.prior_result(parent)
+                    if (commit_detail_url(patch_url) == original_url and source and
+                            source[1].get("target_id") == parent["asset_ref"] and
+                            source[1].get("capture_complete") is True and
+                            source[1].get("http_status") == 200 and
+                            "header_only_patch_requires_commit_detail" in source[1].get("gaps", [])):
+                        profile["empty_patch_target_ref"] = parent["asset_ref"]
+                        profile["empty_patch_source_result_ref"] = source[0]
         elif analysis_kind == "repository_tree":
             from .repository_assets import analyze_tree
             profile, locations = analyze_tree(body, url, max_files=review_limits.get("max_repository_files", 1000))
@@ -730,6 +781,8 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     observation["retry_required"] = retry
     reference = case.save_result(job, observation)
     _project_observation(case, job, observation)
+    if analysis_kind == "repository_commit_detail" and observation.get("empty_patch_target_ref"):
+        _queue_empty_patch_reconciliation(case, job, observation, reference, scope)
     if retry:
         raise _RetryCapture(reference)
     return reference
@@ -743,6 +796,90 @@ def _project_observation(case, job, observation):
     # A candidate classification is never promoted to confirmed sensitivity.
     case.ledger.import_observation(observation, asset_id=asset_id,
         event_id="audit-observation-" + observation["observation_id"])
+
+
+def _reconcile_empty_patch(case, job, scope):
+    """Complete a header-only patch from committed, exact-commit API evidence."""
+    from .repository_commit import commit_detail_url
+    checkpoint = job.get("checkpoint") or {}
+    jobs = {item["job_id"]: item for item in case.queue.status()["jobs"]}
+    patch_job = jobs.get(checkpoint.get("source_patch_job_id"))
+    detail_job = jobs.get(checkpoint.get("detail_job_id"))
+    if (not patch_job or not detail_job or
+            patch_job["job_type"] not in {"repository_patch", "content_review"} or
+            detail_job["job_type"] != "repository_commit_detail" or
+            detail_job["state"] != "succeeded" or
+            patch_job["asset_ref"] != job["asset_ref"] or
+            detail_job["parent_job_id"] != patch_job["job_id"]):
+        return None
+    patch_url = case.locators.get(case.scope_id, patch_job["asset_ref"])
+    detail_url = case.locators.get(case.scope_id, detail_job["asset_ref"])
+    scope.authorize(patch_url)
+    scope.authorize(detail_url)
+    if commit_detail_url(patch_url) != detail_url:
+        return None
+    source = case.prior_result(patch_job)
+    detail = case.prior_result(detail_job)
+    if (not source or not detail or source[0] not in patch_job["result_refs"] or
+            detail[0] not in detail_job["result_refs"] or
+            source[1].get("target_id") != patch_job["asset_ref"] or
+            source[1].get("document_type") != "repository_patch" or
+            source[1].get("capture_complete") is not True or
+            source[1].get("http_status") != 200 or
+            "header_only_patch_requires_commit_detail" not in source[1].get("gaps", []) or
+            detail[1].get("target_id") != detail_job["asset_ref"] or
+            detail[1].get("capture_complete") is not True or
+            detail[1].get("analysis_complete") is not True or
+            detail[1].get("empty_diff_verified") is not True or
+            detail[1].get("empty_patch_target_ref") != patch_job["asset_ref"] or
+            detail[1].get("empty_patch_source_result_ref") != source[0] or
+            detail[1].get("gaps")):
+        return None
+    reviewed = dict(source[1])
+    reviewed.update(reviewed_at=datetime.now(timezone.utc).isoformat(),
+        analysis_complete=True, text_analysis_complete=True,
+        dependency_review_complete=True, review_complete=True,
+        content_review="no_changed_files_verified", changed_files=[],
+        pending_reviews=[], gaps=[], retry_required=False,
+        empty_patch_source_result_ref=source[0],
+        empty_patch_detail_result_ref=detail[0],
+        empty_patch_review_basis="exact_commit_detail_zero_file_list",
+        observation_kind="derived_review")
+    dimensions = dict(reviewed.get("review_dimensions") or {})
+    dimensions.update(text="complete", structure="complete")
+    reviewed["review_dimensions"] = dimensions
+    reference = case.save_result(job, reviewed)
+    return reference
+
+
+def _queue_empty_patch_reconciliation(case, detail_job, observation, detail_ref, scope):
+    """Resume the outstanding patch review when detail evidence resolves it."""
+    jobs = case.queue.status()["jobs"]
+    source_id = detail_job["parent_job_id"]
+    source = next((item for item in jobs if item["job_id"] == source_id), None)
+    if source is None:
+        return
+    checkpoint = {"analysis_kind": "repository_patch_empty_reconcile",
+                  "source_patch_job_id": source_id,
+                  "detail_job_id": detail_job["job_id"], "reason_codes": []}
+    blocked = next((item for item in jobs if item["job_type"] == "content_review" and
+                    item["asset_ref"] == observation["empty_patch_target_ref"] and
+                    item["state"] == "blocked_input" and
+                    (item["job_id"] == source_id or item["parent_job_id"] == source_id) and
+                    "header_only_patch_requires_commit_detail" in
+                    (item.get("checkpoint") or {}).get("reason_codes", [])), None)
+    if blocked:
+        with case.queue._transaction():
+            case.ledger.db.execute("UPDATE audit_jobs SET checkpoint=? WHERE job_id=?",
+                                   (json.dumps(checkpoint, ensure_ascii=False), blocked["job_id"]))
+            case.ledger._event("AUDIT_EMPTY_PATCH_REVIEW_READY", blocked["job_id"],
+                               {"detail_result_ref": detail_ref})
+        case.queue.unblock(blocked["job_id"], policy_id=scope.policy_id)
+    else:
+        case.queue.enqueue("content_review", observation["empty_patch_target_ref"],
+            scope_id=case.scope_id, policy_id=scope.policy_id, parent_job_id=detail_job["job_id"],
+            origin_evidence_ref=detail_ref, state="ready", priority=2,
+            dedupe_key="empty-patch-review:" + detail_job["job_id"], checkpoint=checkpoint)
 
 
 def _discover(case, job, run_id, health, api_fetch=None):
@@ -1015,6 +1152,13 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                             "channel_plan_complete": True, "public_index_exhaustive": False}))
                     else:
                         state, error = "blocked_input", "CHANNEL_IMPORT_REQUIRED"
+                elif (job["job_type"] == "content_review" and scope is not None and
+                      (job.get("checkpoint") or {}).get("analysis_kind") == "repository_patch_empty_reconcile"):
+                    reconciled = _reconcile_empty_patch(case, job, scope)
+                    if reconciled:
+                        refs.append(reconciled)
+                    else:
+                        state, error = "blocked_input", "EMPTY_PATCH_EVIDENCE_INCOMPLETE"
                 elif job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail", "content_review"} and scope is not None:
                     if _patch_lineage_blocked(case, job):
                         state, error = "blocked_input", "SENSITIVE_PATCH_LINEAGE_REVIEW"

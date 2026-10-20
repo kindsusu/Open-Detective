@@ -275,6 +275,24 @@ def _review_changed_lines(changed_lines):
     return signals, sensitive, limit_reached, structure_incomplete, media_skipped
 
 
+def _header_only_patch(text, sha):
+    """Recognize a commit mail envelope, never infer that its diff is empty."""
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith(f"From {sha} "):
+        return False
+    header_end = next((index for index, line in enumerate(lines[1:32], 1) if not line), None)
+    if header_end is None:
+        return False
+    headers = lines[1:header_end]
+    if not all(any(line.startswith(name + ": ") and line[len(name) + 2:].strip()
+                   for line in headers) for name in ("From", "Date", "Subject")):
+        return False
+    if any("<html" in line.casefold() for line in lines[header_end + 1:]):
+        return False
+    return not any(line.startswith(("diff --git ", "@@ ", "--- a/", "+++ b/"))
+                   for line in lines[header_end + 1:])
+
+
 def _parse_patch(body, repository, sha, locator_store, scope_id):
     try:
         text = body.decode("utf-8", "strict")
@@ -393,6 +411,8 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
     if old_remaining or new_remaining:
         return None, "patch_provenance_invalid"
     if not saw_diff:
+        if _header_only_patch(text, sha):
+            return {"changed_files": [], "content_review": "header_only_requires_commit_detail"}, "header_only_patch_requires_commit_detail"
         return None, "patch_provenance_invalid"
     try:
         finish_file()
@@ -452,6 +472,10 @@ def analyze_repository_patch(body, url, locator_store, scope_id, *, max_bytes=MA
     summary, gap = _parse_patch(body, repository, sha, locator_store, scope_id)
     if summary:
         profile.update(summary)
+        if summary.get("content_review") in {"value_free_signals_only", "metadata_only",
+                                              "text_reviewed_structure_pending",
+                                              "text_reviewed_media_pending"}:
+            profile["text_analysis_complete"] = True
         if summary.get("sensitivity_candidate"):
             profile["content"] = "SENSITIVE_CANDIDATE"
         if summary.get("content_review") == "stopped_sensitive_candidate":

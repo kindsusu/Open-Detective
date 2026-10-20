@@ -147,6 +147,18 @@ class RepositoryPatchPipelineTests(unittest.TestCase):
         self.assertFalse(result["analysis_complete"])
         self.assertIn("patch_has_no_text_hunks", result["pending_reviews"])
 
+    def test_valid_mail_envelope_without_diff_requires_commit_detail(self):
+        body = patch("Date: Tue, 1 Jan 2030 00:00:00 +0000", "", "---")
+        result = self.review(body)
+        self.assertFalse(result["analysis_complete"])
+        self.assertEqual([], result["changed_files"])
+        self.assertIn("header_only_patch_requires_commit_detail", result["pending_reviews"])
+        no_separator = patch("Date: Tue, 1 Jan 2030 00:00:00 +0000", "")
+        self.assertIn("header_only_patch_requires_commit_detail",
+                      self.review(no_separator)["pending_reviews"])
+        malformed = patch("Date: Tue, 1 Jan 2030 00:00:00 +0000", "", "<html>error</html>")
+        self.assertIn("patch_provenance_invalid", self.review(malformed)["pending_reviews"])
+
     def test_explicit_large_capture_limit_is_validated_without_widening_default(self):
         body = patch('diff --git a/x.txt b/x.txt', '--- a/x.txt', '+++ b/x.txt',
                      '@@ -1 +1 @@', '-old', '+new')
