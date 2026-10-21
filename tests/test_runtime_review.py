@@ -47,6 +47,140 @@ def _browser_ready():
 
 @unittest.skipUnless(_browser_ready(), "Playwright Chromium fixture unavailable")
 class RuntimeReviewTests(unittest.TestCase):
+    def test_declared_target_diagnostics_are_bounded_and_value_free(self):
+        body = (b"<div id='visiblePanel'>Public</div>"
+                b"<div style='display:none'><div id='hiddenPanel'>PRIVATE_EMAIL</div></div>"
+                b"<div id='hiddenAttr' hidden>PRIVATE_PHONE</div>"
+                b"<fieldset disabled><select id='carSelect'>"
+                b"<option value='PRIVATE_ONE'>Secret label</option>"
+                b"<option value='PRIVATE_TWO' selected>Secret label two</option>"
+                b"</select></fieldset><div id='dup'></div><div id='dup'></div>")
+        allowed = approval(body)
+        allowed["observe_target_ids"] = ["visiblePanel", "hiddenPanel", "hiddenAttr",
+                                         "carSelect", "missingPanel", "dup"]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        rows = result["observed_targets_initial"]
+        self.assertEqual(allowed["observe_target_ids"], result["observed_target_ids"])
+        self.assertEqual(6, len(rows))
+        self.assertEqual(("unique", True, None),
+                         (rows[0]["presence"], rows[0]["visible"], rows[0]["hidden_reason"]))
+        self.assertEqual("ancestor_display", rows[1]["hidden_reason"])
+        self.assertEqual("self_hidden", rows[2]["hidden_reason"])
+        self.assertTrue(rows[3]["disabled"])
+        self.assertEqual((2, 1), (rows[3]["option_count"], rows[3]["selected_index"]))
+        self.assertEqual("missing", rows[4]["presence"])
+        self.assertEqual("duplicate", rows[5]["presence"])
+        rendered = json.dumps(result, ensure_ascii=False)
+        for secret in ("PRIVATE_EMAIL", "PRIVATE_PHONE", "PRIVATE_ONE", "PRIVATE_TWO",
+                       "Secret label"):
+            self.assertNotIn(secret, rendered)
+
+    def test_visible_to_hidden_transition_is_branch_evidence(self):
+        body = (b"<button id='closeBtn' type='button'>Close</button>"
+                b"<div id='panel'>PRIVATE_CONTENT</div>"
+                b"<script>document.getElementById('closeBtn').onclick=()=>{"
+                b"document.getElementById('panel').style.display='none'};</script>")
+        allowed = approval(body)
+        allowed["observe_target_ids"] = ["panel"]
+        allowed["ui_steps"] = [{"action": "click", "target_id": "closeBtn",
+                                "expect_hidden_ids": ["panel"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertTrue(result["observed_targets_initial"][0]["visible"])
+        step = result["ui_steps"][0]
+        self.assertTrue(step["expected_hidden_verified"])
+        self.assertTrue(step["hidden_transition_verified"])
+        self.assertTrue(step["branch_verified"])
+        self.assertEqual("self_display", step["observed_targets_after"][0]["hidden_reason"])
+        self.assertFalse(step["action_target_before"]["disabled"])
+        self.assertNotIn("PRIVATE_CONTENT", json.dumps(result))
+
+    def test_already_hidden_expectation_is_not_branch_evidence(self):
+        body = (b"<button id='closeBtn' type='button'>Close</button>"
+                b"<div id='panel' style='display:none'>PRIVATE_CONTENT</div>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "click", "target_id": "closeBtn",
+                                "expect_hidden_ids": ["panel"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        step = result["ui_steps"][0]
+        self.assertTrue(step["expected_hidden_verified"])
+        self.assertFalse(step["hidden_transition_verified"])
+        self.assertFalse(step["branch_verified"])
+
+    def test_disabled_action_target_is_diagnosed_without_click(self):
+        body = (b"<fieldset disabled><select id='carSelect'>"
+                b"<option value='PRIVATE_A'>A</option><option value='PRIVATE_B'>B</option>"
+                b"</select></fieldset>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "select", "target_id": "carSelect",
+                                "index": 1, "expect_dom_change": True}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        step = result["ui_steps"][0]
+        self.assertEqual("target_disabled", step["status"])
+        self.assertTrue(step["action_target_before"]["disabled"])
+        self.assertEqual(2, step["action_target_before"]["option_count"])
+        self.assertEqual(0, step["action_target_after"]["selected_index"])
+        self.assertNotIn("PRIVATE_A", json.dumps(result))
+
+    def test_delayed_visible_button_keeps_playwright_auto_wait(self):
+        body = (b"<button id='laterBtn' type='button' style='display:none'>Later</button>"
+                b"<div id='panel' style='display:none'>Panel</div>"
+                b"<script>setTimeout(()=>document.getElementById('laterBtn').style.display="
+                b"'block',1300);document.getElementById('laterBtn').onclick=()=>{"
+                b"document.getElementById('panel').style.display='block'};</script>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "click", "target_id": "laterBtn",
+                                "expect_visible_ids": ["panel"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertEqual("self_display", result["ui_steps"][0]["action_target_before"][
+            "hidden_reason"])
+        self.assertTrue(result["ui_steps"][0]["action_target_after"]["visible"])
+        self.assertEqual(1, result["ui_steps_completed"])
+
+    def test_child_visibility_override_does_not_inherit_hidden_state(self):
+        body = (b"<div style='visibility:hidden'>"
+                b"<div id='child' style='visibility:visible'>Child</div></div>")
+        allowed = approval(body)
+        allowed["observe_target_ids"] = ["child"]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertTrue(result["observed_targets_initial"][0]["visible"])
+
+    def test_overridden_hidden_attribute_uses_rendered_style(self):
+        body = (b"<style>[hidden]{display:block}</style>"
+                b"<div id='panel' hidden>Rendered</div>")
+        allowed = approval(body)
+        allowed["observe_target_ids"] = ["panel"]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertTrue(result["observed_targets_initial"][0]["visible"])
+
+    def test_depth_limit_is_not_accepted_as_hidden_expectation(self):
+        body = (b"<button id='observeBtn' type='button'>Observe</button>" +
+                b"<div>" * 130 + b"<div id='panel'>Deep</div>" + b"</div>" * 130)
+        allowed = approval(body)
+        allowed["observe_target_ids"] = ["panel"]
+        allowed["ui_steps"] = [{"action": "click", "target_id": "observeBtn",
+                                "expect_hidden_ids": ["panel"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertEqual("ancestor_depth_limit", result["observed_targets_initial"][0][
+            "hidden_reason"])
+        self.assertFalse(result["ui_steps"][0]["expected_hidden_verified"])
+        self.assertFalse(result["ui_steps"][0]["branch_verified"])
+
     def test_unique_idless_standalone_calculate_button_runs_original_handler(self):
         body = (b"<button class='calc-btn'>Calculate</button><div id='result'></div>"
                 b"<script>document.getElementsByClassName('calc-btn')[0].onclick=()=>{"
@@ -61,6 +195,59 @@ class RuntimeReviewTests(unittest.TestCase):
         self.assertEqual(1, result["ui_steps_completed"])
         self.assertEqual(1, result["ui_steps"][0]["dom"]["counts"]["visible_tables"])
         self.assertNotIn("PRIVATE_CALC", json.dumps(result))
+
+    def test_hash_bound_index_selects_one_of_multiple_class_buttons(self):
+        body = (b"<button class='nd-brand-card' type='button'>First</button>"
+                b"<button class='nd-brand-card' type='button'>Second</button>"
+                b"<div id='selected' style='display:none'>PRIVATE_BRAND</div>"
+                b"<script>document.getElementsByClassName('nd-brand-card')[1].onclick=()=>{"
+                b"document.getElementById('selected').style.display='block'};</script>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "click", "target_button_class": "nd-brand-card",
+                                "target_index": 1, "expect_visible_ids": ["selected"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        step = result["ui_steps"][0]
+        self.assertEqual(2, step["action_target_before"]["match_count"])
+        self.assertEqual("unique", step["action_target_before"]["presence"])
+        self.assertTrue(step["branch_verified"])
+        self.assertNotIn("PRIVATE_BRAND", json.dumps(result))
+
+    def test_class_button_index_out_of_range_or_unsafe_target_is_rejected(self):
+        fixtures = (
+            (b"<button class='nd-brand-card' type='button'>First</button>", 1,
+             "target_missing"),
+            (b"<button class='nd-brand-card' type='button'>First</button>"
+             b"<form><button class='nd-brand-card'>Submit</button></form>", 1,
+             "prohibited_target"),
+            (b"<button class='nd-brand-card' type='button'>First</button>"
+             b"<button class='nd-brand-card' type='submit'>Calculate</button>", 1,
+             "prohibited_target"),
+        )
+        for body, index, expected in fixtures:
+            with self.subTest(expected=expected):
+                allowed = approval(body)
+                allowed["ui_steps"] = [{"action": "click",
+                                        "target_button_class": "nd-brand-card",
+                                        "target_index": index,
+                                        "expect_dom_change": True}]
+                result = review_runtime_source(body, "text/html", authorization=allowed,
+                                               max_seconds=25)
+                self.assertEqual("partial", result["status"], result)
+                self.assertEqual(expected, result["ui_steps"][0]["status"])
+                self.assertFalse(result["ui_steps"][0]["action_applied"])
+
+    def test_class_button_index_rejects_more_than_64_matches(self):
+        body = b"<button class='nd-brand-card' type='button'>Card</button>" * 65
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "click", "target_button_class": "nd-brand-card",
+                                "target_index": 0, "expect_dom_change": True}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertEqual("dom_limit", result["ui_steps"][0]["status"])
+        self.assertFalse(result["ui_steps"][0]["action_applied"])
 
     def test_class_button_ambiguity_form_and_auth_name_are_rejected(self):
         fixtures = (
@@ -473,6 +660,18 @@ class RuntimeReviewTests(unittest.TestCase):
         self.assertEqual(0, result["network_fetches_performed"])
         self.assertNotIn(url, json.dumps(result))
 
+    def test_target_ancestor_limit_keeps_observation_incomplete(self):
+        body = (b"<div>" * 130 + b"<button id='deep'>fixture</button>" +
+                b"</div>" * 130)
+        allowed = approval(body)
+        allowed["observe_target_ids"] = ["deep"]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("ancestor_depth_limit",
+                         result["observed_targets_initial"][0]["hidden_reason"])
+        self.assertIn("target_diagnostics_limit", result["pending_reviews"])
+        self.assertFalse(result["runtime_observation_complete"])
+
     def test_missing_dependency_is_a_gap(self):
         body = b"<script>fetch('/missing.json').catch(() => {});</script>"
         result = review_runtime_source(body, "text/html", authorization=approval(body), max_seconds=25)
@@ -526,6 +725,41 @@ class RuntimeReviewTests(unittest.TestCase):
 
 
 class RuntimeAuthorizationTests(unittest.TestCase):
+    def test_target_diagnostic_scope_and_hidden_expectations_are_validated(self):
+        body = b"<div id='panel'></div>"
+        bad_approvals = (
+            {"observe_target_ids": ["panel"] * 2},
+            {"observe_target_ids": ["x" + str(i) for i in range(17)]},
+            {"ui_steps": [{"action": "wait", "milliseconds": 1,
+                           "expect_hidden_ids": ["panel"],
+                           "expect_visible_ids": ["panel"]}]},
+            {"ui_steps": [{"action": "wait", "milliseconds": 1,
+                           "expect_hidden_ids": ["panel"] * 2}]},
+        )
+        for values in bad_approvals:
+            allowed = approval(body)
+            allowed.update(values)
+            result = review_runtime_source(body, "text/html", authorization=allowed)
+            self.assertEqual("blocked", result["status"])
+            self.assertIn(result["reason"], {"invalid_observe_target_ids",
+                                             "invalid_ui_steps"})
+
+    def test_class_button_index_must_be_bounded_and_class_scoped(self):
+        body = b"<button class='nd-brand-card' type='button'>Card</button>"
+        for step in (
+            {"action": "click", "target_button_class": "nd-brand-card", "target_index": -1},
+            {"action": "click", "target_button_class": "nd-brand-card", "target_index": 64},
+            {"action": "click", "target_button_class": "nd-brand-card", "target_index": True},
+            {"action": "click", "target_id": "card", "target_index": 0},
+            {"action": "select", "target_id": "card", "index": 0, "target_index": 0},
+        ):
+            with self.subTest(step=step):
+                allowed = approval(body)
+                allowed["ui_steps"] = [step]
+                result = review_runtime_source(body, "text/html", authorization=allowed)
+                self.assertEqual("blocked", result["status"])
+                self.assertEqual("invalid_ui_steps", result["reason"])
+
     def test_ui_steps_reject_secret_submit_and_unbounded_actions(self):
         body = b"<button id='tabBtn' type='button'></button>"
         bad = [

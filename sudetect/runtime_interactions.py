@@ -15,12 +15,20 @@ _MAX_PNG_BYTES = 8 * 1024 * 1024
 
 
 def validate_steps(authorization: dict):
+    observe_target_ids = authorization.get("observe_target_ids", [])
+    if (not isinstance(observe_target_ids, list) or len(observe_target_ids) > 16
+            or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                   for item in observe_target_ids)
+            or len(set(observe_target_ids)) != len(observe_target_ids)):
+        return "invalid_observe_target_ids", None
     steps = authorization.get("ui_steps", [])
     if not isinstance(steps, list) or len(steps) > 12:
         return "invalid_ui_steps", None
     normalized = []
-    assertions = {"expect_visible_ids", "expect_png_download", "expect_dom_change"}
-    fields = {"click": {"action", "target_id", "target_button_class"} | assertions,
+    assertions = {"expect_visible_ids", "expect_hidden_ids",
+                  "expect_png_download", "expect_dom_change"}
+    fields = {"click": {"action", "target_id", "target_button_class",
+                         "target_index"} | assertions,
               "select": {"action", "target_id", "index"} | assertions,
               "check": {"action", "target_id", "checked"} | assertions,
               "fill": {"action", "target_id", "value"} | assertions,
@@ -38,10 +46,22 @@ def validate_steps(authorization: dict):
             return "invalid_ui_steps", None
         if action == "click" and (("target_id" in row) == ("target_button_class" in row)):
             return "invalid_ui_steps", None
+        if "target_index" in row and (action != "click" or "target_button_class" not in row
+                or isinstance(row["target_index"], bool)
+                or not isinstance(row["target_index"], int)
+                or not 0 <= row["target_index"] <= 63):
+            return "invalid_ui_steps", None
         expected = row.get("expect_visible_ids", [])
         if (not isinstance(expected, list) or len(expected) > 4
                 or any(not isinstance(item, str) or not _ID.fullmatch(item)
                        for item in expected) or len(set(expected)) != len(expected)):
+            return "invalid_ui_steps", None
+        expected_hidden = row.get("expect_hidden_ids", [])
+        if (not isinstance(expected_hidden, list) or len(expected_hidden) > 4
+                or any(not isinstance(item, str) or not _ID.fullmatch(item)
+                       for item in expected_hidden)
+                or len(set(expected_hidden)) != len(expected_hidden)
+                or set(expected_hidden) & set(expected)):
             return "invalid_ui_steps", None
         if (not isinstance(row.get("expect_png_download", False), bool)
                 or not isinstance(row.get("expect_dom_change", False), bool)):
@@ -68,6 +88,7 @@ def validate_steps(authorization: dict):
                                  or not _SYNTHETIC.fullmatch(row["value"])):
             return "prohibited_ui_value", None
         normalized.append({**row, "expect_visible_ids": expected.copy(),
+                           "expect_hidden_ids": expected_hidden.copy(),
                            "expect_png_download": row.get("expect_png_download", False),
                            "expect_dom_change": row.get("expect_dom_change", False)})
     observe = authorization.get("observe_png_download", False)
@@ -75,7 +96,7 @@ def validate_steps(authorization: dict):
         return "invalid_png_observation", None
     if any(row["expect_png_download"] for row in normalized) and not observe:
         return "png_observation_not_authorized", None
-    return None, (normalized, observe)
+    return None, (normalized, observe, observe_target_ids.copy())
 
 
 def inspect_png_download(download, download_dir: str):

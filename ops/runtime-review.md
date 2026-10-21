@@ -112,8 +112,11 @@ results; content still hidden by an ancestor or stylesheet preserves a gap.
 The authorization may include `ui_steps`, a sequence of at most 12 actions.
 Use exact, unique `target_id` values observed in the captured document. For a
 `click` on an ID-less button, `target_button_class` may instead name one exact
-CSS class token. It must match exactly one button with no associated form;
-arbitrary selectors and submission buttons are rejected. The source digest
+CSS class token. By default, it must match exactly one button with no associated form.
+An explicit zero-based `target_index` (0–63) may select one existing button
+from at most 64 matches. Review each selected control and its prerequisites;
+an index does not authorize enumeration of business records or new resources.
+Arbitrary selectors and submission buttons are rejected. The source digest
 binds this declaration to the reviewed capture. Supported actions are `click`, `select` with an existing option `index` (0–100), `check`
 with `checked`, `fill` with a synthetic `TEST_`-prefixed value, and `wait` with
 `milliseconds` (1–2000). Credential targets, password inputs, submission, file
@@ -123,15 +126,28 @@ or guarantee that a script cannot mutate the DOM between inspection and a
 browser click. The execution boundary remains the isolated context, absent
 credentials, blocked uncaptured traffic, and parent deadline.
 
-Each step may require `expect_visible_ids` (up to four IDs),
+Each step may require `expect_visible_ids` or `expect_hidden_ids` (up to four
+IDs each),
 `expect_dom_change: true`, or `expect_png_download: true`. Record action applied,
 expectation satisfied, observable transition, execution coverage, and errors
 separately. A previously visible target does not establish that a click caused
-a transition. Form-control state changes are recorded separately from changes
+a transition. Hidden expectations require an existing, unique target; a missing
+element is not proof of hidden content. A target already hidden before a click
+does not establish a closing transition. Form-control state changes are recorded separately from changes
 outside form controls, so a select/check/fill action alone cannot establish an
 application response. Selecting one existing option does not test every combination.
 Partition longer scenarios into independent fresh runs and retain their setup
 requirements rather than silently carrying browser state across runs.
+
+`observe_target_ids` in the authorization names at most 16 exact, unique IDs
+for read-only initial and per-step diagnostics. Observations distinguish missing,
+duplicate, visible, hidden, and disabled targets. Select controls expose only
+option count and selected index; values and labels are not retained. Target
+state helps explain an action failure, but does not prove which application
+condition caused it. Establish prerequisites from the captured source and then
+exercise the declared UI sequence; do not fill missing business records or call
+application functions directly to force a transition.
+DOM-count or ancestor-depth diagnostic limits keep the observation incomplete.
 
 `observe_png_download: true` authorizes inspection of generated local PNG
 downloads. Only the synthetic origin's blob URLs and PNG data URLs are accepted.

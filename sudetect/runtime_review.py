@@ -184,15 +184,19 @@ _ACTION_TARGET = """((id) => {
   if (form && form.querySelector('input[type=password]')) return 'prohibited_target';
   return tag + ':' + type;
 })(__TARGET_ID__)"""
-_ACTION_BUTTON_CLASS = r"""((token) => {
-  const nodes = document.getElementsByClassName(token);
-  if (nodes.length !== 1) return nodes.length ? 'duplicate_target' : 'target_missing';
-  const el = nodes[0];
+_ACTION_BUTTON_CLASS = r"""((selection) => {
+  const nodes = document.getElementsByClassName(selection.token);
+  if (nodes.length > 64) return 'dom_limit';
+  if (!nodes.length || (selection.index !== null && selection.index >= nodes.length))
+    return 'target_missing';
+  if (selection.index === null && nodes.length !== 1) return 'duplicate_target';
+  const el = nodes[selection.index === null ? 0 : selection.index];
   const name = String(el.name || '');
   const aria = String(el.getAttribute('aria-label') || '');
   const text = String(el.textContent || '');
   const authWords = /(?:\b(?:log[\s-]?in|sign[\s-]?in|sign[\s-]?up|password|passcode|credential|auth(?:enticate|orize|entication)?|submit)\b|로그인|로그아웃|비밀번호|인증|제출|가입)/i;
   if (el.tagName !== 'BUTTON' || el.id || el.form || el.closest('form') ||
+      (el.hasAttribute('type') && el.type === 'submit') ||
       el.hasAttribute('form') || el.hasAttribute('formaction') ||
       name.length > 256 || aria.length > 256 || text.length > 256 ||
       /login|log-in|signin|sign-in|password|passwd|credential|auth|submit/i.test(name) ||
@@ -214,6 +218,59 @@ _FORM_STATE = """(() => {
   }
   return JSON.stringify(rows);
 })()"""
+_TARGET_DIAGNOSTICS = r"""((selection) => {
+  const elements = document.getElementsByTagName('*');
+  const unknown = presence => ({presence,visible:false,hidden_reason:null,
+    disabled:null,option_count:null,selected_index:null});
+  if (elements.length > 50000)
+    return selection.ids.map(() => unknown('limit'))
+      .concat(selection.button_class ? [unknown('limit')] : []);
+  const byId = new Map(selection.ids.map(id => [id, []]));
+  for (const el of elements) if (byId.has(el.id)) byId.get(el.id).push(el);
+  const describe = matches => {
+    if (!matches.length) return unknown('missing');
+    if (matches.length !== 1) return unknown('duplicate');
+    const el = matches[0];
+    let reason = null, node = el, depth = 0;
+    while (node && depth++ < 128) {
+      const own = node === el;
+      const style = getComputedStyle(node);
+      if (style.display === 'none') {
+        reason = node.hidden ? (own ? 'self_hidden' : 'ancestor_hidden')
+                             : (own ? 'self_display' : 'ancestor_display');
+        break;
+      }
+      if (Number(style.opacity) === 0) {
+        reason = own ? 'self_opacity' : 'ancestor_opacity'; break;
+      }
+      node = node.parentElement;
+    }
+    if (!reason && node) reason = 'ancestor_depth_limit';
+    if (!reason) {
+      const style = getComputedStyle(el);
+      if (style.visibility === 'hidden' || style.visibility === 'collapse')
+        reason = 'self_visibility';
+    }
+    if (!reason) {
+      const rect = el.getBoundingClientRect();
+      if (!(rect.width > 0 && rect.height > 0)) reason = 'zero_geometry';
+    }
+    return {presence:'unique',visible:reason === null,hidden_reason:reason,
+      disabled:el.matches(':disabled'),
+      option_count:el.tagName === 'SELECT' ? el.options.length : null,
+      selected_index:el.tagName === 'SELECT' ? el.selectedIndex : null};
+  };
+  const output = selection.ids.map(id => describe(byId.get(id)));
+  if (selection.button_class) {
+    const matches = document.getElementsByClassName(selection.button_class);
+    const count = Math.min(matches.length, 65);
+    const selected = matches.length > 64 ? unknown('limit') :
+      selection.button_index === null ? describe([...matches]) :
+      describe(selection.button_index < matches.length ? [matches[selection.button_index]] : []);
+    output.push({...selected, match_count:count});
+  }
+  return output;
+})(__SELECTION__)"""
 
 
 def _reveal_config(authorization: dict):
@@ -294,6 +351,8 @@ def _base_result(body: bytes, kind: str) -> dict:
             "publication_approval_verified": False, "pending_reviews": [],
             "static_html": {"fields": 0, "tables": 0, "rows": 0, "scripts": 0},
             "initial_dom": None, "after_client_reveal": None,
+            "observed_targets_initial": [],
+            "observed_target_ids": [],
             "client_reveal_applied": False,
             "client_reveal_visibility_verified": False,
             "client_reveal_action_digest": None,
@@ -422,6 +481,25 @@ def _visible_ids(cdp, world_id, ids):
         "__SHOW_IDS__", json.dumps(ids, ensure_ascii=True))) is True
 
 
+def _target_diagnostics(cdp, world_id, ids, button_class=None, button_index=None):
+    return _isolated_value(cdp, world_id, _TARGET_DIAGNOSTICS.replace(
+        "__SELECTION__", json.dumps({"ids": ids, "button_class": button_class,
+                                     "button_index": button_index},
+                                     ensure_ascii=True)))
+
+
+def _targets_visible(states):
+    return bool(states) and all(row["presence"] == "unique" and row["visible"]
+                                for row in states)
+
+
+def _targets_hidden(states):
+    return bool(states) and all(row["presence"] == "unique" and not row["visible"]
+                                and row["hidden_reason"] not in {
+                                    None, "ancestor_depth_limit"}
+                                for row in states)
+
+
 def _dom_fingerprint(page, cdp, world_id):
     markup = page.content().encode("utf-8")
     if len(markup) > 8 * 1024 * 1024:
@@ -469,16 +547,23 @@ def _dom_fingerprint(page, cdp, world_id):
             "input": hashlib.sha256(state.encode("utf-8")).digest()}
 
 
-def _execute_ui_step(page, cdp, frame_id, world_id, row):
+def _execute_ui_step(page, cdp, frame_id, world_id, row, action_state=None):
     action = row["action"]
     status = "completed"
     if action == "wait":
         page.wait_for_timeout(row["milliseconds"])
     else:
+        if action_state:
+            presence = action_state["presence"]
+            if presence != "unique":
+                return ({"missing": "target_missing", "duplicate": "duplicate_target",
+                         "limit": "dom_limit"}.get(presence, "target_inspection_failed"),
+                        None, False)
         target_class = row.get("target_button_class")
         if target_class is not None:
             target = _isolated_value(cdp, world_id, _ACTION_BUTTON_CLASS.replace(
-                "__BUTTON_CLASS__", json.dumps(target_class, ensure_ascii=True)))
+                "__BUTTON_CLASS__", json.dumps({"token": target_class,
+                    "index": row.get("target_index")}, ensure_ascii=True)))
         else:
             target_id = row["target_id"]
             target = _isolated_value(cdp, world_id, _ACTION_TARGET.replace(
@@ -493,7 +578,8 @@ def _execute_ui_step(page, cdp, frame_id, world_id, row):
                 or (action == "fill" and (tag not in {"input", "textarea"}
                     or field_type not in {"", "text", "search"}))):
             return "incompatible_target", None, False
-        locator = (page.locator("button." + target_class) if target_class is not None
+        locator = (page.locator("." + target_class).nth(row.get("target_index", 0))
+                   if target_class is not None
                    else page.locator('[id="' + target_id + '"]'))
         if action == "click":
             locator.click(timeout=2000)
@@ -508,14 +594,16 @@ def _execute_ui_step(page, cdp, frame_id, world_id, row):
             locator.fill(row["value"], timeout=2000)
         page.wait_for_timeout(200)
     snapshot, world_id = _snapshot(cdp, frame_id)
-    expected_visible = _visible_ids(cdp, world_id, row["expect_visible_ids"])
+    expected_visible = (_targets_visible(_target_diagnostics(
+        cdp, world_id, row["expect_visible_ids"]))
+        if row["expect_visible_ids"] else True)
     if not expected_visible:
         status = "expected_target_not_visible"
     return status, snapshot, expected_visible
 
 
 def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal_config,
-                   reveal_explicit, ui_steps, observe_png_download,
+                   reveal_explicit, ui_steps, observe_target_ids, observe_png_download,
                    allow_local_render_frames, viewport, clock_time,
                    timezone_id, download_dir, max_seconds,
                    progress=None):
@@ -536,6 +624,7 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                   observation_window_ms=1000, boundary="browser_broker_only")
     start = time.monotonic()
     result["ui_steps_requested"] = len(ui_steps)
+    result["observed_target_ids"] = observe_target_ids.copy()
     result["viewport"] = viewport.copy()
     result["timezone_id"] = timezone_id
     if clock_time is not None:
@@ -794,6 +883,9 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                 frame_id = cdp.send("Page.getFrameTree")["frameTree"]["frame"]["id"]
                 snapshot, world_id = _snapshot(cdp, frame_id)
                 result["initial_dom"] = snapshot
+                if observe_target_ids:
+                    result["observed_targets_initial"] = _target_diagnostics(
+                        cdp, world_id, observe_target_ids)
                 if reveal_client_ui:
                     expression = _REVEAL.replace("__CONFIG__", json.dumps(
                         reveal_config, ensure_ascii=True, separators=(",", ":")))
@@ -838,8 +930,18 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                         "script_error_count", "console_error_count",
                         "blocked_request_count", "failed_request_count")}
                     first_download = len(downloads)
-                    visible_before = (_visible_ids(cdp, world_id, row["expect_visible_ids"])
-                                      if row["expect_visible_ids"] else None)
+                    visible_before = (_targets_visible(_target_diagnostics(
+                        cdp, world_id, row["expect_visible_ids"]))
+                        if row["expect_visible_ids"] else None)
+                    hidden_before = (_targets_visible(_target_diagnostics(
+                        cdp, world_id, row["expect_hidden_ids"]))
+                        if row["expect_hidden_ids"] else None)
+                    target_ids = [row["target_id"]] if "target_id" in row else []
+                    target_class = row.get("target_button_class")
+                    target_index = row.get("target_index")
+                    action_state_before = (_target_diagnostics(
+                        cdp, world_id, target_ids, target_class, target_index)[0]
+                        if target_ids or target_class else None)
                     before_dom = None
                     if row["expect_dom_change"]:
                         before_dom = _dom_fingerprint(page, cdp, world_id)
@@ -851,15 +953,20 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                             "status": "action_failed", "dom": None,
                             "expected_visible_verified": None,
                             "visible_transition_verified": None,
+                            "expected_hidden_verified": None,
+                            "hidden_transition_verified": None,
                             "dom_change_verified": None,
                             "input_state_changed": None,
+                            "observed_targets_after": [],
+                            "action_target_before": action_state_before,
+                            "action_target_after": None,
                             "png_download_verified": None,
                             "download_count": 0, "verified_png_count": 0,
                             "script_coverage": None, "error_delta": 0,
                             "blocked_request_delta": 0}
                     try:
                         action_status, step_dom, expected_visible = _execute_ui_step(
-                            page, cdp, frame_id, world_id, row)
+                            page, cdp, frame_id, world_id, row, action_state_before)
                         if row["expect_png_download"] and len(downloads) == first_download:
                             wait_deadline = min(time.monotonic() + 5,
                                                 start + max_seconds - 1)
@@ -870,9 +977,17 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                         step["status"] = action_status
                         step["dom"] = step_dom
                         if row["expect_visible_ids"]:
-                            step["expected_visible_verified"] = expected_visible
+                            step["expected_visible_verified"] = _targets_visible(
+                                _target_diagnostics(cdp, world_id,
+                                                    row["expect_visible_ids"]))
                             step["visible_transition_verified"] = bool(
-                                not visible_before and expected_visible)
+                                not visible_before and step["expected_visible_verified"])
+                        if row["expect_hidden_ids"]:
+                            step["expected_hidden_verified"] = _targets_hidden(
+                                _target_diagnostics(cdp, world_id,
+                                                    row["expect_hidden_ids"]))
+                            step["hidden_transition_verified"] = bool(
+                                hidden_before and step["expected_hidden_verified"])
                         if row["expect_dom_change"] and step["action_applied"]:
                             after_dom = _dom_fingerprint(page, cdp, world_id)
                             if after_dom is not None:
@@ -893,23 +1008,47 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                                 item["status"] == "verified_png" for item in new_downloads)
                         if row["expect_png_download"]:
                             step["png_download_verified"] = step["verified_png_count"] > 0
-                        asserted = bool(row["expect_visible_ids"] or row["expect_dom_change"]
+                        asserted = bool(row["expect_visible_ids"] or row["expect_hidden_ids"]
+                                        or row["expect_dom_change"]
                                         or row["expect_png_download"])
                         step["branch_verified"] = bool(step["action_applied"] and asserted
                             and step["expected_visible_verified"] is not False
+                            and step["expected_hidden_verified"] is not False
                             and step["dom_change_verified"] is not False
                             and step["png_download_verified"] is not False
                             and (not row["expect_dom_change"]
                                  or step["dom_change_verified"] is True)
                             and any(value is True for value in (
                                 step["visible_transition_verified"],
+                                step["hidden_transition_verified"],
                                 step["dom_change_verified"],
                                 step["png_download_verified"])))
                         if not step["branch_verified"]:
                             result["pending_reviews"].append("ui_branch_unverified")
                     except Exception:
                         step["status"] = "action_or_snapshot_failed"
-                        result["pending_reviews"].append("ui_action_or_snapshot_failed")
+                    try:
+                        if observe_target_ids:
+                            step["observed_targets_after"] = _target_diagnostics(
+                                cdp, world_id, observe_target_ids)
+                        if target_ids or target_class:
+                            step["action_target_after"] = _target_diagnostics(
+                                cdp, world_id, target_ids, target_class, target_index)[0]
+                    except Exception:
+                        result["pending_reviews"].append("target_diagnostics_unavailable")
+                    if step["status"] == "action_or_snapshot_failed":
+                        state = step["action_target_after"]
+                        if state is not None:
+                            if state["presence"] == "missing":
+                                step["status"] = "target_missing"
+                            elif state["presence"] == "duplicate":
+                                step["status"] = "duplicate_target"
+                            elif state["presence"] == "unique" and state["disabled"]:
+                                step["status"] = "target_disabled"
+                            elif state["presence"] == "unique" and not state["visible"]:
+                                step["status"] = "target_hidden"
+                        if step["status"] == "action_or_snapshot_failed":
+                            result["pending_reviews"].append("ui_action_or_snapshot_failed")
                     try:
                         step["script_coverage"] = collect_coverage()
                     except Exception:
@@ -968,6 +1107,15 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
     if result["local_render_frame_count"]:
         result["pending_reviews"].append("local_render_frame_content_unverified")
     if result["unexpected_navigation_count"]: result["pending_reviews"].append("navigation_changed_document")
+    diagnostic_states = list(result["observed_targets_initial"])
+    for step in result["ui_steps"]:
+        diagnostic_states.extend(step["observed_targets_after"])
+        diagnostic_states.extend(state for state in (
+            step["action_target_before"], step["action_target_after"]) if state)
+    if any(state["presence"] == "limit" or
+           state["hidden_reason"] == "ancestor_depth_limit"
+           for state in diagnostic_states):
+        result["pending_reviews"].append("target_diagnostics_limit")
     for snapshot in (result["initial_dom"], result["after_client_reveal"]):
         if snapshot and (snapshot["dom_node_limit"] or snapshot["visible_text_truncated"]):
             result["pending_reviews"].append("dom_snapshot_limit")
@@ -983,7 +1131,7 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
 
 
 def _entry(writer, body, content_type, kind, resources, reveal_client_ui, reveal_config,
-           reveal_explicit, ui_steps, observe_png_download,
+           reveal_explicit, ui_steps, observe_target_ids, observe_png_download,
            allow_local_render_frames, viewport, clock_time, timezone_id,
            download_dir, max_seconds):
     if os.name != "nt":
@@ -991,7 +1139,7 @@ def _entry(writer, body, content_type, kind, resources, reveal_client_ui, reveal
     try:
         final = _review_worker(body, content_type, kind, resources,
                                reveal_client_ui, reveal_config, reveal_explicit,
-                               ui_steps, observe_png_download,
+                               ui_steps, observe_target_ids, observe_png_download,
                                allow_local_render_frames, viewport, clock_time,
                                timezone_id, download_dir,
                                max_seconds,
@@ -1052,7 +1200,7 @@ def review_runtime_source(body: bytes, content_type: str, *, authorization: dict
         result["reason"] = steps_error
         result["pending_reviews"] = [steps_error]
         return result
-    ui_steps, observe_png_download = steps_config
+    ui_steps, observe_png_download, observe_target_ids = steps_config
     allow_local_render_frames = authorization.get("allow_local_render_frames", False)
     if not isinstance(allow_local_render_frames, bool):
         result["reason"] = "invalid_local_frame_option"
@@ -1096,7 +1244,8 @@ def review_runtime_source(body: bytes, content_type: str, *, authorization: dict
     process = context.Process(target=_entry, args=(writer, body, content_type, kind,
                               normalized, reveal_client_ui, reveal_config,
                               "client_ui_reveal" in authorization, ui_steps,
-                              observe_png_download, allow_local_render_frames,
+                              observe_target_ids, observe_png_download,
+                              allow_local_render_frames,
                               viewport.copy(), clock_time, timezone_id,
                               download_temp.name, max_seconds))
     deadline = time.monotonic() + max_seconds
