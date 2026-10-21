@@ -175,6 +175,16 @@ describe instrumented execution, not exhaustive semantic branch coverage. Keep
 external-header gaps, blocked requests, unsupported interactions, and unexecuted
 scenarios visible even when the selected assertions pass.
 
+Runtime diagnostics classify blocked and failed requests by a fixed resource-type
+allowlist, blocked requests by the broker's decision reason, and script errors
+by a fixed error-name allowlist. Counts are bounded and reported separately from
+the original totals. No request URLs, payloads, error messages, stacks, or console
+text are retained. Diagnostic saturation preserves an incomplete-review marker.
+Per-step differences describe events observed during that step, not proven causal
+attribution. A broker-aborted request can also emit a request-failure event; do
+not add those counters as independent failures. Console errors remain a count
+without inferring their cause from message text.
+
 ```sh
 open-detective runtime-review --manifest _local/case/runtime-manifest.json --output _local/case/runtime-result.json --case _local/case
 ```

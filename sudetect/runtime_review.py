@@ -44,6 +44,47 @@ _CSP = ("default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
         "style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
         "connect-src 'self'; frame-src 'none'; worker-src 'none'; object-src 'none'; "
         "base-uri 'none'; form-action 'none'")
+_DIAGNOSTIC_LIMIT = 256
+_RESOURCE_KINDS = frozenset({"document", "script", "stylesheet", "image", "font",
+                             "xhr", "fetch"})
+_SCRIPT_ERROR_KINDS = frozenset({"ReferenceError", "TypeError", "SyntaxError",
+                                 "SecurityError", "RangeError", "URIError",
+                                 "EvalError"})
+
+
+def _runtime_diagnostics() -> dict:
+    return {"blocked_requests_by_type": {}, "blocked_requests_by_reason": {},
+            "failed_requests_by_type": {}, "script_errors_by_kind": {}}
+
+
+def _resource_kind(request) -> str:
+    kind = request.resource_type
+    return kind if kind in _RESOURCE_KINDS else "other"
+
+
+def _script_error_kind(error) -> str:
+    # Only a fixed prefix is inspected. Never retain the exception text or stack.
+    name = getattr(error, "name", None)
+    if name not in _SCRIPT_ERROR_KINDS:
+        match = re.match(r"^([A-Za-z]+Error)(?::|\b)", str(error)[:64])
+        name = match.group(1) if match else None
+    return name if name in _SCRIPT_ERROR_KINDS else "other"
+
+
+def _count_diagnostic(result: dict, group: str, kind: str) -> None:
+    diagnostics = result["runtime_diagnostics"]
+    if sum(sum(rows.values()) for rows in diagnostics.values()) >= _DIAGNOSTIC_LIMIT:
+        result["diagnostic_limit_reached"] = True
+        return
+    rows = diagnostics[group]
+    rows[kind] = rows.get(kind, 0) + 1
+
+
+def _diagnostic_delta(after: dict, before: dict) -> dict:
+    return {group: {kind: count - before[group].get(kind, 0)
+                    for kind, count in rows.items()
+                    if count > before[group].get(kind, 0)}
+            for group, rows in after.items()}
 _BOOTSTRAP = """(() => {
   const blocked = window.__sudetectBlockedTransport;
   for (const key of ['RTCPeerConnection','webkitRTCPeerConnection','Worker',
@@ -363,6 +404,8 @@ def _base_result(body: bytes, kind: str) -> dict:
             "script_executed_count": 0, "script_error_count": 0,
             "console_error_count": 0, "captured_resource_requests": 0,
             "blocked_request_count": 0, "failed_request_count": 0,
+            "runtime_diagnostics": _runtime_diagnostics(),
+            "diagnostic_limit_reached": False,
             "blocked_beacon_count": 0,
             "blocked_websocket_count": 0, "blocked_popup_count": 0,
             "blocked_download_count": 0, "blocked_frame_request_count": 0,
@@ -617,6 +660,8 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                   script_executed_count=0,
                   captured_resource_requests=0, blocked_request_count=0,
                   failed_request_count=0,
+                  runtime_diagnostics=_runtime_diagnostics(),
+                  diagnostic_limit_reached=False,
                   blocked_beacon_count=0,
                   blocked_websocket_count=0, blocked_popup_count=0,
                   blocked_download_count=0, blocked_frame_request_count=0,
@@ -730,10 +775,16 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                 except Exception:
                     result["pending_reviews"].append("png_progress_guard_unavailable")
                     return result
-            page.on("pageerror", lambda _error: result.__setitem__(
-                "script_error_count", result["script_error_count"] + 1))
-            page.on("requestfailed", lambda _request: result.__setitem__(
-                "failed_request_count", result["failed_request_count"] + 1))
+            def on_page_error(error):
+                result["script_error_count"] += 1
+                _count_diagnostic(result, "script_errors_by_kind",
+                                  _script_error_kind(error))
+            page.on("pageerror", on_page_error)
+            def on_request_failed(request):
+                result["failed_request_count"] += 1
+                _count_diagnostic(result, "failed_requests_by_type",
+                                  _resource_kind(request))
+            page.on("requestfailed", on_request_failed)
             page.on("console", lambda message: result.__setitem__(
                 "console_error_count", result["console_error_count"] + (message.type == "error")))
             page.on("dialog", lambda dialog: dialog.dismiss())
@@ -855,6 +906,8 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                 request = route.request
                 target_url = request.url
                 allowed = request.method == "GET" and target_url in fulfilled
+                blocked_reason = ("non_get" if request.method != "GET"
+                                  else "uncaptured_get")
                 if request.resource_type == "document":
                     try:
                         main_frame = request.frame == page.main_frame
@@ -863,10 +916,15 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                     if not main_frame or target_url != ROOT_URL or root_served:
                         result["blocked_frame_request_count"] += 1
                         allowed = False
+                        blocked_reason = "frame_or_repeat_document"
                     else:
                         root_served = True
                 if not allowed:
                     result["blocked_request_count"] += 1
+                    _count_diagnostic(result, "blocked_requests_by_type",
+                                      _resource_kind(request))
+                    _count_diagnostic(result, "blocked_requests_by_reason",
+                                      blocked_reason)
                     route.abort()
                     return
                 data, mime = fulfilled[target_url]
@@ -929,6 +987,8 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                     before = {name: result[name] for name in (
                         "script_error_count", "console_error_count",
                         "blocked_request_count", "failed_request_count")}
+                    diagnostics_before = {group: rows.copy() for group, rows in
+                                          result["runtime_diagnostics"].items()}
                     first_download = len(downloads)
                     visible_before = (_targets_visible(_target_diagnostics(
                         cdp, world_id, row["expect_visible_ids"]))
@@ -963,7 +1023,8 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                             "png_download_verified": None,
                             "download_count": 0, "verified_png_count": 0,
                             "script_coverage": None, "error_delta": 0,
-                            "blocked_request_delta": 0}
+                            "blocked_request_delta": 0,
+                            "runtime_diagnostic_delta": _runtime_diagnostics()}
                     try:
                         action_status, step_dom, expected_visible = _execute_ui_step(
                             page, cdp, frame_id, world_id, row, action_state_before)
@@ -1057,6 +1118,8 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                         "script_error_count", "console_error_count", "failed_request_count"))
                     step["blocked_request_delta"] = (
                         result["blocked_request_count"] - before["blocked_request_count"])
+                    step["runtime_diagnostic_delta"] = _diagnostic_delta(
+                        result["runtime_diagnostics"], diagnostics_before)
                     if step["error_delta"] or step["blocked_request_delta"]:
                         step["branch_verified"] = False
                         result["pending_reviews"].append("ui_branch_unverified")
@@ -1094,6 +1157,8 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
         result["pending_reviews"].append("original_script_not_observed")
     result["original_script_executed"] = result["script_executed_count"] > 0
     if result["script_error_count"]: result["pending_reviews"].append("script_error_observed")
+    if result["diagnostic_limit_reached"]:
+        result["pending_reviews"].append("runtime_diagnostic_limit")
     if result["console_error_count"]: result["pending_reviews"].append("console_error_observed")
     if result["failed_request_count"]: result["pending_reviews"].append("request_failure_observed")
     if result["blocked_beacon_count"]: result["pending_reviews"].append("beacon_blocked")

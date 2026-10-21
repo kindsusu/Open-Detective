@@ -10,7 +10,8 @@ import time
 import unittest
 import zlib
 
-from sudetect.runtime_review import review_runtime_source
+from sudetect.runtime_review import (_base_result, _count_diagnostic,
+                                     review_runtime_source)
 
 
 def _png_fixture():
@@ -681,6 +682,54 @@ class RuntimeReviewTests(unittest.TestCase):
         self.assertTrue({"uncaptured_dependency_blocked", "request_failure_observed",
                          "console_error_observed"} & set(result["pending_reviews"]))
         self.assertNotIn("missing.json", json.dumps(result))
+
+    def test_bounded_runtime_diagnostics_classify_without_leaking_content(self):
+        body = (b"<img src='/private-image-token.png'>"
+                b"<script src='/private-script-token.js'></script>"
+                b"<script>fetch('/private-fetch-token.json').catch(()=>{});"
+                b"throw new ReferenceError('private-error-token');</script>")
+        result = review_runtime_source(body, "text/html", authorization=approval(body),
+                                       max_seconds=25)
+        diagnostics = result["runtime_diagnostics"]
+        self.assertGreaterEqual(diagnostics["blocked_requests_by_type"].get("image", 0), 1)
+        self.assertGreaterEqual(diagnostics["blocked_requests_by_type"].get("script", 0), 1)
+        self.assertGreaterEqual(diagnostics["blocked_requests_by_type"].get("fetch", 0), 1)
+        self.assertGreaterEqual(diagnostics["blocked_requests_by_reason"].get(
+            "uncaptured_get", 0), 3)
+        self.assertGreaterEqual(diagnostics["script_errors_by_kind"].get(
+            "ReferenceError", 0), 1)
+        self.assertGreaterEqual(diagnostics["failed_requests_by_type"].get("fetch", 0), 1)
+        self.assertEqual("partial", result["status"])
+        self.assertFalse(result["diagnostic_limit_reached"])
+        serialized = json.dumps(result)
+        for marker in ("private-image-token", "private-script-token",
+                       "private-fetch-token", "private-error-token"):
+            self.assertNotIn(marker, serialized)
+
+    def test_runtime_diagnostic_limit_is_value_free_and_incomplete(self):
+        result = _base_result(b"private-value-token", "html")
+        for _ in range(257):
+            _count_diagnostic(result, "blocked_requests_by_type", "fetch")
+        self.assertEqual(256, result["runtime_diagnostics"][
+            "blocked_requests_by_type"]["fetch"])
+        self.assertTrue(result["diagnostic_limit_reached"])
+        self.assertNotIn("private-value-token", json.dumps(result))
+
+    def test_ui_step_reports_only_resource_diagnostic_deltas(self):
+        body = (b"<button id='go' type='button'>Go</button><div id='done' hidden>Done</div>"
+                b"<script>document.getElementById('go').addEventListener('click',()=>{"
+                b"fetch('/private-step-token.json').catch(()=>{});"
+                b"document.getElementById('done').hidden=false;});</script>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "click", "target_id": "go",
+                                "expect_visible_ids": ["done"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        step = result["ui_steps"][0]
+        self.assertGreaterEqual(step["runtime_diagnostic_delta"][
+            "blocked_requests_by_type"].get("fetch", 0), 1, step)
+        self.assertFalse(step["branch_verified"])
+        self.assertNotIn("private-step-token", json.dumps(result))
 
     def test_send_beacon_is_silently_blocked_but_counted(self):
         body = b"<script>navigator.sendBeacon('/collector','fixture');</script>"

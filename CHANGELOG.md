@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added bounded, value-free runtime failure categories and per-step diagnostic differences to distinguish blocked resources from script failures without retaining URLs or error text.
+
 - Added bounded, value-free target-state observations and explicit hidden-state expectations for captured UI prerequisites and closing transitions.
 
 - Added declared offline UI scenarios with per-step expectations, execution-range evidence, bounded local PNG export inspection, and preservation of partial progress on timeout. Explicitly approved, versioned third-party dependencies remain separately scoped and hash-pinned.
