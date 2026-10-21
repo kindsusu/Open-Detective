@@ -109,7 +109,7 @@ python -m playwright install chromium
 
 기본 명령은 `open-detective`입니다. 기존 `su-detect`와 `python -m sudetect` 진입점도 계속 지원하며 같은 CLI를 실행합니다.
 
-루트 CLI는 `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
+루트 CLI는 `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `semantic-review`, `forensics`, `locators`, `ledger`, `doctor`를 제공한다. 익명 측정 명령에는 `--scope`, 소유자 인벤토리와 passive import에는 명시적 `--scope-id`가 필요하다. 암묵적 측정 범위나 자동 헤더 재전송은 없다.
 
 게이트 순서는 [운영 흐름](docs/WORKFLOW.md)을, 선택 기능과 네트워크 명령의 세부 규칙은 해당 `ops/` 문서를 먼저 확인합니다.
 
@@ -241,6 +241,13 @@ Codex와 Claude는 루트 AGENTS.md·CLAUDE.md에서 [같은 실행 절차](ko/o
 documents extra, 선택적 로컬 재현에는 browser extra와 Chromium이 필요하다.
 대형 저장소 재검사는 budget의 `max_repository_files`와 `max_patch_bytes`를 명시적으로 높일 수 있으며 scope와 총예산 제한은 유지된다. 선택적 `media` extra는 로컬 OCR을 추가하고 인식 원문 대신 신호·건수·검사 범위를 기록한다. OCR 완료, 지원 언어, 정적 텍스트 분석, 전체 시각 검토는 구분한다.
 일시적인 HTTP 오류는 서버 대기 시간을 지키며 재시도한다. 커밋 패치를 가져오지 못하면 허용된 범위에서 변경 파일 목록과 현재·부모 버전 원문을 검사하며, 이를 누락된 패치 내용의 검사 완료로 처리하지 않는다. SVG는 스크립트 실행이나 외부 자료 요청 없이 원문을 정적으로 검사한다.
+소유자가 승인하고 이미 로컬에 수집한 파일은 `semantic-review`로 제한된 오프라인 JSON·HTML·JavaScript 의미 검사를 할 수 있다. 새 비공개 결과 파일에는 값 없는 항목 수·검사 상태만 저장한다.
+
+```sh
+open-detective semantic-review --input _local/case/captured.html --content-type text/html --output _local/case/semantic-review.json
+```
+
+원본 JavaScript 실행과 네트워크 요청은 하지 않는다. 정적 필드 수와 DOM 근접성은 후보 근거이며 실제 화면 렌더링, 고객 신원, 게시 승인, 서버 권한 검증은 별개다. 종료 코드 0은 지원되는 정적 텍스트·구조 검사 완료, 3은 미해결 격차를 기록한 결과 저장, 2는 잘못된 로컬 입력을 뜻한다. 심볼릭 링크 경로, 16 MiB(또는 더 작은 `--max-bytes`) 초과 입력, 기존 출력 파일을 거부한다. 수집물과 보고서는 비공개 폴더에 둔다.
 합성 테스트 결과는 실제 회사 점검이나 두 모델 호스트의 실행 비교 결과가 아니다.
 
 선택한 저장소는 [중립 manifest 예시](examples/repository-manifest.example.json)를 비공개 로컬 입력에 복사해 실제 소유 근거, 정확한 저장소·브랜치, Page 연결 근거, 배포 URL로 교체한다. `audit bind-repositories --manifest ... --scope ...`는 같은 case에 선택을 저장하고, `audit preflight --scope ...`는 inventory·history·원본 파일·패치·배포에 부족한 scope를 표시한다. 확인되지 않은 소유나 유사한 검색명만으로 저장소·Page 연결을 승인하지 않는다. 점검은 tree inventory → 나열된 원본 파일 → 최대 5개 최근 commit과 `.patch` → 선언된 배포 순서로 근거를 남기며 전체 과거 이력을 보장하지 않는다. `run`·`resume`의 `--inspection-only`는 새 발견 없이 기존 점검 작업을 처리한다. 같은 case를 재개할 때마다 명시적 budget, 현재 scope, 새 control이 필요하다. `audit report --final`은 미완료여도 보고서를 저장하고 종료 코드 3을 반환한다. 모호한 넓은 이름 검색 결과는 검토 후보로 남고 임의 계정 확장은 자동 실행되지 않으며, 계정·작업 증가에 각각 상한이 있다.

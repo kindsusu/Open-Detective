@@ -40,7 +40,7 @@ _BINARY_MAGIC = (b"%PDF-", b"PK\x03\x04", b"PK\x05\x06", b"SQLite format 3\x00",
                  b"\x00asm", b"\x7fELF", b"MZ")
 _BUDGET_KEYS = {"max_requests", "max_total_bytes", "max_patch_bytes", "max_file_bytes",
                 "max_seconds", "max_attempts", "max_files", "max_ocr_seconds"}
-ANALYSIS_VERSION = "patch-followup-20261021-2"
+ANALYSIS_VERSION = "patch-followup-20261021-3"
 
 
 def _now():
@@ -243,6 +243,8 @@ def _file_review(body, path, content_type, *, max_seconds, max_pixels):
         if inline["ocr_coverage_complete"]:
             pending.discard("inline_image_ocr_unexamined")
     return {"kind": "text_or_binary", "text_analysis_complete": profile["text_analysis_complete"],
+            "structure_analysis_complete": profile["structure_analysis_complete"],
+            "structure_incomplete_reasons": profile["structure_incomplete_reasons"],
             "signal_codes": sorted(set(profile["candidate_signal_codes"]) |
                                    set((inline_summary or {}).get("signal_counts", {}))),
             "findings": profile["findings"],

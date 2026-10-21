@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .structured_data import inspect_static_json
+from . import strict_json
 
 MAX_MANIFEST_BYTES = 1_048_576
 MAX_ASSETS = 100
@@ -183,28 +184,42 @@ def profile_content(body: bytes, content_type: str = "", *, max_bytes: int = MAX
     truncated = len(body) > max_bytes
     text = body[:max_bytes].decode("utf-8", errors="replace")
     static_json = inspect_static_json(text, content_type)
+    structure_reasons = set(static_json.get("incomplete_reasons", []))
+    if truncated:
+        structure_reasons.add("analysis_input_limit")
     parsed_json = None; json_terms: dict[str, list[int]] = {}; json_truncated = False
     markup = None
     stripped = text.lstrip()
     if "json" in content_type.casefold() or stripped.startswith(("{", "[")):
         try:
-            parsed_json = json.loads(text)
+            parsed_json = strict_json.loads(text)
             json_terms, json_truncated = _walk_json(parsed_json)
+            if json_truncated:
+                structure_reasons.add("json_node_limit")
         except (ValueError, RecursionError):
             truncated = True
+            structure_reasons.add("json_syntax_or_depth_invalid")
     if "html" in content_type.casefold() or re.search(r"<(?:html|body|script|form|table|div)\b", text, re.I):
         markup = _MarkupStructure()
         try:
             markup.feed(text)
             truncated |= markup.truncated
+            if markup.truncated:
+                structure_reasons.add("html_structure_limit")
             for chunk in markup.json_chunks:
                 try:
-                    nested, nested_truncated = _walk_json(json.loads(chunk))
+                    nested, nested_truncated = _walk_json(strict_json.loads(chunk))
                     for category, values in nested.items():
                         totals = json_terms.setdefault(category, [0, 0]); totals[0] += values[0]; totals[1] += values[1]
                     json_truncated |= nested_truncated
-                except (ValueError, RecursionError): truncated = True
-        except (ValueError, RecursionError): truncated = True
+                    if nested_truncated:
+                        structure_reasons.add("json_node_limit")
+                except (ValueError, RecursionError):
+                    truncated = True
+                    structure_reasons.add("embedded_json_syntax_or_depth_invalid")
+        except (ValueError, RecursionError):
+            truncated = True
+            structure_reasons.add("html_parse_incomplete")
     bases: dict[str, set[str]] = {}; counts: dict[str, list[int]] = {key: value[:] for key, value in json_terms.items()}
     for category, row in static_json["categories"].items():
         totals = counts.setdefault(category, [0, 0])
@@ -224,7 +239,8 @@ def profile_content(body: bytes, content_type: str = "", *, max_bytes: int = MAX
                   for category in sorted(bases)]
     return {"asset_kind_hint": _kind_hint(text, content_type, markup, parsed_json),
             "business_data_categories": categories, "analysis_complete": not (truncated or json_truncated) and static_json["analysis_complete"],
-            "static_json_literals": {key: static_json[key] for key in ("literal_count", "root_item_count", "analysis_complete")},
+            "static_json_literals": {key: static_json[key] for key in ("literal_count", "root_item_count", "analysis_complete", "incomplete_reasons")},
+            "structure_incomplete_reasons": sorted(structure_reasons),
             "structured_tables": _table_candidates(markup.tables) if markup else [],
             "structure_analysis_complete": not (truncated or json_truncated) and static_json["analysis_complete"],
             "analysis_scope": "supplied_bytes_only",

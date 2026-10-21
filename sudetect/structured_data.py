@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from html.parser import HTMLParser
-import json
 import re
 from typing import Any
+
+from .js_literals import LiteralError, parse_static_literal
+from .strict_json import loads as strict_json_loads
 
 MAX_LITERALS = 64
 MAX_INPUT_CHARS = 4 * 1024 * 1024
@@ -64,27 +66,152 @@ def _skip_string(source: str, pos: int) -> tuple[int, bool]:
     return len(source), False
 
 
-def _literal_end(source: str, start: int) -> tuple[int, bool]:
+def _literal_end(source: str, start: int) -> tuple[int, bool, str | None]:
     stack: list[str] = []
     pos = start
     while pos < len(source) and pos - start <= MAX_LITERAL_CHARS:
         char = source[pos]
-        if char == '"':
+        if char in "\"'":
             pos, closed = _skip_string(source, pos)
             if not closed or pos - start > MAX_LITERAL_CHARS:
-                return pos, False
+                return pos, False, "js_literal_limit" if pos - start > MAX_LITERAL_CHARS else "js_malformed_literal"
+            continue
+        if source.startswith("//", pos):
+            end = source.find("\n", pos + 2)
+            pos = len(source) if end < 0 else end + 1
+            continue
+        if source.startswith("/*", pos):
+            end = source.find("*/", pos + 2)
+            if end < 0:
+                return len(source), False, "js_malformed_literal"
+            pos = end + 2
             continue
         if char in "[{":
             stack.append(char)
             if len(stack) > MAX_DEPTH:
-                return pos, False
+                return pos, False, "js_literal_limit"
         elif char in "]}":
             if not stack or (stack.pop(), char) not in {("[", "]"), ("{", "}")}:
-                return pos, False
+                return pos, False, "js_malformed_literal"
             if not stack:
-                return pos + 1, pos + 1 - start <= MAX_LITERAL_CHARS
+                bounded = pos + 1 - start <= MAX_LITERAL_CHARS
+                return pos + 1, bounded, None if bounded else "js_literal_limit"
+        pos += 1
+    return pos, False, "js_literal_limit" if pos - start > MAX_LITERAL_CHARS else "js_malformed_literal"
+
+
+def _skip_regex(source: str, pos: int) -> tuple[int, bool]:
+    """Skip one regex token in a position where a regex literal can start."""
+    pos += 1
+    character_class = False
+    while pos < len(source):
+        char = source[pos]
+        if char in "\r\n":
+            return pos, False
+        if char == "\\":
+            pos += 2
+            continue
+        if char == "[":
+            character_class = True
+        elif char == "]":
+            character_class = False
+        elif char == "/" and not character_class:
+            pos += 1
+            while pos < len(source) and (source[pos].isalpha() or source[pos] == "$" or source[pos] == "_"):
+                pos += 1
+            return pos, True
         pos += 1
     return pos, False
+
+
+def _suffix_is_dynamic(source: str, end: int) -> bool:
+    """A literal followed by an operator is an expression, not its final value."""
+    pos = end
+    saw_line_break = False
+    while pos < len(source):
+        if source[pos].isspace():
+            saw_line_break |= source[pos] in "\r\n"
+            pos += 1
+        elif source.startswith("//", pos):
+            line_end = source.find("\n", pos + 2)
+            if line_end < 0:
+                return False
+            pos = line_end + 1
+            saw_line_break = True
+        elif source.startswith("/*", pos):
+            comment_end = source.find("*/", pos + 2)
+            if comment_end < 0:
+                return True
+            saw_line_break |= "\n" in source[pos:comment_end]
+            pos = comment_end + 2
+        else:
+            break
+    if pos >= len(source):
+        return False
+    if source[pos] in ".[(+-*/%?=|&^<>!,:`":
+        return True
+    match = _IDENT.match(source, pos)
+    if match:
+        return not saw_line_break or match.group() in {"as", "satisfies", "in", "instanceof"}
+    return source[pos] not in ";}"
+
+
+def _skip_space_comments(source: str, pos: int) -> int:
+    while pos < len(source):
+        if source[pos].isspace():
+            pos += 1
+        elif source.startswith("//", pos):
+            end = source.find("\n", pos + 2)
+            pos = len(source) if end < 0 else end + 1
+        elif source.startswith("/*", pos):
+            end = source.find("*/", pos + 2)
+            if end < 0:
+                return len(source)
+            pos = end + 2
+        else:
+            break
+    return pos
+
+
+def _unsupported_assignment_literal(source: str, token_end: int) -> bool:
+    """Recognize unparsed assignment targets without interpreting their value."""
+    pos = token_end
+    for _ in range(32):
+        pos = _skip_space_comments(source, pos)
+        if pos < len(source) and source[pos] == ".":
+            pos = _skip_space_comments(source, pos + 1)
+            segment = _IDENT.match(source, pos)
+            if segment is None:
+                return False
+            pos = segment.end()
+            continue
+        if pos < len(source) and source[pos] == "[":
+            pos = _skip_space_comments(source, pos + 1)
+            if pos >= len(source) or source[pos] not in "\"'":
+                return False
+            pos, closed = _skip_string(source, pos)
+            if not closed:
+                return False
+            pos = _skip_space_comments(source, pos)
+            if pos >= len(source) or source[pos] != "]":
+                return False
+            pos += 1
+            continue
+        break
+    pos = _skip_space_comments(source, pos)
+    if pos >= len(source) or source[pos] != "=" or source[pos:pos + 2] in {"==", "=>"}:
+        return False
+    pos = _skip_space_comments(source, pos + 1)
+    return pos < len(source) and source[pos] in "[{"
+
+
+def _export_default_literal(source: str, token_end: int) -> bool:
+    pos = _skip_space_comments(source, token_end)
+    word = _IDENT.match(source, pos)
+    if word is None or word.group() != "default":
+        return False
+    pos = _skip_space_comments(source, word.end())
+    return pos < len(source) and source[pos] in "[{"
 
 
 def _summarize(value: Any) -> tuple[dict[str, dict[str, int]], int, bool]:
@@ -135,15 +262,16 @@ def _summarize(value: Any) -> tuple[dict[str, dict[str, int]], int, bool]:
     return counts, root_items, True
 
 
-def _scan_js(source: str) -> tuple[list[Any], bool]:
+def _scan_js(source: str) -> tuple[list[Any], set[str]]:
     values: list[Any] = []
-    complete = True
+    reasons: set[str] = set()
     pos = 0
     while pos < len(source):
         char = source[pos]
         if char in "\"'`":
             pos, closed = _skip_string(source, pos)
-            complete &= closed
+            if not closed:
+                reasons.add("js_malformed_literal")
             continue
         if source.startswith("//", pos):
             end = source.find("\n", pos + 2)
@@ -152,9 +280,25 @@ def _scan_js(source: str) -> tuple[list[Any], bool]:
         if source.startswith("/*", pos):
             end = source.find("*/", pos + 2)
             if end < 0:
-                return values, False
+                reasons.add("js_malformed_literal")
+                return values, reasons
             pos = end + 2
             continue
+        if char == "/":
+            previous_pos = pos - 1
+            while previous_pos >= 0 and source[previous_pos].isspace():
+                previous_pos -= 1
+            previous = source[previous_pos] if previous_pos >= 0 else ""
+            word_start = previous_pos
+            while word_start >= 0 and (source[word_start].isalnum() or source[word_start] in "_$"):
+                word_start -= 1
+            previous_word = source[word_start + 1:previous_pos + 1]
+            if (previous in {"", "=", "(", "[", "{", ",", ":", ";", "!", "?"}
+                    or previous_word in {"return", "throw", "case", "yield", "await"}):
+                pos, closed = _skip_regex(source, pos)
+                if not closed:
+                    reasons.add("js_lexical_incomplete")
+                continue
         match = _IDENT.match(source, pos)
         if not match:
             pos += 1
@@ -162,6 +306,9 @@ def _scan_js(source: str) -> tuple[list[Any], bool]:
         token = match.group()
         pos = match.end()
         if token not in {"const", "let", "var"}:
+            if ((token == "export" and _export_default_literal(source, pos))
+                    or _unsupported_assignment_literal(source, pos)):
+                reasons.add("js_unsupported_assignment")
             continue
         head = _ASSIGN_HEAD.match(source, pos)
         if not head:
@@ -169,25 +316,30 @@ def _scan_js(source: str) -> tuple[list[Any], bool]:
         start = head.end()
         if start >= len(source) or source[start] not in "[{":
             continue
-        end, closed = _literal_end(source, start)
+        end, closed, reason = _literal_end(source, start)
         if not closed:
-            return values, False
+            reasons.add(reason or "js_malformed_literal")
+            return values, reasons
         candidate = source[start:end]
         try:
-            value = json.loads(candidate)
+            value = strict_json_loads(candidate)
         except (ValueError, RecursionError):
-            # JavaScript object syntax can contain unquoted keys, comments,
-            # functions, or expressions. Keep scanning later literals, but do
-            # not report full structural coverage after skipping this one.
-            complete = False
+            try:
+                value = parse_static_literal(candidate, max_nodes=MAX_NODES, max_depth=MAX_DEPTH)
+            except LiteralError as exc:
+                reasons.add(exc.reason)
+                pos = end
+                continue
+        if _suffix_is_dynamic(source, end):
+            reasons.add("js_unsupported_dynamic_expression")
             pos = end
             continue
         values.append(value)
         if len(values) >= MAX_LITERALS:
-            complete = False
+            reasons.add("js_literal_limit")
             break
         pos = end
-    return values, complete
+    return values, reasons
 
 
 class _Scripts(HTMLParser):
@@ -195,26 +347,37 @@ class _Scripts(HTMLParser):
         super().__init__()
         self.active = False
         self.js = False
+        self.json_script = False
         self.parts: list[str] = []
         self.scripts: list[str] = []
+        self.json_scripts: list[str] = []
         self.complete = True
+        self.limit_reached = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "script":
             self.active = True
             kind = (dict(attrs).get("type") or "").casefold()
             self.js = kind in {"", "text/javascript", "application/javascript", "module"}
+            self.json_script = kind in {"application/json", "application/ld+json"}
             self.parts = []
 
     def handle_data(self, data: str) -> None:
-        if self.active and self.js:
+        if self.active and (self.js or self.json_script):
             self.parts.append(data)
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "script" and self.active:
             if self.js:
                 if len(self.scripts) < MAX_LITERALS: self.scripts.append("".join(self.parts))
-                else: self.complete = False
+                else:
+                    self.complete = False
+                    self.limit_reached = True
+            elif self.json_script:
+                if len(self.json_scripts) < MAX_LITERALS: self.json_scripts.append("".join(self.parts))
+                else:
+                    self.complete = False
+                    self.limit_reached = True
             self.active = False
             self.parts = []
 
@@ -224,28 +387,50 @@ def inspect_static_json(text: str, content_type: str) -> dict[str, Any]:
     input_complete = len(text) <= MAX_INPUT_CHARS
     text = text[:MAX_INPUT_CHARS]
     ctype = content_type.casefold()
+    reasons: set[str] = set()
+    if not input_complete:
+        reasons.add("analysis_input_limit")
     if "html" in ctype or re.search(r"<script\b", text, re.I):
         parser = _Scripts()
         parser.feed(text)
         sources = parser.scripts
         complete = input_complete and parser.complete and not parser.active
+        if parser.limit_reached:
+            reasons.add("html_script_limit")
+        if parser.active:
+            reasons.add("html_script_incomplete")
+        for payload in parser.json_scripts:
+            try:
+                strict_json_loads(payload)
+            except (ValueError, RecursionError):
+                reasons.add("json_malformed")
     elif "javascript" in ctype or "typescript" in ctype:
         sources, complete = [text], input_complete
+    elif "json" in ctype:
+        sources, complete = [], input_complete
+        try:
+            strict_json_loads(text)
+        except (ValueError, RecursionError):
+            reasons.add("json_malformed")
+            complete = False
     else:
         sources, complete = [], input_complete
     totals: dict[str, dict[str, int]] = {}
     roots = literals = 0
     for source in sources:
-        found, scanned = _scan_js(source)
-        complete &= scanned
+        found, scan_reasons = _scan_js(source)
+        reasons.update(scan_reasons)
+        complete &= not scan_reasons
         for value in found:
             counted, items, bounded = _summarize(value)
             complete &= bounded
-            if not bounded: continue
+            if not bounded:
+                reasons.add("js_literal_limit")
+                continue
             literals += 1
             roots += items
             for category, row in counted.items():
                 target = totals.setdefault(category, {key: 0 for key in row})
                 for key, number in row.items(): target[key] += number
     return {"literal_count": literals, "root_item_count": roots, "categories": totals,
-            "analysis_complete": complete}
+            "analysis_complete": bool(complete and not reasons), "incomplete_reasons": sorted(reasons)}

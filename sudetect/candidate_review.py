@@ -165,6 +165,9 @@ def review_candidate_bytes(body: bytes, *, content_type: str = "text/plain",
             "image_analysis_complete": media_skipped == 0,
             "text_analysis_complete": text_complete,
             "structure_analysis_complete": structure_complete,
+            "structure_incomplete_reasons": (full_report.get("asset_profile", {}).get(
+                "structure_incomplete_reasons", []) if full_report is not None else
+                ([] if structure_complete else ["candidate_structure_input_or_time_limit"])),
             "analysis_complete": text_complete and not pending,
             "candidate_signal_codes": sorted(codes), "findings": findings,
             "pending_reviews": sorted(pending), "sensitivity": "candidate_only",

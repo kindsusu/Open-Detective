@@ -49,6 +49,7 @@ open-detective audit bind-repositories --case _local/case --manifest _local/repo
 open-detective audit preflight --case _local/case --scope _local/scope.json
 open-detective audit resume --case _local/case --scope _local/scope.json --budget _local/budget.json --channel-health _local/channel-health.json --inspection-only
 open-detective audit report --case _local/case --output _local/report.json --final
+open-detective semantic-review --input _local/case/captured.html --content-type text/html --output _local/case/semantic-review.json
 open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
 open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
 open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
@@ -70,6 +71,8 @@ remain review candidates; automated account and job expansion are bounded.
 `forensics` is separate private-local work for an approved `--case` and owner-authorized read-only exports. Its case authorization is not a network measurement `--scope`. Read `ops/forensics.md`; do not authenticate, reuse credentials, acquire RAM/disk images, or infer no exfiltration from a missing log.
 
 `asset-profile` is separate offline local analysis of owner-authorized, already available local bytes. A sanitized `probe` report or code-search metadata does not provide those bytes. It never fetches a locator or proves public/anonymous reachability, and its value-free category hints never confirm sensitive content or severity. Read `ops/asset-profile.md` for its manifest, bounds, and interpretation.
+
+`semantic-review` reads one owner-authorized captured local file without network access or original JavaScript execution. It writes a bounded, value-free JSON result to a new private file. Static fields and lexical DOM proximity do not prove runtime rendering, publication approval, or server authorization. A static gap returns exit 3 with the report preserved; inspect `pending_reviews` before marking the source complete. Read [visual and semantic follow-up](ops/visual-semantic-review.md) for evidence and completion rules.
 
 `asset-locations` resolves profile or inventory `locator_ref` values only against the existing local locator store in one `--scope-id`. It makes no network requests and writes exact locations only to a new private-local mapping. That mapping may contain sensitive URL components; never publish it. It does not inspect an index/file body or establish ownership, access, reachability, or exposure. Read `ops/asset-profile.md`.
 

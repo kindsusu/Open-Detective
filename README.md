@@ -103,7 +103,7 @@ python -m playwright install chromium
 
 The primary command is `open-detective`. The existing `su-detect` and `python -m sudetect` entry points remain supported and invoke the same CLI.
 
-The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `semantic-review`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 Use [the operating workflow](docs/WORKFLOW.md) for the gated sequence and the relevant `ops/` guide before an optional or networked command.
 
@@ -253,6 +253,22 @@ Transient HTTP errors retain retry state and provider cooldowns. An unavailable
 commit patch can fall back to scoped commit-file metadata and exact current/parent
 file revisions; this does not complete the missing patch-hunk review. SVG source
 is inspected without executing scripts or fetching linked resources.
+For an owner-authorized file already captured locally, `semantic-review` performs
+bounded offline JSON/HTML/JavaScript analysis and writes a value-free JSON result
+to a new private file:
+
+```sh
+open-detective semantic-review --input _local/case/captured.html --content-type text/html --output _local/case/semantic-review.json
+```
+
+It neither fetches content nor runs the original JavaScript. Static field counts
+and lexical DOM links are candidate evidence; runtime rendering, customer identity,
+publication approval, and server authorization remain unverified. Exit code 0
+means the supported static text and structure pass completed, 3 means the result
+was saved with an unresolved static gap, and 2 means invalid local input. The
+command rejects symlink paths, input over 16 MiB (or the smaller `--max-bytes`
+limit), and existing output files. Store both capture and report in a private
+directory; do not publish either.
 These synthetic-tested features do not imply a completed live audit or actual
 Codex-versus-Claude host comparison. See [gate review](ops/gate-review.md).
 

@@ -3,6 +3,47 @@ import importlib
 import sys
 
 
+def _semantic_review_main(argv):
+    """Inspect one already captured local file without replaying source code."""
+    import argparse
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+
+    from .dom_replay import _read_bounded, _reject_symlink_path
+    from .semantic_review import MAX_SOURCE_BYTES, review_semantic_source
+
+    parser = argparse.ArgumentParser(description="Bounded offline semantic review of captured source bytes.")
+    parser.add_argument("--input", required=True, help="already captured local file")
+    parser.add_argument("--content-type", required=True, help="captured response media type")
+    parser.add_argument("--output", required=True, help="new private JSON result file")
+    parser.add_argument("--max-bytes", type=int, default=MAX_SOURCE_BYTES)
+    args = parser.parse_args(argv)
+    try:
+        if not 1 <= args.max_bytes <= MAX_SOURCE_BYTES:
+            raise ValueError("invalid_limit")
+        if not args.content_type or len(args.content_type) > 256 or any(
+            ord(char) < 32 or ord(char) == 127 for char in args.content_type
+        ):
+            raise ValueError("invalid_content_type")
+        output = _reject_symlink_path(Path(args.output))
+        if output.exists() or not output.parent.is_dir():
+            raise ValueError("unsafe_output")
+        body = _read_bounded(Path(args.input), args.max_bytes, invalid="invalid_input")
+        result = review_semantic_source(body, args.content_type, max_bytes=args.max_bytes)
+        result["source_sha256"] = hashlib.sha256(body).hexdigest()
+        result["review_mode"] = "offline_static"
+        with os.fdopen(os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
+                       "w", encoding="utf-8") as stream:
+            json.dump(result, stream, ensure_ascii=True, indent=2)
+            stream.write("\n")
+        return 0 if result["source_text_complete"] and result["source_structure_complete"] else 3
+    except (OSError, ValueError, TypeError, UnicodeError):
+        print('{"error":"invalid_local_input"}', file=sys.stderr)
+        return 2
+
+
 def main(argv=None):
     args = list(sys.argv[1:] if argv is None else argv)
     commands = {
@@ -18,6 +59,7 @@ def main(argv=None):
         "dom-replay": "dom_replay",
         "audit": "audit", "gate-review": "gate_review",
         "patch-followup": "patch_followup",
+        "semantic-review": "__offline_semantic_review__",
     }
     if not args or args[0] in ("-h", "--help"):
         print("usage: open-detective {" + ",".join(commands) + "} [options]")
@@ -31,6 +73,8 @@ def main(argv=None):
     if module is None:
         print("unknown_command", file=sys.stderr)
         return 2
+    if module == "__offline_semantic_review__":
+        return _semantic_review_main(args)
     return importlib.import_module(f"sudetect.{module}").main(args)
 
 

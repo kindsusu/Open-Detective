@@ -60,3 +60,7 @@ verification claim. Neither closes an exposure, approves publication, proves
 no data loss, or establishes company-wide coverage. Inspect the actual results
 and report both counts. Keep company inputs, raw locations and reports private;
 never commit credentials or source captures.
+
+For owner-authorized work on remaining visual and structural gaps, follow
+[visual and semantic review](visual-semantic-review.md). Keep evidence linked to
+the captured revision instead of relabeling the automated result as complete.

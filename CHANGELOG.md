@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added the offline `semantic-review` command for bounded inspection of an already captured local file. It saves value-free static coverage and candidate counts to a new private JSON file without fetching content or executing original JavaScript.
+- Added bounded data-only JavaScript literal parsing and explicit structural gap reasons. Unsupported expressions, non-finite JSON numbers, and unsupported semantic formats cannot report complete coverage. Documented hash-linked visual review separately from lexical and runtime checks.
 - Added explicit owner-authorized `patch-followup` for exact case-bound commits, with separate authenticated metadata and anonymous content observations, before/after file evidence, value-free candidate validation, and append-only resumable results. Default sensitive-candidate stops remain unchanged.
 - Continued approved patch and inline-image review beyond the first candidate, with bounded OCR continuation and base64 projection. Complete source parsing distinguishes real structure gaps from artificial chunk boundaries; processing coverage remains separate from semantic and visual verification.
 

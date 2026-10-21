@@ -10,6 +10,21 @@ from sudetect.asset_profile import MAX_CONTENT_BYTES, build_asset_profile, profi
 
 
 class AssetProfileTests(unittest.TestCase):
+    def test_structure_reasons_preserve_dynamic_and_json_limits(self):
+        dynamic = profile_content(b"const rows = [{price: fetchPrice()}];", "application/javascript")
+        self.assertIn("js_unsupported_dynamic_expression", dynamic["structure_incomplete_reasons"])
+        large = json.dumps([{"price": n} for n in range(3000)]).encode()
+        limited = profile_content(large, "application/json", max_bytes=len(large))
+        self.assertIn("json_node_limit", limited["structure_incomplete_reasons"])
+        self.assertNotIn("json_syntax_or_depth_invalid", limited["structure_incomplete_reasons"])
+
+    def test_json_fields_are_not_counted_twice(self):
+        for body, content_type in ((b'{"price":42}', "application/json"),
+                (b'<script type="application/json">{"price":42}</script>', "text/html")):
+            profile = profile_content(body, content_type)
+            pricing = next(row for row in profile["business_data_categories"] if row["category"] == "pricing")
+            self.assertEqual(1, pricing["filled_field_count"])
+
     def test_content_categories_are_value_free_and_zero_false_are_structural(self):
         secret_value = "do-not-report-this-contact@example.test"
         body = json.dumps({"customer_contact": False, "pricing_rate": 0, "internal_note": secret_value}).encode()
