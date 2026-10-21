@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .structured_data import inspect_static_json
+from . import strict_json
 
 MAX_MANIFEST_BYTES = 1_048_576
 MAX_ASSETS = 100
 MAX_CONTENT_BYTES = 262_144
+MAX_STRUCTURE_BYTES = 4 * 1024 * 1024
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _LOCATOR_REF = re.compile(r"^(?:opaque:[0-9a-f]{32}|hmac-sha256:[0-9a-f]{64})$")
 _CATEGORIES = {
@@ -70,11 +72,15 @@ class _MarkupStructure(HTMLParser):
         self._cell: list[str] | None = None
         self.visible_chunks: list[str] = []
         self.truncated = False
+        self._active_script_parts: list[str] = []
+        self._script_chars = 0
+        self._visible_chars = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "script":
             self.in_script = True
             self.json_script = (dict(attrs).get("type") or "").casefold() in {"application/json", "application/ld+json"}
+            self._active_script_parts = []
         if tag == "style": self.style_depth += 1
         if tag == "table":
             self.table_depth += 1
@@ -87,14 +93,26 @@ class _MarkupStructure(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not self.in_script and not self.style_depth:
             self.text_terms.update(_terms(data))
-            if len(self.visible_chunks) < 4096: self.visible_chunks.append(data)
-            else: self.truncated = True
+            remaining = MAX_STRUCTURE_BYTES - self._visible_chars
+            if len(data) > remaining: self.truncated = True
+            if remaining > 0:
+                self.visible_chunks.append(data[:remaining])
+                self._visible_chars += min(len(data), remaining)
             if self._cell is not None: self._cell.append(data)
-        elif self.json_script and len(self.json_chunks) < 16: self.json_chunks.append(data)
-        elif not self.json_script and len(self.script_chunks) < 16: self.script_chunks.append(data)
+        elif self.in_script:
+            remaining = MAX_STRUCTURE_BYTES - self._script_chars
+            if len(data) > remaining: self.truncated = True
+            if remaining > 0:
+                self._active_script_parts.append(data[:remaining])
+                self._script_chars += min(len(data), remaining)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "script": self.in_script = self.json_script = False
+        if tag == "script":
+            if self.in_script:
+                target = self.json_chunks if self.json_script else self.script_chunks
+                target.append("".join(self._active_script_parts))
+            self._active_script_parts = []
+            self.in_script = self.json_script = False
         if tag == "style" and self.style_depth: self.style_depth -= 1
         if tag in {"td", "th"} and self._cell is not None:
             self._cells.append(" ".join(self._cell).strip()); self._cell = None
@@ -166,28 +184,42 @@ def profile_content(body: bytes, content_type: str = "", *, max_bytes: int = MAX
     truncated = len(body) > max_bytes
     text = body[:max_bytes].decode("utf-8", errors="replace")
     static_json = inspect_static_json(text, content_type)
+    structure_reasons = set(static_json.get("incomplete_reasons", []))
+    if truncated:
+        structure_reasons.add("analysis_input_limit")
     parsed_json = None; json_terms: dict[str, list[int]] = {}; json_truncated = False
     markup = None
     stripped = text.lstrip()
     if "json" in content_type.casefold() or stripped.startswith(("{", "[")):
         try:
-            parsed_json = json.loads(text)
+            parsed_json = strict_json.loads(text)
             json_terms, json_truncated = _walk_json(parsed_json)
+            if json_truncated:
+                structure_reasons.add("json_node_limit")
         except (ValueError, RecursionError):
             truncated = True
+            structure_reasons.add("json_syntax_or_depth_invalid")
     if "html" in content_type.casefold() or re.search(r"<(?:html|body|script|form|table|div)\b", text, re.I):
         markup = _MarkupStructure()
         try:
             markup.feed(text)
             truncated |= markup.truncated
+            if markup.truncated:
+                structure_reasons.add("html_structure_limit")
             for chunk in markup.json_chunks:
                 try:
-                    nested, nested_truncated = _walk_json(json.loads(chunk))
+                    nested, nested_truncated = _walk_json(strict_json.loads(chunk))
                     for category, values in nested.items():
                         totals = json_terms.setdefault(category, [0, 0]); totals[0] += values[0]; totals[1] += values[1]
                     json_truncated |= nested_truncated
-                except (ValueError, RecursionError): truncated = True
-        except (ValueError, RecursionError): truncated = True
+                    if nested_truncated:
+                        structure_reasons.add("json_node_limit")
+                except (ValueError, RecursionError):
+                    truncated = True
+                    structure_reasons.add("embedded_json_syntax_or_depth_invalid")
+        except (ValueError, RecursionError):
+            truncated = True
+            structure_reasons.add("html_parse_incomplete")
     bases: dict[str, set[str]] = {}; counts: dict[str, list[int]] = {key: value[:] for key, value in json_terms.items()}
     for category, row in static_json["categories"].items():
         totals = counts.setdefault(category, [0, 0])
@@ -207,7 +239,8 @@ def profile_content(body: bytes, content_type: str = "", *, max_bytes: int = MAX
                   for category in sorted(bases)]
     return {"asset_kind_hint": _kind_hint(text, content_type, markup, parsed_json),
             "business_data_categories": categories, "analysis_complete": not (truncated or json_truncated) and static_json["analysis_complete"],
-            "static_json_literals": {key: static_json[key] for key in ("literal_count", "root_item_count", "analysis_complete")},
+            "static_json_literals": {key: static_json[key] for key in ("literal_count", "root_item_count", "analysis_complete", "incomplete_reasons")},
+            "structure_incomplete_reasons": sorted(structure_reasons),
             "structured_tables": _table_candidates(markup.tables) if markup else [],
             "structure_analysis_complete": not (truncated or json_truncated) and static_json["analysis_complete"],
             "analysis_scope": "supplied_bytes_only",

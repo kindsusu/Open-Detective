@@ -43,6 +43,47 @@ def scoped_cap(*, action="reveal_delivered_content", policy_id="gate-test", expi
 
 
 class GateReviewTests(unittest.TestCase):
+    def test_scoped_large_html_static_review_reaches_content_after_inline_media(self):
+        allowed = scope()
+        allowed.max_bytes = 8 * 1024 * 1024
+        body = (b'<html><img src="data:image/png;base64,' + b'A' * (5 * 1024 * 1024)
+                + b'">' + HIDDEN.encode() + b'</html>')
+        limited = review_gate(body, 'text/html', URL, allowed, None)
+        self.assertEqual('response_missing_or_oversize', limited['reason'])
+        expanded = review_gate(body, 'text/html', URL, allowed, None,
+                               replay_browser=False, max_bytes=8 * 1024 * 1024)
+        self.assertEqual('capability_required', expanded['reason'])
+        self.assertTrue(expanded['payload_in_initial_response'])
+        self.assertTrue(expanded['auth_ui_present'])
+        self.assertEqual(hashlib.sha256(body).hexdigest(), expanded['response_sha256'])
+        self.assertFalse(expanded['server_authorization_tested'])
+        self.assertNotIn(CANARY, json.dumps(expanded))
+
+    def test_large_inline_script_media_does_not_hide_late_request(self):
+        allowed = scope()
+        allowed.max_bytes = 8 * 1024 * 1024
+        body = (b'<script>const photo="data:image/png;base64,' + b'A' * (5 * 1024 * 1024)
+                + b'"; fetch("/api/login")</script>' + HIDDEN.encode())
+        result = review_gate(body, 'text/html', URL, allowed, None,
+                             replay_browser=False, max_bytes=8 * 1024 * 1024)
+        self.assertEqual(1, result['script_media_payloads_omitted'])
+        self.assertTrue(result['script_static_analysis_complete'])
+        self.assertTrue(result['login_request_present'])
+        self.assertTrue(result['request_present'])
+        self.assertFalse(result['client_gate_tested'])
+        self.assertFalse(result['original_dom_replayed'])
+        self.assertIn('inline_image_review', result['follow_up'])
+
+    def test_truncated_script_projection_is_explicitly_incomplete(self):
+        allowed = scope()
+        allowed.max_bytes = 8 * 1024 * 1024
+        body = (b'<script>const photo="data:image/png;base64,AAAA"; const large="'
+                + b'x' * (5 * 1024 * 1024) + b'";</script>')
+        result = review_gate(body, 'text/html', URL, allowed, None,
+                             replay_browser=False, max_bytes=8 * 1024 * 1024)
+        self.assertFalse(result['script_static_analysis_complete'])
+        self.assertEqual('script_static_analysis_incomplete', result['reason'])
+
     def test_t11_delivered_hidden_payload_and_local_display(self):
         body = HIDDEN.encode()
         static = review_gate(body, "text/html", URL, scope(), cap(body), replay_browser=False)

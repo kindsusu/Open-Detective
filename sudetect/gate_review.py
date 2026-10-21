@@ -20,7 +20,9 @@ from .classifiers import CLIENT_PASSWORD_ASSIGNMENT, CLIENT_PASSWORD_COMPARISON
 from .policy import PolicyError, Scope
 
 MAX_HTML = 4_194_304
+MAX_REVIEW_HTML = 128 * 1024 * 1024
 MAX_PROJECTION_TEXT = 131_072
+MAX_SCRIPT_SIGNAL_BYTES = 4_194_304
 _REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _FIXED_GATE = re.compile(
@@ -212,13 +214,16 @@ def _capability(capability: dict, scope: Scope, target: str, digest: str, now: d
     return "authorized"
 
 
-def review(response: bytes, target_url: str, scope: Scope, capability: dict | None, *, now: datetime | None = None, replay_browser: bool | None = None) -> dict:
+def review(response: bytes, target_url: str, scope: Scope, capability: dict | None, *, now: datetime | None = None,
+           replay_browser: bool | None = None, max_bytes: int = MAX_HTML) -> dict:
     """Review an already captured HTML response; return only bounded non-value evidence.
 
     Authorized calls attempt isolated replay by default; callers can explicitly
     disable it for a static-only pass.
     """
     now = now or datetime.now(timezone.utc)
+    if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_REVIEW_HTML:
+        raise ValueError("invalid gate review byte limit")
     digest = hashlib.sha256(response).hexdigest() if isinstance(response, bytes) else None
     result = {
         "schema_version": "1.0", "status": "pending", "reason": "not_started",
@@ -235,13 +240,14 @@ def review(response: bytes, target_url: str, scope: Scope, capability: dict | No
         "network_request_attempts": 0,
         "client_gate_attempts": 0, "hidden_field_count": 0,
         "hidden_filled_field_count": 0, "follow_up": [],
+        "script_media_payloads_omitted": 0, "script_static_analysis_complete": True,
     }
     try:
         canonical = scope.authorize(target_url)
     except (PolicyError, TypeError, ValueError):
         result["reason"] = "scope_denied"
         return result
-    if not digest or len(response) > min(MAX_HTML, scope.max_bytes):
+    if not digest or len(response) > min(max_bytes, scope.max_bytes):
         result["reason"] = "response_missing_or_oversize"
         return result
     result["review_binding_sha256"] = hashlib.sha256(
@@ -260,6 +266,19 @@ def review(response: bytes, target_url: str, scope: Scope, capability: dict | No
         result["reason"] = "html_parse_incomplete"
         return result
     scripts = "\n".join(page.scripts)
+    if re.search(r"data:image/", scripts, re.I):
+        from .media_projection import project_inline_images
+        script_bytes = scripts.encode("utf-8")
+        projection = project_inline_images(
+            (script_bytes[index:index + 65_536] for index in range(0, len(script_bytes), 65_536)),
+            max_wire_bytes=len(script_bytes), max_projected_bytes=MAX_SCRIPT_SIGNAL_BYTES)
+        if projection.skipped_images:
+            scripts = projection.projected.decode("utf-8", errors="replace")
+            result["script_media_payloads_omitted"] = projection.skipped_images
+            result["follow_up"].append("inline_image_review")
+        if projection.skipped_images and (projection.projected_truncated or projection.wire_truncated):
+            result["script_static_analysis_complete"] = False
+            result["follow_up"].append("script_static_analysis_incomplete")
     all_text = " ".join(page.hidden_payload + page.visible_payload)
     hidden_text = " ".join(page.hidden_payload)
     replay_canary = next((part.strip()[:128] for part in page.hidden_payload if part.strip()), "")
@@ -270,7 +289,9 @@ def review(response: bytes, target_url: str, scope: Scope, capability: dict | No
     request_urls = [match.group(2) for match in _REQUEST_URL.finditer(scripts)]
     result["login_request_present"] = any(_LOGIN_ENDPOINT.search(url) for url in request_urls + page.form_actions)
     result["encrypted_payload_observed"] = bool(_ENCRYPTION.search(scripts) and re.search(r"[A-Za-z0-9+/]{48,}={0,2}", scripts))
-    gate = _FIXED_GATE.fullmatch(scripts) if len(page.scripts) == 1 else None
+    gate = (_FIXED_GATE.fullmatch(scripts) if len(page.scripts) == 1
+            and result["script_media_payloads_omitted"] == 0
+            and result["script_static_analysis_complete"] else None)
     result["client_secret_literal_present"] = bool(
         CLIENT_PASSWORD_ASSIGNMENT.search(scripts) or CLIENT_PASSWORD_COMPARISON.search(scripts))
     categories = [name for name, pattern in _BUSINESS.items() if pattern.search(all_text)]
@@ -283,6 +304,9 @@ def review(response: bytes, target_url: str, scope: Scope, capability: dict | No
     result["business_logic_evidence_refs"] = [f"sha256:{digest}:script:business-rule"] if re.search(r"(?:commission|margin|rate|수수료|원가)\s*[*+/=-]", scripts, re.I) else []
     if filled:
         result["actual_data_access_result"] = "delivered_in_initial_response"
+    if not result["script_static_analysis_complete"]:
+        result["reason"] = "script_static_analysis_incomplete"
+        return result
     if permission != "authorized":
         result["reason"] = permission
         result["follow_up"].append("capability_or_scope_review")
@@ -376,7 +400,8 @@ def review(response: bytes, target_url: str, scope: Scope, capability: dict | No
 
 
 def review_gate(body: bytes, content_type: str, url: str, scope: Scope,
-                capability: dict | None = None, *, replay_browser: bool | None = None) -> dict:
+                capability: dict | None = None, *, replay_browser: bool | None = None,
+                max_bytes: int = MAX_HTML) -> dict:
     """Integration entry for already fetched bytes; unsupported media stays pending."""
     if not isinstance(content_type, str) or "html" not in content_type.casefold():
         return {"schema_version": "1.0", "status": "pending", "reason": "unsupported_content_type",
@@ -393,7 +418,7 @@ def review_gate(body: bytes, content_type: str, url: str, scope: Scope,
                 "original_active_content_stripped": False, "network_request_attempts": 0,
                 "client_gate_attempts": 0, "hidden_field_count": 0,
                 "hidden_filled_field_count": 0, "follow_up": ["content_type_review"]}
-    return review(body, url, scope, capability, replay_browser=replay_browser)
+    return review(body, url, scope, capability, replay_browser=replay_browser, max_bytes=max_bytes)
 
 
 def main(argv=None) -> int:

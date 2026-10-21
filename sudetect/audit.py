@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 from html.parser import HTMLParser
 import importlib.util
@@ -15,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import time
 from urllib.parse import urljoin, urlsplit
@@ -27,19 +29,127 @@ from .scheduler import Scheduler
 
 _RETRY_REASONS = {"request budget exhausted", "timeout", "dns_failure", "connection_reset",
                   "connection_refused", "request timed out", "transport_error"}
+_RETRY_HTTP_STATUSES = frozenset({429, 500, 502, 503, 504})
+_COOLDOWN_HTTP_STATUSES = frozenset({429, 503})
+_INSPECTION_JOB_TYPES = frozenset({
+    "capture", "repository_tree", "repository_history", "repository_patch",
+    "repository_commit_detail", "content_review"})
+_MEDIA_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp",
+                   ".tif", ".tiff", ".svg", ".woff", ".woff2", ".ttf", ".ico"}
 
 
 class _RetryCapture(Exception):
-    def __init__(self, reference):
+    def __init__(self, reference=None, due_at=None):
         self.reference = reference
+        self.due_at = due_at
+
+
+def _origin(url):
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc.lower()}"
+
+
+def _retry_due(header, attempts, *, now=None):
+    """Return bounded local backoff without shortening a valid provider delay."""
+    now = now or datetime.now(timezone.utc)
+    seconds = min(15 * 60, 30 * (2 ** min(max(attempts - 1, 0), 5)))
+    due = now + timedelta(seconds=seconds)
+    if isinstance(header, str) and len(header) <= 128:
+        value = header.strip()
+        if re.fullmatch(r"\d{1,8}", value):
+            due = max(due, now + timedelta(seconds=int(value)))
+        else:
+            try:
+                date = parsedate_to_datetime(value)
+                if date.tzinfo is not None:
+                    due = max(due, date.astimezone(timezone.utc))
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return due.isoformat()
+
+
+def _github_rate_limit_due(url, status, headers, attempts, *, now=None):
+    """Recognize only a confirmed, timed GitHub API rate-limit response."""
+    if status != 403 or urlsplit(url).hostname != "api.github.com":
+        return None
+    if headers.get("x-ratelimit-remaining") != "0":
+        return None
+    reset = headers.get("x-ratelimit-reset")
+    if not isinstance(reset, str) or not reset.isascii() or not re.fullmatch(r"\d{1,12}", reset):
+        return None
+    now = now or datetime.now(timezone.utc)
+    try:
+        provider_due = datetime.fromtimestamp(int(reset), timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    if provider_due <= now:
+        return None
+    local_due = datetime.fromisoformat(_retry_due(headers.get("retry-after"), attempts, now=now))
+    return max(local_due, provider_due).isoformat()
+
+
+def _origin_cooldown(case, url):
+    row = case.ledger.db.execute("SELECT due_at FROM audit_origin_cooldown WHERE origin=?", (_origin(url),)).fetchone()
+    if row and datetime.fromisoformat(row[0]) > datetime.now(timezone.utc):
+        return row[0]
+    return None
+
+
+def _defer_ready_origin(case, origin, due_at):
+    """Persist a provider pause without claiming jobs or spending attempts."""
+    with case.queue._transaction():
+        rows = case.ledger.db.execute("""SELECT job_id,asset_ref,state,next_eligible_at
+            FROM audit_jobs WHERE state IN ('ready','retry_wait')""").fetchall()
+        for row in rows:
+            try:
+                target = case.locators.get(case.scope_id, row["asset_ref"])
+            except (KeyError, ValueError):
+                continue  # Discovery and channel jobs have no URL locator.
+            if _origin(target) != origin:
+                continue
+            current_due = row["next_eligible_at"]
+            if current_due and datetime.fromisoformat(current_due.replace("Z", "+00:00")) >= datetime.fromisoformat(due_at):
+                continue
+            case.ledger.db.execute("""UPDATE audit_jobs SET state='retry_wait',next_eligible_at=?,
+                last_error_code='ORIGIN_COOLDOWN',updated_at=? WHERE job_id=?""",
+                (due_at, datetime.now(timezone.utc).isoformat(), row["job_id"]))
+            case.ledger._event("AUDIT_JOB_DEFERRED", row["job_id"],
+                               {"reason_code": "ORIGIN_COOLDOWN", "next_eligible_at": due_at})
+
+
+def _set_origin_cooldown(case, url, due_at, status):
+    origin = _origin(url)
+    with case.ledger.db:
+        case.ledger.db.execute("""INSERT INTO audit_origin_cooldown(origin,due_at,status)
+            VALUES(?,?,?) ON CONFLICT(origin) DO UPDATE SET
+            due_at=MAX(audit_origin_cooldown.due_at,excluded.due_at),status=excluded.status""",
+            (origin, due_at, status))
+        case.ledger._event("AUDIT_ORIGIN_COOLDOWN", hashlib.sha256(origin.encode()).hexdigest(),
+                           {"http_status": status, "due_at": due_at})
+    effective_due = _origin_cooldown(case, url) or due_at
+    _defer_ready_origin(case, origin, effective_due)
+    return effective_due
+
+
+def _apply_active_cooldowns(case):
+    now = datetime.now(timezone.utc)
+    for origin, due_at in case.ledger.db.execute("SELECT origin,due_at FROM audit_origin_cooldown"):
+        if datetime.fromisoformat(due_at) > now:
+            _defer_ready_origin(case, origin, due_at)
 
 
 def _review_context(scope, capability, budget):
-    values = {"engine_review_version": 2, "policy": scope.policy_id if scope else None, "max_bytes": scope.max_bytes if scope else None,
+    from .media_review import _windows_ocr_available
+    values = {"engine_review_version": 3, "policy": scope.policy_id if scope else None, "max_bytes": scope.max_bytes if scope else None,
               "capability": capability, "pdf": importlib.util.find_spec("pypdf") is not None,
               "browser": importlib.util.find_spec("playwright") is not None,
               "browser_path": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
-              "analysis_budget": budget.get("max_analysis_bytes"), "download_budget": budget.get("max_download_bytes")}
+              "ocr_rapidocr": importlib.util.find_spec("rapidocr_onnxruntime") is not None,
+              "ocr_windows": _windows_ocr_available(),
+              "ocr_tesseract": shutil.which("tesseract"),
+              "analysis_budget": budget.get("max_analysis_bytes"), "download_budget": budget.get("max_download_bytes"),
+              "repository_files": budget.get("max_repository_files", 1000),
+              "patch_bytes": budget.get("max_patch_bytes", 524288)}
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
 
 
@@ -83,12 +193,15 @@ class Case:
         self.ledger.db.execute("""CREATE TABLE IF NOT EXISTS audit_results(
             result_ref TEXT PRIMARY KEY, job_id TEXT NOT NULL, report_json TEXT NOT NULL)""")
         self.ledger.db.executescript("""
+            CREATE INDEX IF NOT EXISTS audit_results_by_job ON audit_results(job_id);
             CREATE TRIGGER IF NOT EXISTS audit_results_no_update BEFORE UPDATE ON audit_results
             BEGIN SELECT RAISE(ABORT,'audit results are append-only'); END;
             CREATE TRIGGER IF NOT EXISTS audit_results_no_delete BEFORE DELETE ON audit_results
             BEGIN SELECT RAISE(ABORT,'audit results are append-only'); END;
             CREATE TABLE IF NOT EXISTS audit_gate_attempts(
                 job_id TEXT PRIMARY KEY, reserved_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS audit_origin_cooldown(
+                origin TEXT PRIMARY KEY, due_at TEXT NOT NULL, status INTEGER NOT NULL);
         """)
         self.ledger.db.commit()
 
@@ -124,6 +237,46 @@ class Case:
                                      (job["job_id"],)).fetchone()
         return (row[0], json.loads(row[1])) if row and not json.loads(row[1]).get("retry_required") else None
 
+    def reusable_child_review(self, job, scope, context_digest, run_started_at):
+        """Find a committed review of this run's same capture, never a new observation."""
+        if job["job_type"] != "capture" or self.ledger.db.execute(
+                "SELECT 1 FROM audit_results WHERE job_id=? LIMIT 1", (job["job_id"],)).fetchone():
+            return None
+        checkpoint = job.get("checkpoint") or {}
+        rows = self.ledger.db.execute("""SELECT job_id,state,checkpoint,result_refs FROM audit_jobs
+            WHERE parent_job_id=? AND job_type='content_review' AND asset_ref=?
+            AND scope_id=? AND policy_id=? AND state IN ('succeeded','blocked_input')""",
+            (job["job_id"], job["asset_ref"], self.scope_id, scope.policy_id)).fetchall()
+        start = datetime.fromisoformat(run_started_at.replace("Z", "+00:00"))
+        for child in rows:
+            child_checkpoint = json.loads(child["checkpoint"] or "{}")
+            if (child_checkpoint.get("analysis_kind") != checkpoint.get("analysis_kind", "capture")
+                    or child_checkpoint.get("document_base_ref") != checkpoint.get("document_base_ref")
+                    or child_checkpoint.get("depth", 0) != checkpoint.get("depth", 0)
+                    or child_checkpoint.get("context_digest") != context_digest):
+                continue
+            committed = set(json.loads(child["result_refs"]))
+            if not committed:
+                continue
+            for row in self.ledger.db.execute("""SELECT result_ref,report_json FROM audit_results
+                    WHERE job_id=? ORDER BY rowid DESC LIMIT 1""", (child["job_id"],)):
+                if row["result_ref"] not in committed:
+                    continue
+                report = json.loads(row["report_json"])
+                try:
+                    observed = datetime.fromisoformat(report["observed_at"].replace("Z", "+00:00"))
+                except (KeyError, AttributeError, TypeError, ValueError):
+                    continue
+                if (observed.tzinfo is not None and observed >= start
+                        and report.get("target_id") == job["asset_ref"]
+                        and report.get("policy_id") == scope.policy_id
+                        and report.get("engine_review_version") == 3
+                        and report.get("capture_complete") is True
+                        and report.get("retry_required") is False
+                        and isinstance(report.get("observation_id"), str)):
+                    return row["result_ref"], report
+        return None
+
     def enqueue_url(self, url, *, parent=None, evidence=None, depth=0, redirect_count=0, scope=None, job_type="capture", document_base_ref=None, review_reason=None):
         try:
             url, _ = _normalize_url(url)
@@ -143,22 +296,45 @@ class Case:
         if scope is not None:
             try:
                 scope.authorize(url)
-                state, policy_id = "ready", scope.policy_id
+                from .repository_workflow import repository_job_authorized
+                if repository_job_authorized(self, url, scope) is not False:
+                    state, policy_id = "ready", scope.policy_id
             except PolicyError:
                 pass
         suffix = Path(urlsplit(url).path).suffix.lower()
         priority = 30 if suffix in {".pdf", ".json", ".csv", ".js", ".mjs", ".html", ".htm"} else 20
-        if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".woff", ".woff2", ".ttf", ".ico"}:
+        if suffix in _MEDIA_SUFFIXES:
             priority = 1
         if job_type == "repository_history":
             priority = 5
+        if job_type == "repository_patch":
+            priority = 4
+        if job_type == "repository_commit_detail":
+            priority = 3
+        if job_type == "repository_tree" and depth > 0:
+            priority = 2
         if review_reason and state == "ready":
             state = "blocked_input"
-        return self.queue.enqueue(job_type, ref, scope_id=self.scope_id,
+        queued = self.queue.enqueue(job_type, ref, scope_id=self.scope_id,
             policy_id=policy_id, parent_job_id=parent, origin_evidence_ref=evidence,
             state=state, priority=priority, checkpoint={"depth": depth, "redirect_count": redirect_count,
                 "document_base_ref": document_base_ref, "reason_codes": [review_reason] if review_reason else []},
             dedupe_key=job_type + ":" + ref + ((":" + document_base_ref) if document_base_ref else ""))
+        if state == "ready":
+            cooldown = _origin_cooldown(self, url)
+            if cooldown:
+                # New work queued after a 503/429 pause must not burn an attempt
+                # merely to learn that the origin is still cooling down.
+                with self.queue._transaction():
+                    row = self.ledger.db.execute(
+                        "SELECT state FROM audit_jobs WHERE job_id=?", (queued,)).fetchone()
+                    if row and row["state"] == "ready":
+                        self.ledger.db.execute("""UPDATE audit_jobs SET state='retry_wait',next_eligible_at=?,
+                            last_error_code='ORIGIN_COOLDOWN',updated_at=? WHERE job_id=?""",
+                            (cooldown, datetime.now(timezone.utc).isoformat(), queued))
+                        self.ledger._event("AUDIT_JOB_DEFERRED", queued,
+                                           {"reason_code": "ORIGIN_COOLDOWN", "next_eligible_at": cooldown})
+        return queued
 
 
 def init_case(directory, intake, mode="discovery"):
@@ -235,12 +411,28 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     from .asset_trace import extract_references
     from .transport import fetch
     from .gate_review import review_gate, _capability
+    from .repository_workflow import repository_job_authorized
     url = case.locators.get(case.scope_id, job["asset_ref"])
     scope.authorize(url)
+    if repository_job_authorized(case, url, scope) is False:
+        raise PolicyError("repository binding authorization required")
+    if any(isinstance(item, dict) and item.get("url") == url for item in case.meta["intake"].get("excluded_urls", [])):
+        raise PolicyError("operator excluded target")
     cached = case.prior_result(job)
     if cached and not (job["job_type"] == "content_review" and cached[1].get("gaps")):
         _project_observation(case, job, cached[1])
         return cached[0]
+    if job["job_type"] == "capture":
+        current_run = case.queue.get_run(run_id)
+        reusable = case.reusable_child_review(job, scope,
+            _review_context(scope, capability, current_run["budget"]), current_run["started_at"])
+        if reusable:
+            source_ref, source_report = reusable
+            reused = {**source_report, "reused_result_ref": source_ref}
+            # Preserve the original observation ID/time and every partial gap.
+            # The child already projected that observation; this is an audit
+            # result for the pending job, not a second network observation.
+            return case.save_result(job, reused)
     original_url = url
     document_base_ref = (job.get("checkpoint") or {}).get("document_base_ref")
     document_base = case.locators.get(case.scope_id, document_base_ref) if document_base_ref else None
@@ -249,17 +441,69 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
     # would lose the exact final base URL and resolve relative dependencies wrong.
     def collect(target, active_scope, **kwargs):
         active_scope.authorize(target)
+        if repository_job_authorized(case, target, active_scope) is False:
+            raise PolicyError("repository binding authorization required")
         if any(isinstance(item, dict) and item.get("url") == target for item in case.meta["intake"].get("excluded_urls", [])):
             raise PolicyError("operator excluded target")
         if target in case.transient_responses:
             return case.transient_responses[target]
+        cooldown = _origin_cooldown(case, target)
+        if cooldown:
+            raise _RetryCapture(due_at=cooldown)
         response = fetcher(target, active_scope) if fetcher else fetch(target, active_scope, **kwargs)
         if response.observation.get("capture_complete") and response.observation.get("http_status") == 200:
-            case.transient_responses[target] = response
+            # A long image/file pass must not retain its entire download in RAM.
+            cache_limit = 64 * 1024 * 1024
+            if len(response.body) <= cache_limit:
+                cache_bytes = sum(len(item.body) for item in case.transient_responses.values())
+                while case.transient_responses and cache_bytes + len(response.body) > cache_limit:
+                    oldest = next(iter(case.transient_responses))
+                    cache_bytes -= len(case.transient_responses.pop(oldest).body)
+                case.transient_responses[target] = response
         return response
-    result = collect(url, scope, follow_redirects=False)
+    analysis_kind = (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"])
+    review_limits = case.queue.get_run(run_id)["budget"]
+    capture_options = {"follow_redirects": False}
+    if analysis_kind == "repository_patch":
+        from .github_history import MAX_PATCH_BYTES
+        capture_options["max_bytes"] = min(scope.max_bytes, review_limits.get("max_patch_bytes", MAX_PATCH_BYTES))
+    elif analysis_kind == "repository_commit_detail":
+        from .repository_commit import MAX_COMMIT_DETAIL_BYTES
+        capture_options["max_bytes"] = min(scope.max_bytes, MAX_COMMIT_DETAIL_BYTES)
+    elif analysis_kind in {"repository_tree", "repository_history"}:
+        capture_options["max_bytes"] = min(scope.max_bytes,
+            8_388_608 if analysis_kind == "repository_tree" else 2_097_152)
+    result = collect(url, scope, **capture_options)
     body, observation = result.body, dict(result.observation)
     capture_complete = bool(observation.get("capture_complete"))
+    http_status = observation.get("http_status")
+    github_rate_due = _github_rate_limit_due(original_url, http_status, result.headers, job["attempts"])
+    if http_status in _RETRY_HTTP_STATUSES or github_rate_due:
+        due = github_rate_due or _retry_due(result.headers.get("retry-after"), job["attempts"])
+        if http_status in _COOLDOWN_HTTP_STATUSES or github_rate_due:
+            due = _set_origin_cooldown(case, original_url, due, http_status)
+        if github_rate_due:
+            observation["access"] = "INDETERMINATE"
+            observation["reason"] = "provider_rate_limited"
+        observation.update(target_id=job["asset_ref"], content="NOT_INSPECTED", analysis_complete=False,
+            review_complete=False, retry_required=True, retry_after_at=due,
+            gaps=(["provider_rate_limited"] if github_rate_due else
+                  ["upstream_transient_status", "patch_source_unavailable"]
+                  if analysis_kind == "repository_patch" and http_status == 503
+                  else ["upstream_transient_status"]), engine_review_version=3,
+            policy_id=scope.policy_id)
+        if analysis_kind == "repository_patch" and http_status == 503:
+            from .repository_commit import commit_detail_url
+            detail = commit_detail_url(original_url)
+            if detail:
+                fallback = case.enqueue_url(detail, parent=job["job_id"],
+                    evidence="observation:" + observation["observation_id"],
+                    depth=(job.get("checkpoint") or {}).get("depth", 0),
+                    job_type="repository_commit_detail", scope=scope)
+                observation["commit_detail_fallback_queued"] = fallback is not None
+        reference = case.save_result(job, observation)
+        _project_observation(case, job, observation)
+        raise _RetryCapture(reference, due)
     observation["target_id"] = job["asset_ref"]
     ctype = result.headers.get("content-type", "")
     if ctype.split(";", 1)[0].lower() in {"", "text/plain", "application/octet-stream"}:
@@ -271,7 +515,7 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             ctype = hint
             observation["media_type_basis"] = "path_hint_for_offline_analysis"
     observation["policy_id"] = scope.policy_id
-    observation["engine_review_version"] = 2
+    observation["engine_review_version"] = 3
     gaps, refs = [], []
     redirect_ref = result.headers.get("location") if observation.get("http_status") in {301, 302, 303, 307, 308} else None
     if result.headers.get("content-encoding", "identity").lower() not in {"", "identity"}:
@@ -281,13 +525,72 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
         gaps.append("analysis_budget_exhausted")
         profile = {"content": "NOT_INSPECTED", "analysis_complete": False}
     else:
-        analysis_kind = (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"])
         if analysis_kind == "repository_history":
             from .repository_history import analyze_history
             profile, refs = analyze_history(body, url)
+        elif analysis_kind == "repository_patch":
+            from .repository_history import analyze_repository_patch
+            from .github_history import patch_requires_material_hold
+            profile = analyze_repository_patch(body, url, case.locators, case.scope_id,
+                max_bytes=min(scope.max_bytes, review_limits.get("max_patch_bytes", 524288)))
+            if (capture_complete and http_status == 200 and
+                    profile.get("content_review") in {"text_reviewed_media_pending",
+                                                     "text_reviewed_structure_pending"} and
+                    "inline_image_ocr_unexamined" in profile.get("pending_reviews", []) and
+                    not profile.get("hold_repository_patch_lineage")):
+                from .media_review import analyze_inline_images
+                inline_review = analyze_inline_images(body, max_seconds=120.0)
+                profile["inline_image_review"] = inline_review
+                profile["pending_reviews"].extend(inline_review.get("pending_reviews", []))
+                if (inline_review.get("inline_images_found", 0) > 0 and
+                        inline_review.get("inline_images_found") == inline_review.get("ocr_completed") and
+                        not set(inline_review.get("pending_reviews", [])) & {
+                            "ocr_requested_language_not_covered", "ocr_text_byte_limit"}):
+                    profile["pending_reviews"].remove("inline_image_ocr_unexamined")
+                if inline_review.get("content") == "SENSITIVE_CANDIDATE":
+                    profile["content"] = "SENSITIVE_CANDIDATE"
+                profile.setdefault("signal_codes", []).extend(
+                    signal["code"] for signal in inline_review.get("signals", []))
+                if (inline_review.get("content") == "SENSITIVE_CANDIDATE" and
+                        patch_requires_material_hold(profile["signal_codes"])):
+                    profile["hold_repository_patch_lineage"] = True
+                    profile["pending_reviews"].append("sensitive_candidate_stop")
+                profile["pending_reviews"] = sorted(set(profile["pending_reviews"]))
+                profile["analysis_complete"] = False
+            if (capture_complete and http_status == 200 and
+                    "header_only_patch_requires_commit_detail" in profile.get("pending_reviews", [])):
+                from .repository_commit import commit_detail_url
+                detail = commit_detail_url(original_url)
+                if detail:
+                    fallback = case.enqueue_url(detail, parent=job["job_id"],
+                        evidence="observation:" + observation["observation_id"],
+                        depth=(job.get("checkpoint") or {}).get("depth", 0),
+                        job_type="repository_commit_detail", scope=scope)
+                    profile["commit_detail_fallback_queued"] = fallback is not None
+        elif analysis_kind == "repository_commit_detail":
+            from .repository_commit import analyze_commit_detail
+            profile, refs = analyze_commit_detail(body, url, link_header=result.headers.get("link"),
+                max_bytes=min(scope.max_bytes, capture_options["max_bytes"]))
+            if profile.get("empty_diff_verified") and job.get("parent_job_id"):
+                parent = next((candidate for candidate in case.queue.status()["jobs"]
+                               if candidate["job_id"] == job["parent_job_id"] and
+                               (candidate["job_type"] == "repository_patch" or
+                                candidate["job_type"] == "content_review" and
+                                (candidate.get("checkpoint") or {}).get("analysis_kind") == "repository_patch")), None)
+                if parent:
+                    from .repository_commit import commit_detail_url
+                    patch_url = case.locators.get(case.scope_id, parent["asset_ref"])
+                    source = case.prior_result(parent)
+                    if (commit_detail_url(patch_url) == original_url and source and
+                            source[1].get("target_id") == parent["asset_ref"] and
+                            source[1].get("capture_complete") is True and
+                            source[1].get("http_status") == 200 and
+                            "header_only_patch_requires_commit_detail" in source[1].get("gaps", [])):
+                        profile["empty_patch_target_ref"] = parent["asset_ref"]
+                        profile["empty_patch_source_result_ref"] = source[0]
         elif analysis_kind == "repository_tree":
             from .repository_assets import analyze_tree
-            profile, locations = analyze_tree(body, url)
+            profile, locations = analyze_tree(body, url, max_files=review_limits.get("max_repository_files", 1000))
             profile.update(content="NOT_INSPECTED", analysis_complete=profile["status"] == "COMPLETE")
             refs = [("repository_file", location) for location in locations]
             if profile["status"] != "COMPLETE":
@@ -302,6 +605,15 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
                 gaps.extend(reference_gaps)
             else:
                 gaps.append("document_reference_analysis_budget_exhausted")
+        elif "image/svg+xml" in ctype.lower() or Path(urlsplit(url).path).suffix.lower() == ".svg":
+            from .media_review import analyze_svg
+            profile = analyze_svg(body, capture_complete=capture_complete,
+                max_bytes=min(scope.max_bytes, 8_388_608))
+        elif ctype.lower().startswith("image/") or Path(urlsplit(url).path).suffix.lower() in {
+                ".png", ".jpg", ".jpeg", ".webp", ".avif", ".gif", ".bmp", ".tif", ".tiff", ".ico"}:
+            from .media_review import analyze_image
+            profile = analyze_image(body, ctype, capture_complete=capture_complete,
+                max_bytes=min(scope.max_bytes, 32 * 1024 * 1024))
         elif (ctype.lower().startswith("text/") or any(kind in ctype.lower() for kind in (
                 "json", "javascript", "xml", "ecmascript"))):
             analysis_body, analysis_capture_complete = body, capture_complete
@@ -321,6 +633,17 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
             profile = analysis.report
             if projection_metadata:
                 profile["media_projection"] = projection_metadata
+                from .media_review import analyze_inline_images
+                inline_review = analyze_inline_images(body, max_seconds=120.0)
+                profile["inline_image_review"] = inline_review
+                gaps.extend(inline_review.get("pending_reviews", []))
+                if (inline_review.get("inline_images_found") == inline_review.get("ocr_completed")
+                        and not set(inline_review.get("pending_reviews", [])) & {
+                            "ocr_requested_language_not_covered", "ocr_text_byte_limit"}):
+                    gaps = [gap for gap in gaps if gap != "inline_image_ocr_unexamined"]
+                if inline_review.get("content") == "SENSITIVE_CANDIDATE":
+                    profile["content"] = "SENSITIVE_CANDIDATE"
+                profile.setdefault("signals", []).extend(inline_review.get("signals", []))
             refs, unresolved, base = extract_references(analysis_body, ctype)
             gaps.extend(unresolved)
             if base:
@@ -350,11 +673,12 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
                     replay = case.ledger.db.execute("INSERT OR IGNORE INTO audit_gate_attempts VALUES(?,?)",
                         (job["job_id"], datetime.now(timezone.utc).isoformat())).rowcount == 1
             gate = review_gate(body, ctype, original_url, scope=scope, capability=capability,
-                               replay_browser=replay)
+                               replay_browser=replay, max_bytes=min(scope.max_bytes, 32 * 1024 * 1024))
             profile["gate_review"] = gate
             if gate.get("auth_ui_present") and not gate.get("client_gate_tested"):
                 gaps.append("gate_review_incomplete")
-            if gate.get("reason") in {"response_missing_or_oversize", "unsupported_encoding", "html_parse_incomplete"}:
+            if gate.get("reason") in {"response_missing_or_oversize", "unsupported_encoding", "html_parse_incomplete",
+                                      "script_static_analysis_incomplete"}:
                 gaps.append("gate_structure_unexamined")
             if gate.get("encrypted_payload_observed"):
                 gaps.append("encrypted_payload_unexamined")
@@ -432,11 +756,12 @@ def _capture(case, job, scope, run_id, capability, fetcher=None):
         if urlsplit(candidate).scheme == "https":
             if relationship == "redirect" and redirect_count >= scope.max_redirects:
                 gaps.append("redirect_budget_exhausted")
-            elif depth < 3 or relationship == "redirect":
+            elif depth < 3 or relationship in {"redirect", "repository_commit_detail"}:
                 queued = case.enqueue_url(candidate, parent=job["job_id"], evidence=evidence,
-                    depth=depth if relationship == "redirect" else depth + 1,
+                    depth=depth if relationship in {"redirect", "repository_commit_detail"} else depth + 1,
                     redirect_count=redirect_count + 1 if relationship == "redirect" else 0, scope=scope,
-                    job_type="repository_tree" if relationship == "repository_snapshot" else "capture",
+                    job_type={"repository_snapshot": "repository_tree", "repository_patch": "repository_patch",
+                              "repository_commit_detail": "repository_commit_detail"}.get(relationship, "capture"),
                     document_base_ref=document_base_ref if relationship in {"script_src", "redirect"} else None,
                     review_reason="SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" if affected_material_stop else None)
                 if queued is None:
@@ -470,6 +795,131 @@ def _project_observation(case, job, observation):
     # A candidate classification is never promoted to confirmed sensitivity.
     case.ledger.import_observation(observation, asset_id=asset_id,
         event_id="audit-observation-" + observation["observation_id"])
+
+
+def _reconcile_empty_patch(case, job, scope):
+    """Complete a header-only patch from committed, exact-commit API evidence."""
+    from .repository_commit import commit_detail_url
+    checkpoint = job.get("checkpoint") or {}
+    jobs = {item["job_id"]: item for item in case.queue.status()["jobs"]}
+    patch_job = jobs.get(checkpoint.get("source_patch_job_id"))
+    detail_job = jobs.get(checkpoint.get("detail_job_id"))
+    if (not patch_job or not detail_job or
+            patch_job["job_type"] not in {"repository_patch", "content_review"} or
+            detail_job["job_type"] != "repository_commit_detail" or
+            detail_job["state"] != "succeeded" or
+            patch_job["asset_ref"] != job["asset_ref"]):
+        return None
+    patch_url = case.locators.get(case.scope_id, patch_job["asset_ref"])
+    detail_url = case.locators.get(case.scope_id, detail_job["asset_ref"])
+    scope.authorize(patch_url)
+    scope.authorize(detail_url)
+    if commit_detail_url(patch_url) != detail_url:
+        return None
+    source = case.prior_result(patch_job)
+    detail = case.prior_result(detail_job)
+    if (not source or not detail or source[0] not in patch_job["result_refs"] or
+            detail[0] not in detail_job["result_refs"] or
+            source[1].get("target_id") != patch_job["asset_ref"] or
+            source[1].get("document_type") != "repository_patch" or
+            source[1].get("capture_complete") is not True or
+            source[1].get("http_status") != 200 or
+            "header_only_patch_requires_commit_detail" not in source[1].get("gaps", []) or
+            detail[1].get("target_id") != detail_job["asset_ref"] or
+            detail[1].get("capture_complete") is not True or
+            detail[1].get("analysis_complete") is not True or
+            detail[1].get("empty_diff_verified") is not True or
+            detail[1].get("files_observed") != 0 or
+            detail[1].get("file_list_page_complete") is not True or
+            detail[1].get("gaps")):
+        return None
+    reviewed = dict(source[1])
+    reviewed.update(reviewed_at=datetime.now(timezone.utc).isoformat(),
+        analysis_complete=True, text_analysis_complete=True,
+        dependency_review_complete=True, review_complete=True,
+        content_review="no_changed_files_verified", changed_files=[],
+        pending_reviews=[], gaps=[], retry_required=False,
+        empty_patch_source_result_ref=source[0],
+        empty_patch_detail_result_ref=detail[0],
+        empty_patch_review_basis="exact_commit_detail_zero_file_list",
+        observation_kind="derived_review")
+    dimensions = dict(reviewed.get("review_dimensions") or {})
+    dimensions.update(text="complete", structure="complete")
+    reviewed["review_dimensions"] = dimensions
+    reference = case.save_result(job, reviewed)
+    return reference
+
+
+def _verified_empty_detail(case, patch_url, scope):
+    """Find a committed zero-file API result for this exact commit under current scope."""
+    from .repository_commit import commit_detail_url
+    detail_url = commit_detail_url(patch_url)
+    if detail_url is None:
+        return None
+    try:
+        scope.authorize(patch_url)
+        scope.authorize(detail_url)
+    except PolicyError:
+        return None
+    for candidate in case.queue.status()["jobs"]:
+        if (candidate["job_type"] != "repository_commit_detail" or
+                candidate["state"] != "succeeded" or candidate["scope_id"] != case.scope_id or
+                case.locators.get(case.scope_id, candidate["asset_ref"]) != detail_url):
+            continue
+        committed = case.prior_result(candidate)
+        if not committed or committed[0] not in candidate["result_refs"]:
+            continue
+        report = committed[1]
+        if (report.get("target_id") == candidate["asset_ref"] and
+                report.get("document_type") == "repository_commit_detail" and
+                report.get("capture_complete") is True and report.get("http_status") == 200 and
+                report.get("analysis_complete") is True and
+                report.get("empty_diff_verified") is True and
+                report.get("file_list_page_complete") is True and
+                report.get("files_observed") == 0 and not report.get("gaps")):
+            return candidate, committed[0]
+    return None
+
+
+def _queue_empty_patch_reconciliation(case, source, detail_job, detail_ref, scope):
+    """Resume the outstanding patch review when detail evidence resolves it."""
+    jobs = case.queue.status()["jobs"]
+    source_id = source["job_id"]
+    if source["scope_id"] != case.scope_id:
+        return
+    source_result = case.prior_result(source)
+    if (not source_result or source_result[0] not in source["result_refs"] or
+            source_result[1].get("target_id") != source["asset_ref"] or
+            source_result[1].get("document_type") != "repository_patch" or
+            source_result[1].get("capture_complete") is not True or
+            source_result[1].get("http_status") != 200 or
+            "header_only_patch_requires_commit_detail" not in source_result[1].get("gaps", [])):
+        return
+    patch_url = case.locators.get(case.scope_id, source["asset_ref"])
+    matched = _verified_empty_detail(case, patch_url, scope)
+    if matched is None or matched[0]["job_id"] != detail_job["job_id"] or matched[1] != detail_ref:
+        return
+    checkpoint = {"analysis_kind": "repository_patch_empty_reconcile",
+                  "source_patch_job_id": source_id,
+                  "detail_job_id": detail_job["job_id"], "reason_codes": []}
+    blocked = next((item for item in jobs if item["job_type"] == "content_review" and
+                    item["asset_ref"] == source["asset_ref"] and
+                    item["state"] == "blocked_input" and
+                    (item["job_id"] == source_id or item["parent_job_id"] == source_id) and
+                    "header_only_patch_requires_commit_detail" in
+                    (item.get("checkpoint") or {}).get("reason_codes", [])), None)
+    if blocked:
+        with case.queue._transaction():
+            case.ledger.db.execute("UPDATE audit_jobs SET checkpoint=? WHERE job_id=?",
+                                   (json.dumps(checkpoint, ensure_ascii=False), blocked["job_id"]))
+            case.ledger._event("AUDIT_EMPTY_PATCH_REVIEW_READY", blocked["job_id"],
+                               {"detail_result_ref": detail_ref})
+        case.queue.unblock(blocked["job_id"], policy_id=scope.policy_id)
+    else:
+        case.queue.enqueue("content_review", source["asset_ref"],
+            scope_id=case.scope_id, policy_id=scope.policy_id, parent_job_id=detail_job["job_id"],
+            origin_evidence_ref=detail_ref, state="ready", priority=2,
+            dedupe_key="empty-patch-review:" + detail_job["job_id"], checkpoint=checkpoint)
 
 
 def _discover(case, job, run_id, health, api_fetch=None):
@@ -601,8 +1051,31 @@ def _channel_complete(case, channel):
     return bool(jobs) and all(j["state"] in {"completed", "not_applicable"} for j in jobs)
 
 
-def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=None, api_fetch=None, agent="cli", wait_for_retry=False):
+def _patch_lineage_blocked(case, job, scope=None):
+    from .github_history import patch_requires_material_hold
+    if (job.get("checkpoint") or {}).get("analysis_kind", job["job_type"]) != "repository_patch":
+        return False
+    url = case.locators.get(case.scope_id, job["asset_ref"])
+    # A complete, exact-SHA zero-file API result establishes that this commit
+    # has no changed material. It does not release any neighboring commit.
+    if scope is not None and _verified_empty_detail(case, url, scope) is not None:
+        return False
+    prefix = url.rsplit("/", 1)[0]
+    for row in case.ledger.db.execute("SELECT report_json FROM audit_results"):
+        report = json.loads(row[0])
+        if (report.get("hold_repository_patch_lineage") and report.get("target_id")
+                and patch_requires_material_hold(report.get("signal_codes", []))):
+            prior = case.locators.get(case.scope_id, report["target_id"])
+            if prior.rsplit("/", 1)[0] == prefix:
+                return True
+    return False
+
+
+def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=None, api_fetch=None, agent="cli", wait_for_retry=False, inspection_only=False):
+    from .repository_workflow import preflight, repository_job_authorized
+    readiness = preflight(case, scope)
     run_id = case.queue.start_run(budget)
+    _apply_active_cooldowns(case)
     review_context = _review_context(scope, capability, case.queue.get_run(run_id)["budget"])
     worker = agent + "-" + uuid.uuid4().hex
     original_budget = scope.budget if scope is not None else None
@@ -614,26 +1087,41 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
     try:
         # Previously blocked scope jobs become ready only after current authorization.
         for job in case.queue.status()["jobs"]:
-            if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history"} and scope:
+            if job["job_type"] == "capture" and job["state"] not in {"succeeded", "running"} and job["priority"] != 1:
+                target = case.locators.get(case.scope_id, job["asset_ref"])
+                if Path(urlsplit(target).path).suffix.lower() in _MEDIA_SUFFIXES:
+                    with case.ledger.db:
+                        case.ledger.db.execute("UPDATE audit_jobs SET priority=1 WHERE job_id=? AND state NOT IN ('succeeded','running')", (job["job_id"],))
+                        case.ledger._event("AUDIT_MEDIA_PRIORITY_UPDATED", job["job_id"], {"priority": 1})
+            if job["state"] == "succeeded" and job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail"} and scope:
                 previous = case.prior_result(job)
-                if previous and previous[1].get("engine_review_version", 0) < 2:
+                if previous and previous[1].get("engine_review_version", 0) < 3:
                     candidate = case.locators.get(case.scope_id, job["asset_ref"])
                     try:
                         scope.authorize(candidate)
                     except PolicyError:
                         continue
-                    case.queue.enqueue("content_review", job["asset_ref"], scope_id=case.scope_id,
-                        policy_id=scope.policy_id, parent_job_id=job["job_id"],
-                        origin_evidence_ref=previous[0], state="ready", priority=25,
-                        dedupe_key="engine-review:2:" + job["asset_ref"],
-                        checkpoint={"analysis_kind": job["job_type"], "depth": (job.get("checkpoint") or {}).get("depth", 0),
-                                    "document_base_ref": (job.get("checkpoint") or {}).get("document_base_ref"),
-                                    "reason_codes": ["engine_review_upgrade"], "context_digest": review_context})
+                    upgrade_key = "engine-review:3:" + job["asset_ref"]
+                    # enqueue() resumes an existing blocked_input job. A review
+                    # with unchanged context must remain blocked until its actual
+                    # missing evidence or dependencies change.
+                    if not case.ledger.db.execute(
+                            "SELECT 1 FROM audit_jobs WHERE dedupe_key=? LIMIT 1", (upgrade_key,)).fetchone():
+                        case.queue.enqueue("content_review", job["asset_ref"], scope_id=case.scope_id,
+                            policy_id=scope.policy_id, parent_job_id=job["job_id"],
+                            origin_evidence_ref=previous[0], state="ready", priority=25,
+                            dedupe_key=upgrade_key, resume_existing=False,
+                            checkpoint={"analysis_kind": job["job_type"], "depth": (job.get("checkpoint") or {}).get("depth", 0),
+                                        "document_base_ref": (job.get("checkpoint") or {}).get("document_base_ref"),
+                                        "reason_codes": ["engine_review_upgrade"], "context_digest": review_context})
             if job["state"] == "blocked_scope" and scope is not None:
                 if "SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" in (job.get("checkpoint") or {}).get("reason_codes", []):
                     continue
                 try:
-                    scope.authorize(case.locators.get(case.scope_id, job["asset_ref"]))
+                    candidate = case.locators.get(case.scope_id, job["asset_ref"])
+                    scope.authorize(candidate)
+                    if repository_job_authorized(case, candidate, scope) is False:
+                        continue
                 except (PolicyError, ValueError):
                     continue
                 case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
@@ -641,6 +1129,15 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                 case.queue.unblock(job["job_id"])
             if job["state"] == "blocked_input" and job["job_type"] == "channel_review" and _channel_complete(case, job["asset_ref"]):
                 case.queue.unblock(job["job_id"])
+            if (job["state"] == "blocked_input" and scope and
+                    "SENSITIVE_PATCH_LINEAGE_REVIEW" in (job.get("checkpoint") or {}).get("reason_codes", [])
+                    and not _patch_lineage_blocked(case, job, scope)):
+                try:
+                    candidate = scope.authorize(case.locators.get(case.scope_id, job["asset_ref"]))
+                    if repository_job_authorized(case, candidate, scope) is not False:
+                        case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
+                except PolicyError:
+                    pass
             if job["state"] == "blocked_input" and job["job_type"] == "content_review" and scope:
                 checkpoint = job.get("checkpoint") or {}
                 reasons = set(checkpoint.get("reason_codes", []))
@@ -655,18 +1152,25 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                         continue
                     case.queue.unblock(job["job_id"], policy_id=scope.policy_id)
         while True:
-            job = case.queue.claim(run_id, worker_id=worker)
+            job = case.queue.claim(run_id, worker_id=worker,
+                job_types=_INSPECTION_JOB_TYPES if inspection_only else None)
             if job is None:
                 status = case.queue.status()
                 current = case.queue.get_run(run_id)
-                if wait_for_retry and status["next_action_at"] and current["state"] == "running":
-                    delay = datetime.fromisoformat(status["next_action_at"].replace("Z", "+00:00")).timestamp() - time.time()
+                next_action = status["next_action_at"]
+                if inspection_only:
+                    eligible_retries = [item["next_eligible_at"] for item in status["jobs"]
+                        if item["job_type"] in _INSPECTION_JOB_TYPES and item["state"] == "retry_wait"
+                        and item.get("next_eligible_at")]
+                    next_action = min(eligible_retries) if eligible_retries else None
+                if wait_for_retry and next_action and current["state"] == "running":
+                    delay = datetime.fromisoformat(next_action.replace("Z", "+00:00")).timestamp() - time.time()
                     remaining = current["budget"]["max_seconds"] - (time.monotonic() - started)
                     if 0 < delay < remaining and current["requests"] < current["budget"]["max_requests"]:
                         time.sleep(min(5, delay))
                         continue
                 break
-            state, error, refs = "succeeded", None, []
+            state, error, refs, retry_due = "succeeded", None, [], None
             try:
                 if job["job_type"] == "discovery":
                     ref, state, error = _discover(case, job, run_id, health, api_fetch)
@@ -679,7 +1183,10 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                                 if "SENSITIVE_MATERIAL_FOLLOWUP_REVIEW" in (target.get("checkpoint") or {}).get("reason_codes", []):
                                     continue
                                 try:
-                                    scope.authorize(case.locators.get(case.scope_id, target["asset_ref"]))
+                                    candidate = case.locators.get(case.scope_id, target["asset_ref"])
+                                    scope.authorize(candidate)
+                                    if repository_job_authorized(case, candidate, scope) is False:
+                                        continue
                                 except (PolicyError, ValueError):
                                     continue
                                 case.queue.unblock(target["job_id"], policy_id=scope.policy_id)
@@ -689,9 +1196,21 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                             "channel_plan_complete": True, "public_index_exhaustive": False}))
                     else:
                         state, error = "blocked_input", "CHANNEL_IMPORT_REQUIRED"
-                elif job["job_type"] in {"capture", "repository_tree", "repository_history", "content_review"} and scope is not None:
-                    refs.append(_capture(case, job, scope, run_id, capability, fetcher))
-                    if job["job_type"] == "content_review":
+                elif (job["job_type"] == "content_review" and scope is not None and
+                      (job.get("checkpoint") or {}).get("analysis_kind") == "repository_patch_empty_reconcile"):
+                    reconciled = _reconcile_empty_patch(case, job, scope)
+                    if reconciled:
+                        refs.append(reconciled)
+                    else:
+                        state, error = "blocked_input", "EMPTY_PATCH_EVIDENCE_INCOMPLETE"
+                elif job["job_type"] in {"capture", "repository_tree", "repository_history", "repository_patch", "repository_commit_detail", "content_review"} and scope is not None:
+                    if _patch_lineage_blocked(case, job, scope):
+                        state, error = "blocked_input", "SENSITIVE_PATCH_LINEAGE_REVIEW"
+                        job["checkpoint"] = {**(job.get("checkpoint") or {}),
+                                             "reason_codes": [error]}
+                    else:
+                        refs.append(_capture(case, job, scope, run_id, capability, fetcher))
+                    if job["job_type"] == "content_review" and error != "SENSITIVE_PATCH_LINEAGE_REVIEW":
                         latest = case.prior_result(job)
                         gaps = latest[1].get("gaps", []) if latest else ["review_incomplete"]
                         if gaps:
@@ -703,13 +1222,27 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
             except PolicyError:
                 state, error = "blocked_scope", "SCOPE_OR_BUDGET_REJECTED"
             except _RetryCapture as exc:
-                refs.append(exc.reference)
+                if exc.reference:
+                    refs.append(exc.reference)
                 state, error = "retry_wait", "TRANSPORT_RETRY"
+                retry_due = exc.due_at
+            except sqlite3.OperationalError as exc:
+                code = getattr(exc, "sqlite_errorcode", None)
+                if isinstance(code, int) and (code & 0xff) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                    state, error = "retry_wait", "STATE_STORE_BUSY"
+                    delay = min(60, 5 * (2 ** min(max(job["attempts"] - 1, 0), 4)))
+                    retry_due = (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+                else:
+                    state, error = "failed_terminal", "STATE_STORE_ERROR"
+            except sqlite3.Error:
+                state, error = "failed_terminal", "STATE_STORE_ERROR"
             except (ValueError, OSError, ImportError):
                 state, error = "blocked_input", "HANDLER_INPUT_OR_DEPENDENCY_FAILED"
             except Exception:
                 state, error = "failed_terminal", "HANDLER_FAILED"
-            due = datetime.fromtimestamp(time.time() + 60, timezone.utc).isoformat() if state == "retry_wait" else None
+            due = (retry_due if state == "retry_wait" and retry_due else
+                   datetime.fromtimestamp(time.time() + 60, timezone.utc).isoformat()
+                   if state == "retry_wait" else None)
             if due and job["job_type"] == "discovery":
                 remaining = read_json(case.root / "search-plan.json").get("jobs", [])
                 future = [item["next_eligible_at"] for item in remaining if item.get("next_eligible_at")]
@@ -717,6 +1250,33 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
                     due = max(due, min(future))
             finished = case.queue.finish(job["job_id"], job["lease_owner"], state=state, result_refs=refs,
                                          error_code=error, next_eligible_at=due, checkpoint=job.get("checkpoint"))
+            if (finished and scope is not None and
+                    (job["job_type"] in {"repository_patch", "repository_commit_detail"} or
+                     job["job_type"] == "content_review" and
+                     (job.get("checkpoint") or {}).get("analysis_kind") == "repository_patch")):
+                current = next((item for item in case.queue.status()["jobs"]
+                                if item["job_id"] == job["job_id"]), None)
+                if current and (current["job_type"] == "repository_patch" or
+                        current["job_type"] == "content_review" and
+                        (current.get("checkpoint") or {}).get("analysis_kind") == "repository_patch"):
+                    patch_url = case.locators.get(case.scope_id, current["asset_ref"])
+                    matched = _verified_empty_detail(case, patch_url, scope)
+                    if matched:
+                        _queue_empty_patch_reconciliation(case, current, matched[0], matched[1], scope)
+                elif current and current["job_type"] == "repository_commit_detail":
+                    detail = case.prior_result(current)
+                    if detail and detail[1].get("empty_diff_verified") is True:
+                        from .repository_commit import commit_detail_url
+                        detail_url = case.locators.get(case.scope_id, current["asset_ref"])
+                        for source in reversed(case.queue.status()["jobs"]):
+                            if source["job_type"] not in {"repository_patch", "content_review"}:
+                                continue
+                            if (source["job_type"] == "content_review" and
+                                    (source.get("checkpoint") or {}).get("analysis_kind") != "repository_patch"):
+                                continue
+                            patch_url = case.locators.get(case.scope_id, source["asset_ref"])
+                            if commit_detail_url(patch_url) == detail_url:
+                                _queue_empty_patch_reconciliation(case, source, current, detail[0], scope)
             if not finished:
                 with case.ledger.db:
                     case.ledger._event("AUDIT_LATE_WORKER", job["job_id"], {"reason_code": "LEASE_LOST"})
@@ -730,7 +1290,8 @@ def run_case(case, budget, *, scope=None, capability=None, health=None, fetcher=
         case.transient_responses.clear()
         if scope is not None:
             scope._budget = original_budget
-    return {"run_id": run_id, "run": case.queue.get_run(run_id), **case_status(case)}
+    return {"run_id": run_id, "run": case.queue.get_run(run_id),
+            "inspection_only": inspection_only, "preflight": readiness, **case_status(case)}
 
 
 def case_status(case):
@@ -752,7 +1313,7 @@ def case_status(case):
             codes = (job.get("checkpoint") or {}).get("reason_codes", [])
             reasons.update(set(codes or [job.get("last_error_code") or job["state"]]))
     incomplete_targets = sum(bool(item.get("gaps")) or not item.get("capture_complete")
-                             or not item.get("analysis_complete") or item.get("engine_review_version", 0) < 2
+                             or not item.get("analysis_complete") or item.get("engine_review_version", 0) < 3
                              for item in latest.values())
     status.update(queue_complete=status["complete"], complete=bool(status["complete"] and search_complete and not search_remaining and not incomplete_targets),
                   search_complete=search_complete,
@@ -760,7 +1321,37 @@ def case_status(case):
                   latest_target_count=len(latest), incomplete_target_count=incomplete_targets,
                   unresolved_reason_counts=dict(sorted(reasons.items())),
                   completion_definition="bounded_scheduled_work_only_not_company_wide_or_publication_approval")
+    from .repository_workflow import repository_status
+    status["repository_review"] = repository_status(case)
+    if status["repository_review"].get("repositories"):
+        status["complete"] = bool(status["complete"] and status["repository_review"].get("complete", False))
+    status["next_actions"] = _next_actions(status)
     return status
+
+
+def _next_actions(status):
+    """Explicit resolution work, never an automatic scope or budget expansion."""
+    reasons = status.get("unresolved_reason_counts", {})
+    actions = []
+    current = status.get("current_run") or {}
+    limits = current.get("budget") or {}
+    if (any("BUDGET" in reason.upper() for reason in reasons)
+            or current.get("reason") in {"budget_exhausted", "time_exhausted", "jobs_exhausted"}
+            or any(current.get(key, 0) >= limits.get("max_" + key, float("inf"))
+                   for key in ("requests", "download_bytes", "analysis_bytes"))):
+        actions.append({"action": "resume_with_explicit_budget", "requires": "review_remaining_work_and_current_scope"})
+    if status.get("next_action_at"):
+        actions.append({"action": "resume_after", "at": status["next_action_at"],
+                        "requires": "fresh_scope_controls_and_explicit_budget"})
+    if any("scope" in reason.lower() for reason in reasons):
+        actions.append({"action": "review_missing_scope", "requires": "repository_preflight_and_ownership_evidence"})
+    if any("RATE" in reason or "RETRY" in reason or "REMAINING" in reason for reason in reasons):
+        actions.append({"action": "inspect_retry_state", "requires": "provider_due_time_and_new_budget"})
+    if any("INPUT" in reason or "REVIEW" in reason for reason in reasons):
+        actions.append({"action": "resolve_review_gaps", "requires": "actual_missing_evidence_or_dependency"})
+    if status.get("search_work_remaining"):
+        actions.append({"action": "review_remaining_discovery", "requires": "relevance_review_before_expansion"})
+    return actions
 
 
 def report_case(case):
@@ -781,7 +1372,7 @@ def main(argv=None):
     from .probe import _SafeParser
     parser = _SafeParser(prog="open-detective audit")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("init", "plan", "run", "resume", "worker", "import", "status", "report", "evaluate"):
+    for name in ("init", "plan", "run", "resume", "worker", "import", "status", "report", "evaluate", "bind-repositories", "preflight"):
         command = sub.add_parser(name)
         command.add_argument("--case", required=True)
         if name == "init":
@@ -795,11 +1386,19 @@ def main(argv=None):
             command.add_argument("--capabilities")
             command.add_argument("--channel-health")
             command.add_argument("--agent", choices=("cli", "codex", "claude"), default="cli")
+            command.add_argument("--inspection-only", action="store_true")
+        elif name == "bind-repositories":
+            command.add_argument("--manifest", required=True)
+            command.add_argument("--scope")
+        elif name == "preflight":
+            command.add_argument("--scope", required=True)
         elif name == "import":
             command.add_argument("--input", required=True)
             command.add_argument("--channel-health", required=True)
         elif name == "report":
             command.add_argument("--output", required=True)
+            command.add_argument("--final", action="store_true",
+                                 help="require completed inspection; still export gaps on failure")
         elif name == "evaluate":
             command.add_argument("--reference", required=True)
         else:
@@ -815,17 +1414,29 @@ def main(argv=None):
                         scope=Scope.load(args.scope) if args.scope else None,
                         capability=read_json(args.capabilities) if args.capabilities else None,
                         health=read_json(args.channel_health) if args.channel_health else None, agent=args.agent,
-                        wait_for_retry=args.command == "worker")
+                        wait_for_retry=args.command == "worker", inspection_only=args.inspection_only)
+                elif args.command == "bind-repositories":
+                    from .repository_workflow import bind_repositories
+                    answer = bind_repositories(case, read_json(args.manifest),
+                        scope=Scope.load(args.scope) if args.scope else None)
+                elif args.command == "preflight":
+                    from .repository_workflow import preflight
+                    answer = preflight(case, Scope.load(args.scope))
                 elif args.command == "import":
                     answer = import_channel(case, read_json(args.input), read_json(args.channel_health))
                 elif args.command == "report":
                     # Resolve both sides: Windows short directory names and
                     # lexical '..' aliases can identify the same state file.
                     if Path(args.output).resolve() in {(case.root / name).resolve() for name in (
-                            "case.json", "search-plan.json", "ledger.sqlite", "locators.sqlite")}:
+                            "case.json", "search-plan.json", "repository-bindings.json", "ledger.sqlite", "locators.sqlite")}:
                         raise ValueError("case_state_overwrite_rejected")
                     answer = report_case(case)
+                    answer["final_review_status"] = "complete" if answer["coverage"]["complete"] else "incomplete"
                     write_json(args.output, answer)
+                    if args.final and not answer["coverage"]["complete"]:
+                        print(json.dumps({"status": "incomplete", "report_written": True,
+                                          "reason": "final_review_requirements_unmet"}))
+                        return 3
                     answer = {"status": "written", "result_count": len(answer["results"])}
                 elif args.command == "evaluate":
                     # This is the only code path that opens the held-out reference.

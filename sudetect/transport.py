@@ -34,7 +34,12 @@ ConnectionFactory = Callable[[str, int, str, float], http.client.HTTPSConnection
 
 
 def _default_resolver(host: str, port: int, timeout: float) -> list[str]:
-    """Bound getaddrinfo wall time without leaving a process-blocking worker."""
+    """Bound DNS time and discard only paired well-known-prefix NAT64 duplicates.
+
+    A synthetic 64:ff9b::/96 answer is ignored only when its embedded IPv4 is
+    also present as a public A answer in this same resolution. All remaining
+    addresses still pass through _resolve_public's fail-closed validation.
+    """
     result: queue.Queue[object] = queue.Queue(maxsize=1)
 
     def run() -> None:
@@ -51,7 +56,26 @@ def _default_resolver(host: str, port: int, timeout: float) -> list[str]:
         answer = result.get(timeout=max(0.001, timeout))
     except queue.Empty:
         raise PolicyError("DNS resolution timed out") from None
-    return sorted({item[4][0] for item in answer})
+    addresses = {item[4][0] for item in answer}
+    public_v4 = set()
+    for value in addresses:
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError:
+            continue  # Preserve invalid answers for _resolve_public to reject.
+        if isinstance(parsed, ipaddress.IPv4Address) and parsed.is_global and not parsed.is_reserved:
+            public_v4.add(parsed)
+    prefix = ipaddress.IPv6Network("64:ff9b::/96")
+    for value in tuple(addresses):
+        try:
+            parsed = ipaddress.ip_address(value)
+        except ValueError:
+            continue
+        if isinstance(parsed, ipaddress.IPv6Address) and parsed in prefix:
+            embedded = ipaddress.IPv4Address(int(parsed) & 0xffffffff)
+            if embedded in public_v4:
+                addresses.remove(value)
+    return sorted(addresses)
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
@@ -217,10 +241,19 @@ def _safe_headers(response: http.client.HTTPResponse) -> dict[str, str]:
         ("Content-Disposition", "content-disposition"),
         ("X-Content-Type-Options", "x-content-type-options"),
         ("Vary", "vary"),
+        ("Retry-After", "retry-after"),
+        ("Link", "link"),
     ):
         value = response.getheader(source)
         if value is not None and len(value) <= 2048:
             result[target] = clean_text(value, 2048)
+    # GitHub's numeric rate-limit metadata is transient. Reject arbitrary header
+    # text here so it can neither leak into a report nor influence retry timing.
+    for source, target in (("X-RateLimit-Remaining", "x-ratelimit-remaining"),
+                           ("X-RateLimit-Reset", "x-ratelimit-reset")):
+        value = response.getheader(source)
+        if isinstance(value, str) and len(value) <= 16 and value.isascii() and value.isdecimal():
+            result[target] = value
     return result
 
 
@@ -350,6 +383,11 @@ def fetch(
                 "reason": "response_observed" if complete else "response_truncated",
             }
         )
+        if host == "api.github.com":
+            if "x-ratelimit-remaining" in headers:
+                observation["rate_limit_remaining"] = int(headers["x-ratelimit-remaining"])
+            if "x-ratelimit-reset" in headers:
+                observation["rate_limit_reset_epoch"] = int(headers["x-ratelimit-reset"])
         if not complete:
             observation["prefix_sha256"] = hashlib.sha256(body).hexdigest()
 

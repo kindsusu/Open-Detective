@@ -14,6 +14,13 @@ offline review/replay of already delivered bytes, documented in
 [gate review](ops/gate-review.md); it does not change anonymous probe/browser or
 perform live credential use or server authorization tests.
 
+When the owner explicitly requests execution of captured application JavaScript,
+use the separate hash-pinned `runtime-review` capability described in
+[captured runtime review](ops/runtime-review.md). It supplies only captured
+dependencies locally, records original DOM execution separately from optional
+client-UI reveal, and never uses live credentials. It does not change the
+default probe, browser, semantic, or inert gate behavior.
+
 This installed skill defines the workflow; it does not install the Python package. Install the package with the [README instructions](README.md) before running `open-detective`.
 
 Run **scope → inventory/discovery → ownership → anonymous observation → content classification → containment → recheck**. Never claim closure without a fresh observation.
@@ -23,6 +30,15 @@ Run **scope → inventory/discovery → ownership → anonymous observation → 
 Read `ops/scope.md`. Measurement commands require an unexpired `--scope` file containing exact HTTPS origins, owners, ownership evidence, and path prefixes. Apply every `SUD-Rxx` rule. Company-specific values stay in local input.
 
 Owner inventory may use explicitly authorized read credentials. Keep its credentials, process, browser profile, and output separate from anonymous target measurement. Discovery output is a candidate until ownership evidence links it to the organization.
+
+When the owner explicitly authorizes finishing held repository patches, use
+`patch-followup` with an unexpired manifest naming the exact case and patch refs.
+This separate follow-up may continue past sensitive candidates within fixed
+budgets; it never grants that behavior to ordinary observations. Authenticated
+GitHub commit metadata is recorded separately from anonymous patch/file access.
+Keep source and recognized values transient, report candidate validation without
+testing credentials, and preserve unresolved visual or semantic review dimensions.
+Read [authorized patch follow-up](ops/patch-followup.md).
 
 ```bash
 open-detective probe --scope scope.json <url>
@@ -36,6 +52,11 @@ open-detective channels-doctor --config _local/channels.json --scope _local/cont
 open-detective github-discover --scope-id TEAM --account approved-account --channel-health _local/channel-health.json
 open-detective search-plan run --plan _local/plan.json --locator-store _local/locators.sqlite --channel-health _local/channel-health.json
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --channel-health _local/channel-health.json
+open-detective audit bind-repositories --case _local/case --manifest _local/repository-manifest.json --scope _local/scope.json
+open-detective audit preflight --case _local/case --scope _local/scope.json
+open-detective audit resume --case _local/case --scope _local/scope.json --budget _local/budget.json --channel-health _local/channel-health.json --inspection-only
+open-detective audit report --case _local/case --output _local/report.json --final
+open-detective semantic-review --input _local/case/captured.html --content-type text/html --output _local/case/semantic-review.json
 open-detective asset-profile --input _local/case/assets.json --output _local/case/asset-profile.json --markdown _local/case/asset-profile.md
 open-detective asset-locations --input _local/case/asset-profile.json --locator-store _local/locators.sqlite --scope-id TEAM --output _local/case/private-locations.json
 open-detective prior-records --manifest _local/case/prior-export.json --intake _local/case/audit-intake.json --output _local/case/prior-summary.json
@@ -43,9 +64,22 @@ open-detective locators --store _local/locators.sqlite bind --scope-id TEAM --lo
 open-detective ledger --db audit.sqlite due
 ```
 
+Use [the neutral repository manifest](examples/repository-manifest.example.json)
+as a private-local template. Bind only operator-selected repositories with current
+ownership evidence and explicit Page/deployment associations. Preflight must
+identify exact tree, history, raw-file, patch, and deployment grants; a missing
+grant stays pending. Inspection records tree inventory, emitted raw files, a
+bounded five-commit history and `.patch` window, and declared deployments as
+separate stages. `--inspection-only` resumes the same case under a fresh scope,
+control report, and explicit budget. `report --final` writes incomplete gaps and
+returns exit 3 until completion requirements are met. Broad ambiguous name hits
+remain review candidates; automated account and job expansion are bounded.
+
 `forensics` is separate private-local work for an approved `--case` and owner-authorized read-only exports. Its case authorization is not a network measurement `--scope`. Read `ops/forensics.md`; do not authenticate, reuse credentials, acquire RAM/disk images, or infer no exfiltration from a missing log.
 
 `asset-profile` is separate offline local analysis of owner-authorized, already available local bytes. A sanitized `probe` report or code-search metadata does not provide those bytes. It never fetches a locator or proves public/anonymous reachability, and its value-free category hints never confirm sensitive content or severity. Read `ops/asset-profile.md` for its manifest, bounds, and interpretation.
+
+`semantic-review` reads one owner-authorized captured local file without network access or original JavaScript execution. It writes a bounded, value-free JSON result to a new private file. Static fields and lexical DOM proximity do not prove runtime rendering, publication approval, or server authorization. A static gap returns exit 3 with the report preserved; inspect `pending_reviews` before marking the source complete. Read [visual and semantic follow-up](ops/visual-semantic-review.md) for evidence and completion rules.
 
 `asset-locations` resolves profile or inventory `locator_ref` values only against the existing local locator store in one `--scope-id`. It makes no network requests and writes exact locations only to a new private-local mapping. That mapping may contain sensitive URL components; never publish it. It does not inspect an index/file body or establish ownership, access, reachability, or exposure. Read `ops/asset-profile.md`.
 
@@ -77,7 +111,7 @@ Before any discovery, record local `audit-intake` data using `examples/audit-int
 
 Use `prior-records` before new discovery for an explicitly supplied operator-declared trusted prior-review export. That declaration is not independent verification. It is offline and reads only the named manifest and optional intake; it never scans a vault or arbitrary filesystem data. Preserve review references, times, lookup status, known-asset/unresolved/due record references, but no raw URLs, captures, credentials, or secrets. Prior findings have no inherited authority and do not automatically reopen: current ownership review and executable scope are still required for a request.
 
-Use `github-history` separately for a selected public repository, explicit branch, time window, and commit cap. Metadata listing does not inspect file contents. Its optional patch inspection requires current executable scope, minimizes content, and stops on sensitive candidates. Keep historical file and URL locations in the private locator store; never follow them automatically or infer current exposure from a historical line. Read `ops/github-history.md`.
+Use `github-history` separately for a selected public repository, explicit branch, time window, and commit cap. Metadata listing does not inspect file contents. Its optional patch inspection requires current executable scope, minimizes content, and stops on sensitive candidates by default. Explicit owner-authorized continuation uses the separate `patch-followup` manifest above. Keep historical file and URL locations in the private locator store; never follow them automatically or infer current exposure from a historical line. Read `ops/github-history.md`.
 
 Use `dom-replay` only for an explicitly approved, hash-pinned local synthetic inert fixture. The fixed preset removes `login-screen` and sets `app` display to `flex`; measure the actual before/after DOM with network blocked. Fixture scripts and live target mutation are not supported. This separate reproduction is not an anonymous observation or backend authorization test, and never produces a confirmed exposure. Read `ops/dom-replay.md`.
 

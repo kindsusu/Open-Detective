@@ -25,7 +25,8 @@ FINAL = frozenset({"succeeded", "failed_terminal", "cancelled"})
 CLAIMABLE = frozenset({"ready", "retry_wait"})
 LIMITS = {"max_requests": 100, "max_download_bytes": 50_000_000,
           "max_analysis_bytes": 50_000_000, "max_seconds": 3600,
-          "max_attempts": 3, "max_jobs": 1000}
+          "max_attempts": 3, "max_jobs": 1000,
+          "max_repository_files": 1000, "max_patch_bytes": 524288}
 _IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _REASONS = frozenset({"no_ready_work", "budget_exhausted", "time_exhausted", "jobs_exhausted", "scope_expired",
                       "ready_exhausted", "input_required", "environment_failure", "user_stop"})
@@ -127,7 +128,8 @@ class Scheduler:
                 policy_id: str | None = None, parent_job_id: str | None = None,
                 origin_evidence_ref: str | None = None, capabilities_required: tuple[str, ...] = (),
                 priority: int = 0, estimated_cost: int = 1, state: str = "ready",
-                dedupe_key: str | None = None, checkpoint: Any = None) -> str:
+                dedupe_key: str | None = None, checkpoint: Any = None,
+                resume_existing: bool = True) -> str:
         for name, value in (("job_type", job_type), ("asset_ref", asset_ref), ("scope_id", scope_id)):
             if not isinstance(value, str) or not _IDENT.fullmatch(value):
                 raise LedgerError(f"valid {name} required")
@@ -137,6 +139,8 @@ class Scheduler:
             raise LedgerError("valid origin_evidence_ref required")
         if state not in STATES - {"running"}:
             raise LedgerError("invalid initial job state")
+        if not isinstance(resume_existing, bool):
+            raise LedgerError("resume_existing must be boolean")
         if isinstance(priority, bool) or not isinstance(priority, int):
             raise LedgerError("priority must be integer")
         _integer(estimated_cost, "estimated_cost")
@@ -152,7 +156,7 @@ class Scheduler:
             if existing:
                 if (existing["job_type"], existing["asset_ref"], existing["scope_id"]) != (job_type, asset_ref, scope_id):
                     raise LedgerError("dedupe key collision")
-                if state == "ready" and existing["state"] in {"pending", "blocked_scope", "blocked_input"}:
+                if resume_existing and state == "ready" and existing["state"] in {"pending", "blocked_scope", "blocked_input"}:
                     when = _now()
                     self.db.execute("UPDATE audit_jobs SET state='ready',next_eligible_at=NULL,updated_at=? WHERE job_id=?", (when, existing["job_id"]))
                     self._event("AUDIT_JOB_RESUMED", existing["job_id"], {"state": "ready", "checkpoint": json.loads(existing["checkpoint"]) if existing["checkpoint"] else None})
@@ -180,6 +184,8 @@ class Scheduler:
                     raise LedgerError("max_seconds must be finite and positive")
             else:
                 _integer(value, name)
+        if limits["max_repository_files"] > 10_000 or limits["max_patch_bytes"] > 134_217_728:
+            raise LedgerError("repository review limit exceeds supported maximum")
         run_id = f"ar_{uuid.uuid4().hex}"
         when = _now()
         with self._transaction():
@@ -222,7 +228,8 @@ class Scheduler:
         if changed:
             self._event("AUDIT_RUN_ENDED", run_id, {"reason": reason})
 
-    def claim(self, run_id: str, worker_id: str = "local", lease_seconds: int = 300) -> dict[str, Any] | None:
+    def claim(self, run_id: str, worker_id: str = "local", lease_seconds: int = 300,
+              job_types: frozenset[str] | None = None) -> dict[str, Any] | None:
         _integer(lease_seconds, "lease_seconds")
         if not isinstance(worker_id, str) or not _IDENT.fullmatch(worker_id):
             raise LedgerError("valid worker_id required")
@@ -239,11 +246,25 @@ class Scheduler:
                 self.db.execute("UPDATE audit_jobs SET state=?,lease_owner=NULL,lease_expires_at=NULL,last_error_code='LEASE_EXPIRED',updated_at=? WHERE job_id=?", (new_state, now, row["job_id"]))
                 self._event("AUDIT_LEASE_EXPIRED", row["job_id"], {"state": new_state, "reason_code": "LEASE_EXPIRED"})
             remaining = run["budget"]["max_requests"] - run["requests"]
+            # Current inventory takes precedence. Historical snapshot trees are
+            # intentionally lower than history and patch jobs even when an older
+            # job persisted priority 20. Age and eligibility still apply.
             rows = self.db.execute("""SELECT j.* FROM audit_jobs j
                 WHERE j.state IN ('ready','retry_wait') AND (j.next_eligible_at IS NULL OR j.next_eligible_at<=?)
-                ORDER BY (j.priority + CAST((julianday(?) - julianday(j.created_at))*24 AS INTEGER)) DESC,
+                ORDER BY ((CASE
+                    WHEN j.job_type='repository_tree' OR
+                         (j.job_type='content_review' AND json_extract(j.checkpoint,'$.analysis_kind')='repository_tree')
+                         THEN CASE WHEN CAST(json_extract(j.checkpoint,'$.depth') AS INTEGER)>0
+                                   THEN 2 ELSE MAX(j.priority,40) END
+                    WHEN j.job_type='content_review' AND json_extract(j.checkpoint,'$.analysis_kind')='repository_history'
+                         THEN MAX(j.priority,5)
+                    WHEN j.job_type='content_review' AND json_extract(j.checkpoint,'$.analysis_kind')='repository_patch'
+                         THEN MAX(j.priority,4)
+                    ELSE j.priority END) + CAST((julianday(?) - julianday(j.created_at))*24 AS INTEGER)) DESC,
                          j.created_at,j.job_id""", (now, now)).fetchall()
             for row in rows:
+                if job_types is not None and row["job_type"] not in job_types:
+                    continue
                 if row["estimated_cost"] > remaining:
                     continue
                 if row["attempts"] >= run["budget"]["max_attempts"]:

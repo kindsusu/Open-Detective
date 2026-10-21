@@ -42,11 +42,13 @@ Keep workers on disjoint files and jobs; hand off evidence and gaps for integrat
 ```sh
 open-detective audit init --case _local/new-case --intake _local/intake.json
 open-detective audit plan --case _local/new-case --profile thorough
+open-detective audit bind-repositories --case _local/new-case --manifest _local/repository-manifest.json --scope _local/scope.json
+open-detective audit preflight --case _local/new-case --scope _local/scope.json
 open-detective audit run --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json --agent codex
 open-detective audit status --case _local/new-case --json
-open-detective audit resume --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json --agent claude
+open-detective audit resume --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json --agent claude --inspection-only
 open-detective audit worker --case _local/new-case --scope _local/scope.json --budget _local/budget.json --channel-health _local/health.json
-open-detective audit report --case _local/new-case --output _local/report.json
+open-detective audit report --case _local/new-case --output _local/report.json --final
 open-detective audit evaluate --case _local/new-case --reference _local/held-out.json
 ```
 
@@ -54,6 +56,32 @@ The adapters run identical Python commands. `--agent` records the worker identit
 not a different decision policy. `plan` inspects the already persisted plan/queue;
 it neither reads reference answers nor grants network authority. Resume requires
 current scope again; stored ownership does not automatically renew expiry.
+
+For an operator-selected repository, copy
+[`examples/repository-manifest.example.json`](../examples/repository-manifest.example.json)
+to the ignored private input area and replace every example value. Bind an exact
+`OWNER/REPO`, branch, current expiry, and owner evidence reference. Set
+`ownership_status` to `confirmed` only after owner review; `investigation` stays
+pending. A `pages` association requires its own `page_url` and `evidence_ref`;
+associated Pages are queued for capture. Declare other public deployments in
+`deployment_urls`. A search name, repository
+match, or Pages-looking URL alone cannot create these associations. Binding is
+idempotent for the same manifest. Extending only its expiry records a renewal
+event; other changes conflict with the existing selection. `preflight` reports
+each missing grant; it requires the binding's owner
+evidence on the corresponding scope target and does not change scope. The scope must cover repository
+tree and commit API paths, raw-content and commit-patch prefixes, and each
+declared deployment/Page URL. Missing authorization remains blocked or pending.
+
+The repository inspection stages are inventory tree, every emitted raw file,
+bounded recent commit history and its `.patch` content, then declared deployment
+observation. Each stage reports its own evidence and gaps. The current history
+window is at most five commits and is never exhaustive history coverage.
+`--inspection-only` on `run`, `resume`, or `worker` works the existing inspection
+queue without opening new discovery work. Use the same case and a newly explicit
+budget, current scope, and fresh controls for each resumed interval. `report
+--final` still writes an incomplete report and exits 3 when completion conditions
+are unmet; inspect its gaps and resume eligible work before claiming a final audit.
 
 ## Durable state and resource limits
 
@@ -69,6 +97,30 @@ and capture reservations are pessimistic, made before transport, and retained on
 crash. They count redirects and retries. Actual capture sizes remain observations;
 reservations are not reported as downloaded bytes. A retry must reserve a new
 attempt, because a crashed request cannot be assumed not to have occurred.
+
+For a reviewed large repository, a run budget may explicitly set
+`max_repository_files` (default 1,000; maximum 10,000) and `max_patch_bytes`
+(default 524,288; maximum 134,217,728). The patch capture is also bounded by
+the scope's `max_bytes` and the aggregate download/analysis budgets. Raising a
+file cap does not resolve a provider-truncated Git tree. Review the actual
+remaining work before increasing limits; the defaults do not increase on retry.
+Large captures use a bounded transient response cache rather than retaining
+every downloaded image in memory.
+
+HTTP 429 and transient 5xx responses are retry observations, not inspected asset
+content. Valid `Retry-After` delays are preserved even when longer than local
+backoff. Origin cooldowns persist across workers and case resumes. An observed
+GitHub API 403 is retried only when numeric rate-limit headers confirm zero
+remaining requests and a future reset time. The reset and any later valid
+`Retry-After` are honored; ordinary access-denied responses are not automatically
+retried. Numeric rate metadata remains in the observation for diagnosis. Do not
+substitute an authenticated response for anonymous exposure evidence.
+
+An observed
+commit whose patch endpoint fails can produce a separately scoped commit-detail
+job. Validated metadata emits exact current and first-parent raw-file revisions;
+validated pagination remains bounded. This fallback does not reconstruct omitted
+patch hunks or resolve merge-parent coverage. Those gaps remain explicit.
 
 Ready work is processed until the interval ends or there is no eligible work.
 `retry_wait`, `blocked_scope`, `blocked_input`, failures, and partial analysis remain
@@ -94,11 +146,16 @@ per-job state and error information. Retry only errors classified as transient o
 explicitly selected for retry, within a newly approved interval and its budget.
 Keep permanent failures, blocked inputs, and retry-wait work visible; do not turn
 an error into a clean result or silently retry unchanged missing inputs.
+Ambiguous broad-name GitHub hits stay review candidates; arbitrary hit owners do
+not trigger automatic repository expansion. Search-account expansion and durable
+discovered-account jobs are bounded separately. A deferred
+`operator_review_required` job is not promoted by an automatic resume. Exact known
+URLs and operator account inputs retain their independent priority.
 
 When a persisted seed plan is upgraded to version 2, migration adds missing-prefix
 jobs idempotently and retains completed jobs. For a previously successful capture
 with no `engine_review_version`, schedule one engine review under the current scope
-and budget using the `engine-review:2:asset` deduplication key. Resuming the same
+and budget using the `engine-review:3:asset` deduplication key. Resuming the same
 engine-review version must not fetch the asset again.
 
 For an authorized repository candidate, the common audit may request up to five
@@ -131,8 +188,22 @@ omitted image remains an explicit media/OCR gap. The default capture limit remai
 widens the approved scope or budget automatically. Do not claim image review or OCR
 coverage from text extraction or projection alone.
 
-The gate parser is bounded to 4 MiB. If the original response exceeds that bound,
-retain an explicit gap instead of implying that the entire response was parsed.
+Raster images and supported inline base64 images have an optional local OCR pass.
+Install the `media` extra for Windows OCR bindings and the bundled RapidOCR
+fallback, or provide a trusted local Tesseract installation with the requested
+language data. Windows uses installed language packs, including Korean when
+available. OCR output is
+classified in memory; reports contain signal codes, coverage, and counts rather
+than recognized text. The bundled RapidOCR model does not cover Korean, so a
+Korean request retains `ocr_requested_language_not_covered`. OCR completion is
+separate from full visual, barcode, and embedded-metadata review. Missing engines,
+unsupported formats, pixel/byte/time limits and language gaps remain explicit.
+
+The standalone gate parser defaults to 4 MiB. The common audit passes an explicit
+limit up to 32 MiB, still bounded by the scope, so an already captured large HTML
+file can be inspected without substituting a projection for its original hash.
+Responses exceeding the selected limit retain an explicit gap. This static
+review does not authorize a live gate mutation or credential test.
 
 Keep capture, text/analysis, structure, media, gate, sensitivity, publication
 approval, and server authorization as separate review dimensions. `NOT_INSPECTED`,
@@ -152,6 +223,21 @@ another service or treat a client gate as server authorization. A denied server
 response requires separately authorized test conditions, not guessed credentials.
 
 ## Handoff and completion
+
+### Explicitly authorized patch follow-up
+
+For held patches the owner has explicitly authorized for deeper examination,
+use [patch-followup](patch-followup.md) against the same case. Its separate,
+expiring manifest selects exact patch references and authorizes continuation
+past candidate signals. It does not change ordinary audit stop behavior or
+resume unrelated discovery. Review validated changed-file revisions when a
+patch is unavailable, binary, or structurally incomplete. Keep original
+observations and append the follow-up evidence; do not replace anonymous access
+with authenticated metadata or mark missing patch hunks as reconstructed.
+
+Report processing coverage, candidate validation, and remaining human-review
+dimensions separately. A completed automated follow-up is not publication
+approval, proof of identity, credential validity, or complete visual review.
 
 Hand off case path, last run ID, current states, evidence references, and remaining
 gaps. Do not duplicate completed requests to reconstruct a narrative. Scope-blocked
