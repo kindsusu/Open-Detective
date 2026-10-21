@@ -1,7 +1,7 @@
 """Offline boundaries for explicitly authorized patch followup."""
 from datetime import datetime, timezone
+import base64
 import hashlib
-from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -245,12 +245,14 @@ class PatchFollowupTests(unittest.TestCase):
         self.assertEqual(ANALYSIS_VERSION, json.loads(rows[1][1])["analyzer_version"])
 
     def test_real_png_and_jpeg_bytes_reach_image_review_before_binary_guard(self):
-        from PIL import Image
-        for format_name, suffix in (("PNG", ".png"), ("JPEG", ".jpg")):
+        # Fixed 1x1 RGB files; no Pillow dependency in the standard CI test job.
+        fixtures = (("PNG", ".png",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"),
+            ("JPEG", ".jpg",
+            "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q=="))
+        for format_name, suffix, encoded in fixtures:
             with self.subTest(format=format_name):
-                output = BytesIO()
-                Image.new("RGB", (2, 2), "white").save(output, format=format_name)
-                payload = output.getvalue()
+                payload = base64.b64decode(encoded, validate=True)
                 self.assertIn(b"\x00", payload)
                 with patch("sudetect.patch_followup.analyze_image", return_value={
                         "ocr_state": "completed", "signals": [], "content": "NOT_INSPECTED",
@@ -258,8 +260,21 @@ class PatchFollowupTests(unittest.TestCase):
                     result = _file_review(payload, "image" + suffix, "application/octet-stream",
                                           max_seconds=5, max_pixels=25_000_000)
                 reviewed.assert_called_once()
+                self.assertEqual(32 * 1024 * 1024, reviewed.call_args.kwargs["max_bytes"])
                 self.assertEqual("image", result["kind"])
                 self.assertEqual("completed", result["ocr_state"])
+
+    def test_avif_conversion_budget_is_independent_of_compressed_input_length(self):
+        # The decoder may produce a PNG larger than the compact source AVIF.
+        compressed_avif = b"\x00\x00\x00\x18ftypavif" + b"x" * 20
+        with patch("sudetect.patch_followup.analyze_image", return_value={
+                "ocr_state": "completed", "signals": [], "content": "NOT_INSPECTED",
+                "image_review_complete": False, "pending_reviews": []}) as reviewed:
+            result = _file_review(compressed_avif, "image.avif", "image/avif",
+                                  max_seconds=5, max_pixels=40_000_000)
+        self.assertEqual("image", result["kind"])
+        self.assertEqual(32 * 1024 * 1024, reviewed.call_args.kwargs["max_bytes"])
+        self.assertEqual(40_000_000, reviewed.call_args.kwargs["max_pixels"])
 
 
 if __name__ == "__main__":

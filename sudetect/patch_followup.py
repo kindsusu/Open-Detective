@@ -198,7 +198,7 @@ def _file_review(body, path, content_type, *, max_seconds, max_pixels):
     deadline = time.monotonic() + max_seconds
     if suffix in _IMAGE or _image_header(body) is not None:
         profile = analyze_image(body, content_type, max_seconds=min(max_seconds, 300),
-                                max_bytes=min(len(body) or 1, 32 * 1024 * 1024),
+                                max_bytes=32 * 1024 * 1024,
                                 max_pixels=max_pixels)
         metadata_present = None
         try:
