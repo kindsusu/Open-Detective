@@ -59,6 +59,10 @@ resolved relative to the manifest when relative; absolute input paths are also
 accepted. `resources` maps synthetic absolute paths such as
 `/data.json`, or exact captured HTTPS resource URLs, to
 `{ "input": "capture-data.json", "content_type": "application/json" }`.
+Synthetic paths may include canonical UTF-8 percent-encoded filenames and a
+fixed query string. Bind the exact browser request key; query variants are not
+wildcards. Invalid encodings, path traversal, and reserved document paths are
+rejected.
 URL keys are local replay identities, never instructions to fetch. External
 response headers are not reproduced; their CORS/CSP semantics remain an explicit
 gap even when supplied scripts execute successfully.

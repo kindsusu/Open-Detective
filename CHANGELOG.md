@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Added separately authorized, hash-pinned offline application runtime review, with local captured dependencies, bounded execution, redacted DOM evidence, and explicit startup/error/dependency coverage.
+- Added separately authorized, hash-pinned offline application runtime review, with local captured dependencies, encoded resource paths, bounded execution, redacted DOM evidence, and explicit startup/error/dependency coverage.
 - Added the offline `semantic-review` command for bounded inspection of an already captured local file. It saves value-free static coverage and candidate counts to a new private JSON file without fetching content or executing original JavaScript.
 - Added bounded data-only JavaScript literal parsing and explicit structural gap reasons. Unsupported expressions, non-finite JSON numbers, and unsupported semantic formats cannot report complete coverage. Documented hash-linked visual review separately from lexical and runtime checks.
 - Added explicit owner-authorized `patch-followup` for exact case-bound commits, with separate authenticated metadata and anonymous content observations, before/after file evidence, value-free candidate validation, and append-only resumable results. Default sensitive-candidate stops remain unchanged.

@@ -16,7 +16,8 @@ import re
 import signal
 import subprocess
 import time
-from urllib.parse import urlsplit
+import unicodedata
+from urllib.parse import unquote_to_bytes, urlsplit
 
 
 ORIGIN = "https://captured.invalid"
@@ -27,7 +28,10 @@ MAX_RESOURCE_BYTES = 64 * 1024 * 1024
 MAX_TOTAL_BYTES = 128 * 1024 * 1024
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _CASE = re.compile(r"case_[0-9a-f]{32}\Z")
-_PATH = re.compile(r"/[A-Za-z0-9_./~-]{1,511}\Z")
+_LOCAL_PATH = re.compile(r"/[A-Za-z0-9_./~%\-]+\Z")
+_LOCAL_QUERY = re.compile(r"[A-Za-z0-9_./~!$&'()*+,;=:@?%\-]+\Z")
+_PERCENT = re.compile(r"%[0-9A-Fa-f]{2}")
+_UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 _MEDIA_TYPE = re.compile(r"[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+(?:;[ A-Za-z0-9=.+_-]+)?\Z")
 _DOM_ID = re.compile(r"[A-Za-z][A-Za-z0-9_:.-]{0,99}\Z")
 _CSP = ("default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
@@ -178,6 +182,38 @@ def _reveal_config(authorization: dict):
                   "display": config["display"]}
 
 
+def _local_resource_key(key: str) -> str | None:
+    """Return an ambiguity-check key; keep the supplied URL unchanged for replay."""
+    if (not key.startswith("/") or len(key) > 2048 or not key.isascii()
+            or key.startswith("//") or "#" in key):
+        return None
+    path, separator, query = key.partition("?")
+    if (not _LOCAL_PATH.fullmatch(path) or path == "/" or "//" in path
+            or (separator and not _LOCAL_QUERY.fullmatch(query))):
+        return None
+    for component in (path, query):
+        # A bare/partial percent escape is not a URI byte and must not be
+        # accepted as a second spelling of an approved captured request.
+        if "%" in _PERCENT.sub("", component):
+            return None
+        if re.search(r"%(?:2[fFeE]|5[cC]|25|0[0-9a-fA-F]|1[0-9a-fA-F]|7[fF])", component):
+            return None
+        try:
+            decoded = unquote_to_bytes(component).decode("utf-8", "strict")
+        except UnicodeError:
+            return None
+        if (unicodedata.normalize("NFC", decoded) != decoded
+                or any(unicodedata.category(char).startswith("C") for char in decoded)):
+            return None
+    if any(part in {".", ".."} for part in unquote_to_bytes(path).decode("utf-8").split("/")):
+        return None
+    def canonical(component: str) -> str:
+        return _PERCENT.sub(lambda match: (
+            chr(int(match.group()[1:], 16)) if chr(int(match.group()[1:], 16)) in _UNRESERVED
+            else match.group().upper()), component)
+    return canonical(path) + ("?" + canonical(query) if separator else "")
+
+
 class _StaticHTML(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=False)
@@ -256,12 +292,18 @@ def _validate(body, content_type, authorization, resources, max_seconds):
         return "resource_binding_mismatch", kind, None
     total = len(body)
     normalized = {}
+    local_canonical_keys = set()
     for path, row in resources.items():
         if not isinstance(path, str) or not isinstance(row, dict):
             return "invalid_resources", kind, None
         if path.startswith("/"):
-            valid_location = (bool(_PATH.fullmatch(path)) and ".." not in path.split("/")
-                              and "//" not in path and path not in {"/", "/__main__.js"})
+            canonical_key = _local_resource_key(path)
+            valid_location = (canonical_key is not None
+                              and canonical_key.split("?", 1)[0] != "/__main__.js")
+            if valid_location:
+                if canonical_key in local_canonical_keys:
+                    return "invalid_resources", kind, None
+                local_canonical_keys.add(canonical_key)
         else:
             try:
                 parsed = urlsplit(path)

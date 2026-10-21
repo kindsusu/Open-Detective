@@ -1,4 +1,5 @@
 """Synthetic offline browser tests; no external target is contacted."""
+import base64
 from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
@@ -33,6 +34,21 @@ def _browser_ready():
 
 @unittest.skipUnless(_browser_ready(), "Playwright Chromium fixture unavailable")
 class RuntimeReviewTests(unittest.TestCase):
+    def test_percent_encoded_image_with_fixed_query_is_replayed_exactly(self):
+        path = ("/images/cars/sonata/%EC%84%B8%EB%A0%88%EB%8B%88%ED%8B%B0_"
+                "%ED%99%94%EC%9D%B4%ED%8A%B8_%ED%8E%84.png?v=1")
+        body = f'<img src="{path}">'.encode()
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4"
+            "/5+hHgAHggJ/PchI2QAAAABJRU5ErkJggg==")
+        resources = {path: {"body": png, "content_type": "image/png"}}
+        result = review_runtime_source(body, "text/html", authorization=approval(body, resources),
+                                       resources=resources, max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertEqual(2, result["captured_resource_requests"])
+        self.assertEqual(0, result["blocked_request_count"])
+        self.assertEqual(0, result["network_fetches_performed"])
+
     def test_exact_gate_and_two_panels_reveal_after_original_javascript(self):
         body = (b"<div id='siteGate'>Login</div><section id='siteContent' style='display:none'>"
                 b"<table><tr><td>PRIVATE_TEST_PRICE</td></tr></table></section>"
@@ -199,6 +215,30 @@ class RuntimeReviewTests(unittest.TestCase):
 
 
 class RuntimeAuthorizationTests(unittest.TestCase):
+    def test_local_resource_url_ambiguities_are_rejected(self):
+        body = b"<img src='/fixture.png'>"
+        bad_paths = (
+            "/%2e%2e/file.png", "/a/%2E/file.png", "/a/../file.png",
+            "/a%2ffile.png", "/a%5cfile.png", "/%00.png", "/%7F.png",
+            "/%252e%252e/file.png", "/bad%GG.png", "/bad%.png",
+            "/a.png#fragment", "//external.invalid/a.png", "/__main__.js?v=1",
+            "/a.png?x=%2f", "/a.png?x=%0a", "/a.png?x=%GG",
+            "/" + "a" * 2048,
+        )
+        for path in bad_paths:
+            with self.subTest(path=path):
+                resources = {path: {"body": b"image", "content_type": "image/png"}}
+                result = review_runtime_source(body, "text/html",
+                    authorization=approval(body, resources), resources=resources)
+                self.assertEqual("invalid_resources", result["reason"], result)
+        canonical_twins = {
+            "/a.png?v=1": {"body": b"one", "content_type": "image/png"},
+            "/%61.png?v=%31": {"body": b"two", "content_type": "image/png"},
+        }
+        result = review_runtime_source(body, "text/html",
+            authorization=approval(body, canonical_twins), resources=canonical_twins)
+        self.assertEqual("invalid_resources", result["reason"])
+
     def test_exact_reveal_config_is_bounded_and_source_hash_bound(self):
         body = b"<div id='siteGate'></div><div id='siteContent'></div>"
         bad = [
