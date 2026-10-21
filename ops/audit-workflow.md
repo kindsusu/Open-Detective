@@ -224,6 +224,21 @@ response requires separately authorized test conditions, not guessed credentials
 
 ## Handoff and completion
 
+### Explicitly authorized patch follow-up
+
+For held patches the owner has explicitly authorized for deeper examination,
+use [patch-followup](patch-followup.md) against the same case. Its separate,
+expiring manifest selects exact patch references and authorizes continuation
+past candidate signals. It does not change ordinary audit stop behavior or
+resume unrelated discovery. Review validated changed-file revisions when a
+patch is unavailable, binary, or structurally incomplete. Keep original
+observations and append the follow-up evidence; do not replace anonymous access
+with authenticated metadata or mark missing patch hunks as reconstructed.
+
+Report processing coverage, candidate validation, and remaining human-review
+dimensions separately. A completed automated follow-up is not publication
+approval, proof of identity, credential validity, or complete visual review.
+
 Hand off case path, last run ID, current states, evidence references, and remaining
 gaps. Do not duplicate completed requests to reconstruct a narrative. Scope-blocked
 targets can be unblocked only after current scope authorizes the exact locator.

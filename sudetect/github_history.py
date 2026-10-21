@@ -214,7 +214,7 @@ def _patch_url_parts(url):
         return None
 
 
-def _review_changed_lines(changed_lines):
+def _review_changed_lines(changed_lines, *, continue_sensitive_review=False):
     """Inspect bounded text chunks across a complete diff, including late lines.
 
     An overlong line leaves a structure gap after its full text is scanned.
@@ -273,7 +273,7 @@ def _review_changed_lines(changed_lines):
             sensitive |= report["content"] == "SENSITIVE_CANDIDATE"
             limit_reached |= not bool(report["text_analysis_complete"])
             structure_incomplete |= not bool(report["structure_analysis_complete"])
-        if sensitive and patch_requires_material_hold(signals):
+        if sensitive and patch_requires_material_hold(signals) and not continue_sensitive_review:
             break
     return signals, sensitive, limit_reached, structure_incomplete, media_skipped
 
@@ -296,7 +296,7 @@ def _header_only_patch(text, sha):
                    for line in lines[header_end + 1:])
 
 
-def _parse_patch(body, repository, sha, locator_store, scope_id):
+def _parse_patch(body, repository, sha, locator_store, scope_id, *, continue_sensitive_review=False):
     try:
         text = body.decode("utf-8", "strict")
     except UnicodeError:
@@ -429,9 +429,10 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
         if saw_file_marker:
             return {"changed_files": files, "content_review": "not_inspected"}, "patch_has_no_text_hunks"
         return {"changed_files": files, "content_review": "metadata_only"}, None
-    signal_set, sensitive, limit_reached, structure_incomplete, media_skipped = _review_changed_lines(changed_lines)
+    signal_set, sensitive, limit_reached, structure_incomplete, media_skipped = _review_changed_lines(
+        changed_lines, continue_sensitive_review=continue_sensitive_review)
     signals = sorted(signal_set)
-    if sensitive and patch_requires_material_hold(signals):
+    if sensitive and patch_requires_material_hold(signals) and not continue_sensitive_review:
         return {"changed_files": files, "content_review": "stopped_sensitive_candidate",
                 "signal_codes": signals}, None
     if saw_binary:
@@ -457,10 +458,13 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
                                     "removed_locator_refs": sorted(removed)}}, None
 
 
-def analyze_repository_patch(body, url, locator_store, scope_id, *, max_bytes=MAX_PATCH_BYTES):
+def analyze_repository_patch(body, url, locator_store, scope_id, *, max_bytes=MAX_PATCH_BYTES,
+                             continue_sensitive_review=False):
     """Analyze captured patch bytes without fetching discovered references."""
     if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_PATCH_BYTES_HARD:
         raise ValueError("invalid_patch_byte_limit")
+    if type(continue_sensitive_review) is not bool:
+        raise ValueError("invalid_sensitive_review_option")
     profile = {"document_type": "repository_patch", "content": "NOT_INSPECTED",
                "analysis_complete": False, "pending_reviews": [],
                "limitations": ["observed_commit_only", "history_lineage_not_exhaustive",
@@ -473,14 +477,21 @@ def analyze_repository_patch(body, url, locator_store, scope_id, *, max_bytes=MA
         profile["pending_reviews"].append("patch_byte_limit_reached")
         return profile
     repository, sha = parsed
-    summary, gap = _parse_patch(body, repository, sha, locator_store, scope_id)
+    summary, gap = _parse_patch(body, repository, sha, locator_store, scope_id,
+                                continue_sensitive_review=continue_sensitive_review)
     if summary:
         profile.update(summary)
+        if continue_sensitive_review:
+            profile["authorized_sensitive_review"] = True
+        if continue_sensitive_review and summary.get("signal_codes"):
+            profile["sensitivity_candidate"] = bool(summary.get("sensitivity_candidate") or
+                any(code.endswith("_CANDIDATE") and code != "RUNTIME_ENDPOINT_CANDIDATE"
+                    for code in summary["signal_codes"]))
         if summary.get("content_review") in {"value_free_signals_only", "metadata_only",
                                               "text_reviewed_structure_pending",
                                               "text_reviewed_media_pending"}:
             profile["text_analysis_complete"] = True
-        if summary.get("sensitivity_candidate"):
+        if profile.get("sensitivity_candidate"):
             profile["content"] = "SENSITIVE_CANDIDATE"
         if summary.get("content_review") == "stopped_sensitive_candidate":
             profile["content"] = "SENSITIVE_CANDIDATE"

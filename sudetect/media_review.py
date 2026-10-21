@@ -373,25 +373,41 @@ def analyze_inline_images(body: bytes, *, max_images: int = 128,
                           max_total_decoded_bytes: int = 32 * 1024 * 1024,
                           max_seconds: float = 30.0,
                           tesseract_path: str | None = None,
-                          language: str = "eng+kor") -> dict:
+                          language: str = "eng+kor",
+                          start_index: int = 0,
+                          continue_sensitive_review: bool = False,
+                          max_pixels: int = DEFAULT_PIXELS) -> dict:
     """Inspect bounded data-URL images without returning decoded data or OCR text."""
     if not 1 <= max_images <= 4096 or not 1 <= max_total_decoded_bytes <= 512 * 1024 * 1024:
         raise ValueError("invalid inline image limit")
     if not math.isfinite(max_seconds) or not 0 < max_seconds <= 300:
         raise ValueError("invalid inline image timeout")
+    if type(start_index) is not int or start_index < 0 or type(continue_sensitive_review) is not bool:
+        raise ValueError("invalid inline image review option")
+    if type(max_pixels) is not int or not 1 <= max_pixels <= 100_000_000:
+        raise ValueError("invalid inline image pixel limit")
     found = sum(1 for _ in _INLINE_IMAGE.finditer(body))
+    if start_index > found:
+        raise ValueError("inline image start beyond capture")
     result = {"inline_images_found": found, "inline_images_examined": 0,
-              "inline_images_unexamined": found,
+              "inline_images_unexamined": found - start_index,
+              "inline_images_start_index": start_index,
+              "inline_images_next_index": start_index,
+              "inline_decoded_bytes_examined": 0,
               "ocr_completed": 0, "signal_counts": {}, "signals": [],
               "content": "NOT_INSPECTED", "pending_reviews": [],
-              "analysis_complete": not found}
-    if not found:
+              "analysis_complete": start_index == found}
+    if continue_sensitive_review:
+        result["authorized_sensitive_review"] = True
+    if start_index == found:
         return result
     pending = result["pending_reviews"]
     deadline = time.monotonic() + max_seconds
     consumed = 0
     for count, match in enumerate(_INLINE_IMAGE.finditer(body)):
-        if count >= max_images:
+        if count < start_index:
+            continue
+        if result["inline_images_examined"] >= max_images:
             break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -408,15 +424,18 @@ def analyze_inline_images(body: bytes, *, max_images: int = 128,
         except (ValueError, base64.binascii.Error):
             pending.append("inline_image_invalid_base64")
             result["inline_images_examined"] += 1
+            result["inline_images_next_index"] = count + 1
             continue
-        consumed += len(image)
-        if consumed > max_total_decoded_bytes:
+        if consumed + len(image) > max_total_decoded_bytes:
             pending.append("inline_image_byte_limit")
             break
+        consumed += len(image)
         review = analyze_image(image, max_bytes=min(MAX_IMAGE_BYTES, max_total_decoded_bytes),
-                               max_seconds=min(remaining, 30.0), tesseract_path=tesseract_path,
+                               max_pixels=max_pixels, max_seconds=min(remaining, 30.0),
+                               tesseract_path=tesseract_path,
                                language=language)
         result["inline_images_examined"] += 1
+        result["inline_images_next_index"] = count + 1
         result["ocr_completed"] += review["ocr_state"] == "completed"
         pending.extend(review["pending_reviews"])
         if review["content"] == "SENSITIVE_CANDIDATE":
@@ -424,13 +443,15 @@ def analyze_inline_images(body: bytes, *, max_images: int = 128,
         for signal in review["signals"]:
             code = signal["code"]
             result["signal_counts"][code] = result["signal_counts"].get(code, 0) + 1
-        if review["content"] == "SENSITIVE_CANDIDATE":
+        if review["content"] == "SENSITIVE_CANDIDATE" and not continue_sensitive_review:
             pending.append("inline_image_sensitive_candidate_stop")
             break
     result["signals"] = [{"code": code, "images": count}
                          for code, count in sorted(result["signal_counts"].items())]
-    if result["inline_images_examined"] < found:
+    if result["inline_images_next_index"] < found:
         pending.append("inline_image_count_or_budget_limit")
-    result["inline_images_unexamined"] = found - result["inline_images_examined"]
+    result["inline_images_unexamined"] = found - result["inline_images_next_index"]
+    result["inline_decoded_bytes_examined"] = consumed
     result["pending_reviews"] = sorted(set(pending))
+    result["analysis_complete"] = not result["pending_reviews"] and result["inline_images_unexamined"] == 0
     return result

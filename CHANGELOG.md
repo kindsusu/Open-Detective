@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added explicit owner-authorized `patch-followup` for exact case-bound commits, with separate authenticated metadata and anonymous content observations, before/after file evidence, value-free candidate validation, and append-only resumable results. Default sensitive-candidate stops remain unchanged.
+- Continued approved patch and inline-image review beyond the first candidate, with bounded OCR continuation and base64 projection. Complete source parsing distinguishes real structure gaps from artificial chunk boundaries; processing coverage remains separate from semantic and visual verification.
+
 - Reuse a committed direct-child file review for a still-uncaptured duplicate only within the same active review interval and settings. Preserve original observation identity, incomplete dimensions, and the explicit result reference without inventing another HTTP observation.
 - Retry transient HTTP failures with persisted origin cooldowns and validated provider delays instead of analyzing error pages. When an observed commit patch is unavailable, inspect scoped commit-file metadata and exact current/parent file revisions without claiming that missing patch hunks were reviewed.
 - Inspect SVG source statically without executing scripts or loading linked resources; retain separate visual-review gaps.

@@ -24,6 +24,15 @@ Read `ops/scope.md`. Measurement commands require an unexpired `--scope` file co
 
 Owner inventory may use explicitly authorized read credentials. Keep its credentials, process, browser profile, and output separate from anonymous target measurement. Discovery output is a candidate until ownership evidence links it to the organization.
 
+When the owner explicitly authorizes finishing held repository patches, use
+`patch-followup` with an unexpired manifest naming the exact case and patch refs.
+This separate follow-up may continue past sensitive candidates within fixed
+budgets; it never grants that behavior to ordinary observations. Authenticated
+GitHub commit metadata is recorded separately from anonymous patch/file access.
+Keep source and recognized values transient, report candidate validation without
+testing credentials, and preserve unresolved visual or semantic review dimensions.
+Read [authorized patch follow-up](ops/patch-followup.md).
+
 ```bash
 open-detective probe --scope scope.json <url>
 open-detective browser <url> --scope scope.json --duration 3
@@ -92,7 +101,7 @@ Before any discovery, record local `audit-intake` data using `examples/audit-int
 
 Use `prior-records` before new discovery for an explicitly supplied operator-declared trusted prior-review export. That declaration is not independent verification. It is offline and reads only the named manifest and optional intake; it never scans a vault or arbitrary filesystem data. Preserve review references, times, lookup status, known-asset/unresolved/due record references, but no raw URLs, captures, credentials, or secrets. Prior findings have no inherited authority and do not automatically reopen: current ownership review and executable scope are still required for a request.
 
-Use `github-history` separately for a selected public repository, explicit branch, time window, and commit cap. Metadata listing does not inspect file contents. Its optional patch inspection requires current executable scope, minimizes content, and stops on sensitive candidates. Keep historical file and URL locations in the private locator store; never follow them automatically or infer current exposure from a historical line. Read `ops/github-history.md`.
+Use `github-history` separately for a selected public repository, explicit branch, time window, and commit cap. Metadata listing does not inspect file contents. Its optional patch inspection requires current executable scope, minimizes content, and stops on sensitive candidates by default. Explicit owner-authorized continuation uses the separate `patch-followup` manifest above. Keep historical file and URL locations in the private locator store; never follow them automatically or infer current exposure from a historical line. Read `ops/github-history.md`.
 
 Use `dom-replay` only for an explicitly approved, hash-pinned local synthetic inert fixture. The fixed preset removes `login-screen` and sets `app` display to `flex`; measure the actual before/after DOM with network blocked. Fixture scripts and live target mutation are not supported. This separate reproduction is not an anonymous observation or backend authorization test, and never produces a confirmed exposure. Read `ops/dom-replay.md`.
 

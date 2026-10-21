@@ -255,3 +255,11 @@ file revisions; this does not complete the missing patch-hunk review. SVG source
 is inspected without executing scripts or fetching linked resources.
 These synthetic-tested features do not imply a completed live audit or actual
 Codex-versus-Claude host comparison. See [gate review](ops/gate-review.md).
+
+For an explicitly owner-approved review of held patches, use
+[`patch-followup`](ops/patch-followup.md). Its expiring manifest selects exact
+patch references in the existing case and permits continued candidate analysis
+without changing ordinary observation defaults. Approved GitHub login is used
+only for commit metadata; patch and file access remain anonymous measurements.
+The report preserves full-file comparison, candidate evidence and remaining
+visual or semantic checks separately from patch-hunk coverage.

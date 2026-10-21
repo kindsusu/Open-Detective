@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Explicit owner-authorized patch follow-up",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "case_id", "authorization_ref", "expires_at", "continue_sensitive_review", "asset_refs", "budgets"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "case_id": {"type": "string", "pattern": "^case_[0-9a-f]{32}$"},
+    "authorization_ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "continue_sensitive_review": {"const": true},
+    "asset_refs": {"type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^opaque:[0-9a-f]{32}$"}},
+    "budgets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_requests", "max_total_bytes", "max_patch_bytes", "max_file_bytes", "max_seconds", "max_attempts", "max_files", "max_ocr_seconds"],
+      "properties": {
+        "max_requests": {"type": "integer", "minimum": 1, "maximum": 500},
+        "max_total_bytes": {"type": "integer", "minimum": 1, "maximum": 4294967296},
+        "max_patch_bytes": {"type": "integer", "minimum": 1, "maximum": 134217728},
+        "max_file_bytes": {"type": "integer", "minimum": 1, "maximum": 134217728},
+        "max_seconds": {"type": "integer", "minimum": 1},
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+        "max_files": {"type": "integer", "minimum": 1, "maximum": 3000},
+        "max_ocr_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        "max_pixels": {"type": "integer", "minimum": 1, "maximum": 40000000}
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "case_id": "case_00000000000000000000000000000000",
+  "authorization_ref": "owner:replace-with-explicit-review-approval",
+  "expires_at": "2020-01-01T00:00:00Z",
+  "continue_sensitive_review": true,
+  "asset_refs": ["opaque:00000000000000000000000000000000"],
+  "budgets": {
+    "max_requests": 100,
+    "max_total_bytes": 536870912,
+    "max_patch_bytes": 16777216,
+    "max_file_bytes": 16777216,
+    "max_seconds": 1800,
+    "max_attempts": 3,
+    "max_files": 100,
+    "max_ocr_seconds": 120,
+    "max_pixels": 25000000
+  }
+}

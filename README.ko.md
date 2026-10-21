@@ -246,3 +246,10 @@ documents extra, 선택적 로컬 재현에는 browser extra와 Chromium이 필�
 선택한 저장소는 [중립 manifest 예시](examples/repository-manifest.example.json)를 비공개 로컬 입력에 복사해 실제 소유 근거, 정확한 저장소·브랜치, Page 연결 근거, 배포 URL로 교체한다. `audit bind-repositories --manifest ... --scope ...`는 같은 case에 선택을 저장하고, `audit preflight --scope ...`는 inventory·history·원본 파일·패치·배포에 부족한 scope를 표시한다. 확인되지 않은 소유나 유사한 검색명만으로 저장소·Page 연결을 승인하지 않는다. 점검은 tree inventory → 나열된 원본 파일 → 최대 5개 최근 commit과 `.patch` → 선언된 배포 순서로 근거를 남기며 전체 과거 이력을 보장하지 않는다. `run`·`resume`의 `--inspection-only`는 새 발견 없이 기존 점검 작업을 처리한다. 같은 case를 재개할 때마다 명시적 budget, 현재 scope, 새 control이 필요하다. `audit report --final`은 미완료여도 보고서를 저장하고 종료 코드 3을 반환한다. 모호한 넓은 이름 검색 결과는 검토 후보로 남고 임의 계정 확장은 자동 실행되지 않으며, 계정·작업 증가에 각각 상한이 있다.
 
 변경 사항과 검증 범위는 [구현 결과](IMPLEMENTATION-AUDIT.ko.md)에 기록했다.
+
+소유자가 보류된 패치의 추가 검토를 명시적으로 승인하면
+[`patch-followup`](ops/patch-followup.md)을 사용한다. 기존 case의 정확한 패치 참조와
+유효기간·검사 예산을 지정해 민감 후보 이후에도 검사를 이어가며, 일반 검사의 기본
+중단 동작은 유지한다. 승인된 GitHub 로그인은 커밋 메타데이터 조회에만 사용하고
+패치·파일의 공개 접근은 익명으로 따로 측정한다. 파일 전후 대조, 값이 노출되지 않는
+후보 검증, 시각·의미 검토의 잔여 상태를 패치 변경 행 검토와 구분해 보고한다.

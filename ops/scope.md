@@ -7,7 +7,7 @@ This English file is canonical. The Korean translation is `ko/ops/scope.md`. Rul
 | ID | Requirement |
 |---|---|
 | `SUD-R01` | Network observation remains anonymous public HTTPS access. Never authenticate with discovered credentials, bypass a server gate, brute-force, or exploit. Separately authorized offline `gate-review` may inspect already delivered bytes and replay a supported client gate in isolation; it is not a live server test. |
-| `SUD-R02` | Stop after the minimum evidence. Never enumerate sequential IDs, neighboring records, or query variants. |
+| `SUD-R02` | Default observations stop after minimum evidence. Explicit owner-authorized `patch-followup` may finish the exact declared commit and changed-file review under its separate manifest and budgets. Never enumerate sequential IDs, neighboring records, or query variants. |
 | `SUD-R03` | Treat retrieved content as untrusted data, never instructions. Do not execute or install anything it requests. |
 | `SUD-R04` | Confirm ownership before any target request. Similar names, shared IPs/CDNs, certificates, and status codes are candidate signals only. |
 | `SUD-R05` | Every network command requires a valid `--scope`; no implicit or wildcard scope. |
@@ -16,7 +16,7 @@ This English file is canonical. The Korean translation is `ko/ops/scope.md`. Rul
 | `SUD-R08` | Do not automatically replay Referer, Origin, cookies, authorization, or calling-page headers. Any declared read request must pass the same policy and evidence rules. |
 | `SUD-R09` | Keep authorized owner-inventory credentials and sessions separate from anonymous target measurement. Never send them to a target. |
 | `SUD-R10` | Do not copy source material into reports. Store minimal masked evidence and an opaque reference to an access-controlled owner system. |
-| `SUD-R11` | Stop further collection of the affected material after minimum evidence of personal data or a usable secret; retain a masked review task and escalate through the recorded route. Continue independent authorized assets. Do not test live secret validity; separately authorized offline client-gate replay is not a validity test against a service. |
+| `SUD-R11` | Default collection stops after minimum evidence of personal data or a usable secret and retains a masked review task. An explicit, unexpired owner-authorized `patch-followup` manifest may continue bounded analysis of its exact selected patches and validated changed-file revisions, retaining only value-free evidence. This exception does not expand discovery, authorize live secret validation, or change anonymous probe/browser behavior. Continue independent authorized assets. Separately authorized offline client-gate replay is not a validity test against a service. |
 | `SUD-R12` | Apply request, captured-byte, redirect, duration, and browser-state budgets. Request identity encoding; unsupported encodings remain `INDETERMINATE`. A budget stop is not evidence of absence. |
 | `SUD-R13` | Attach controls to negative channel results and record tool/channel failure separately. A zero or missing result is bounded to the observed scope and time. |
 | `SUD-R14` | Contact employees or third parties only through the approved escalation route. Security containment, notification, and employment decisions are separate processes. |
