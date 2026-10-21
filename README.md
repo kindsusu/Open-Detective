@@ -269,6 +269,13 @@ was saved with an unresolved static gap, and 2 means invalid local input. The
 command rejects symlink paths, input over 16 MiB (or the smaller `--max-bytes`
 limit), and existing output files. Store both capture and report in a private
 directory; do not publish either.
+
+For a separately authorized execution of captured original JavaScript, use
+[`runtime-review`](ops/runtime-review.md). It runs a hash-pinned local bundle in
+a fresh Chromium context and reports rendered DOM counts, script failures,
+blocked dependencies, and execution limits. It does not fetch missing resources
+or use credentials. A completed startup observation is not full application
+coverage or a server-authorization test.
 These synthetic-tested features do not imply a completed live audit or actual
 Codex-versus-Claude host comparison. See [gate review](ops/gate-review.md).
 

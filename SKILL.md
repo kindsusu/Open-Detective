@@ -14,6 +14,13 @@ offline review/replay of already delivered bytes, documented in
 [gate review](ops/gate-review.md); it does not change anonymous probe/browser or
 perform live credential use or server authorization tests.
 
+When the owner explicitly requests execution of captured application JavaScript,
+use the separate hash-pinned `runtime-review` capability described in
+[captured runtime review](ops/runtime-review.md). It supplies only captured
+dependencies locally, records original DOM execution separately from optional
+client-UI reveal, and never uses live credentials. It does not change the
+default probe, browser, semantic, or inert gate behavior.
+
 This installed skill defines the workflow; it does not install the Python package. Install the package with the [README instructions](README.md) before running `open-detective`.
 
 Run **scope → inventory/discovery → ownership → anonymous observation → content classification → containment → recheck**. Never claim closure without a fresh observation.

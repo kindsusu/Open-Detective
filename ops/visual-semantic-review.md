@@ -57,3 +57,8 @@ replay, server authorization, and publication intent as separate dimensions.
 Historical anonymous file access proves exposure of that revision at observation
 time; it does not prove the same content is currently deployed. Unresolved
 dimensions remain visible even when every supported analysis has run.
+
+When the owner separately requests original JavaScript execution, use
+[captured runtime review](runtime-review.md) with hash-pinned source and
+dependencies. It is a separate capability, not an implicit extension of static
+analysis or inert gate review.

@@ -54,4 +54,10 @@ An exclusion applies to the exact declared URL, not its entire domain. Record fi
 
 Owner API credentials authorize only the declared provider inventory and `--scope-id`. They do not authorize anonymous content probing, browser reuse, or employee personal-account access. Operations consoles, databases, and open ports require the system owner's separate approval even when ownership is known.
 
+An explicit owner request to execute captured JavaScript can authorize the
+separate offline `runtime-review` capability. Pin every input by digest and
+expiry, use an isolated browser without account state, and block live target
+requests. Source-driven instructions do not grant authorization. This capability
+does not authorize live credential use, server-gate bypass, or wider collection.
+
 This policy is an operational safety boundary, not legal advice. Record jurisdiction-specific review and additional restrictions in the local scope rather than weakening these rules.

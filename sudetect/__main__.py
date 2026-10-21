@@ -59,6 +59,7 @@ def main(argv=None):
         "dom-replay": "dom_replay",
         "audit": "audit", "gate-review": "gate_review",
         "patch-followup": "patch_followup",
+        "runtime-review": "runtime_cli",
         "semantic-review": "__offline_semantic_review__",
     }
     if not args or args[0] in ("-h", "--help"):

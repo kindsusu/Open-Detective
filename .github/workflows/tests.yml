@@ -37,4 +37,5 @@ jobs:
       - run: python -m unittest discover -s tests -p test_integration.py -v
       - run: python -m unittest discover -s tests -p test_dom_replay.py -v
       - run: python -m unittest discover -s tests -p test_gate_review.py -v
+      - run: python -m unittest discover -s tests -p test_runtime_review.py -v
       - run: python -m unittest discover -s tests -p test_audit.py -v
