@@ -50,6 +50,7 @@ _RESOURCE_KINDS = frozenset({"document", "script", "stylesheet", "image", "font"
 _SCRIPT_ERROR_KINDS = frozenset({"ReferenceError", "TypeError", "SyntaxError",
                                  "SecurityError", "RangeError", "URIError",
                                  "EvalError"})
+_JS_IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]{0,63}\Z")
 
 
 def _runtime_diagnostics() -> dict:
@@ -406,6 +407,7 @@ def _base_result(body: bytes, kind: str) -> dict:
             "blocked_request_count": 0, "failed_request_count": 0,
             "runtime_diagnostics": _runtime_diagnostics(),
             "diagnostic_limit_reached": False,
+            "reference_error_identifier_observed": {},
             "blocked_beacon_count": 0,
             "blocked_websocket_count": 0, "blocked_popup_count": 0,
             "blocked_download_count": 0, "blocked_frame_request_count": 0,
@@ -496,6 +498,16 @@ def _validate(body, content_type, authorization, resources, max_seconds):
             return "resource_hash_mismatch", kind, None
         normalized[path] = (data, media_type)
     return None, kind, normalized
+
+
+def _reference_error_candidates(authorization: dict) -> tuple[str | None, list[str]]:
+    candidates = authorization.get("reference_error_identifiers", [])
+    if (not isinstance(candidates, list) or len(candidates) > 8
+            or any(not isinstance(item, str) or not _JS_IDENTIFIER.fullmatch(item)
+                   for item in candidates)
+            or len(set(candidates)) != len(candidates)):
+        return "invalid_reference_error_identifiers", []
+    return None, candidates
 
 
 def _snapshot(cdp, frame_id):
@@ -647,6 +659,7 @@ def _execute_ui_step(page, cdp, frame_id, world_id, row, action_state=None):
 
 def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal_config,
                    reveal_explicit, ui_steps, observe_target_ids, observe_png_download,
+                   reference_error_identifiers,
                    allow_local_render_frames, viewport, clock_time,
                    timezone_id, download_dir, max_seconds,
                    progress=None):
@@ -662,6 +675,8 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                   failed_request_count=0,
                   runtime_diagnostics=_runtime_diagnostics(),
                   diagnostic_limit_reached=False,
+                  reference_error_identifier_observed={identifier: False for identifier in
+                      reference_error_identifiers},
                   blocked_beacon_count=0,
                   blocked_websocket_count=0, blocked_popup_count=0,
                   blocked_download_count=0, blocked_frame_request_count=0,
@@ -777,8 +792,14 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                     return result
             def on_page_error(error):
                 result["script_error_count"] += 1
-                _count_diagnostic(result, "script_errors_by_kind",
-                                  _script_error_kind(error))
+                error_kind = _script_error_kind(error)
+                _count_diagnostic(result, "script_errors_by_kind", error_kind)
+                if error_kind == "ReferenceError":
+                    message = getattr(error, "message", None)
+                    if isinstance(message, str) and len(message) <= 80:
+                        for identifier in reference_error_identifiers:
+                            if message == identifier + " is not defined":
+                                result["reference_error_identifier_observed"][identifier] = True
             page.on("pageerror", on_page_error)
             def on_request_failed(request):
                 result["failed_request_count"] += 1
@@ -1197,6 +1218,7 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
 
 def _entry(writer, body, content_type, kind, resources, reveal_client_ui, reveal_config,
            reveal_explicit, ui_steps, observe_target_ids, observe_png_download,
+           reference_error_identifiers,
            allow_local_render_frames, viewport, clock_time, timezone_id,
            download_dir, max_seconds):
     if os.name != "nt":
@@ -1205,6 +1227,7 @@ def _entry(writer, body, content_type, kind, resources, reveal_client_ui, reveal
         final = _review_worker(body, content_type, kind, resources,
                                reveal_client_ui, reveal_config, reveal_explicit,
                                ui_steps, observe_target_ids, observe_png_download,
+                               reference_error_identifiers,
                                allow_local_render_frames, viewport, clock_time,
                                timezone_id, download_dir,
                                max_seconds,
@@ -1213,7 +1236,9 @@ def _entry(writer, body, content_type, kind, resources, reveal_client_ui, reveal
     except Exception:
         result = _base_result(body, kind)
         result.update(status="partial", reason="runtime_worker_failure",
-                      pending_reviews=["runtime_worker_failure"])
+                      pending_reviews=["runtime_worker_failure"],
+                      reference_error_identifier_observed={identifier: False for identifier in
+                          reference_error_identifiers})
         writer.send(("final", result))
     finally:
         writer.close()
@@ -1266,6 +1291,13 @@ def review_runtime_source(body: bytes, content_type: str, *, authorization: dict
         result["pending_reviews"] = [steps_error]
         return result
     ui_steps, observe_png_download, observe_target_ids = steps_config
+    identifier_error, reference_error_identifiers = _reference_error_candidates(authorization)
+    if identifier_error:
+        result["reason"] = identifier_error
+        result["pending_reviews"] = [identifier_error]
+        return result
+    result["reference_error_identifier_observed"] = {
+        identifier: False for identifier in reference_error_identifiers}
     allow_local_render_frames = authorization.get("allow_local_render_frames", False)
     if not isinstance(allow_local_render_frames, bool):
         result["reason"] = "invalid_local_frame_option"
@@ -1310,6 +1342,7 @@ def review_runtime_source(body: bytes, content_type: str, *, authorization: dict
                               normalized, reveal_client_ui, reveal_config,
                               "client_ui_reveal" in authorization, ui_steps,
                               observe_target_ids, observe_png_download,
+                              reference_error_identifiers,
                               allow_local_render_frames,
                               viewport.copy(), clock_time, timezone_id,
                               download_temp.name, max_seconds))

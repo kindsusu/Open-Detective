@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
+
 - Added bounded, value-free runtime failure categories and per-step diagnostic differences to distinguish blocked resources from script failures without retaining URLs or error text.
 
 - Added bounded, value-free target-state observations and explicit hidden-state expectations for captured UI prerequisites and closing transitions.

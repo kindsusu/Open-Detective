@@ -706,6 +706,40 @@ class RuntimeReviewTests(unittest.TestCase):
                        "private-fetch-token", "private-error-token"):
             self.assertNotIn(marker, serialized)
 
+    def test_reference_error_identifier_requires_exact_approved_message(self):
+        body = (b"<script>throw new ReferenceError('CATALOG is not defined')</script>"
+                b"<script>throw new ReferenceError('OTHER is not defined\\nprivate-token')</script>"
+                b"<script>throw new TypeError('PRICES is not defined')</script>")
+        allowed = approval(body)
+        allowed["reference_error_identifiers"] = ["CATALOG", "OTHER", "PRICES"]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual({"CATALOG": True, "OTHER": False, "PRICES": False},
+                         result["reference_error_identifier_observed"])
+        self.assertEqual("partial", result["status"])
+        self.assertNotIn("private-token", json.dumps(result))
+
+    def test_reference_error_identifier_matches_unqualified_symbol_access(self):
+        body = b"<script>CATALOG;</script>"
+        allowed = approval(body)
+        allowed["reference_error_identifiers"] = ["CATALOG"]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual({"CATALOG": True},
+                         result["reference_error_identifier_observed"])
+        self.assertEqual("partial", result["status"])
+
+    def test_reference_error_identifier_authorization_is_bounded(self):
+        body = b"<script>throw new ReferenceError('CATALOG is not defined')</script>"
+        for identifiers in (["CATALOG"] * 2, ["x"] * 9, ["with-hyphen"],
+                            ["x" * 65], ["한글"], "CATALOG"):
+            with self.subTest(identifiers=identifiers):
+                allowed = approval(body)
+                allowed["reference_error_identifiers"] = identifiers
+                result = review_runtime_source(body, "text/html", authorization=allowed)
+                self.assertEqual("blocked", result["status"])
+                self.assertEqual("invalid_reference_error_identifiers", result["reason"])
+
     def test_runtime_diagnostic_limit_is_value_free_and_incomplete(self):
         result = _base_result(b"private-value-token", "html")
         for _ in range(257):

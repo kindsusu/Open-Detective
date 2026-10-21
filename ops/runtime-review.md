@@ -180,6 +180,14 @@ allowlist, blocked requests by the broker's decision reason, and script errors
 by a fixed error-name allowlist. Counts are bounded and reported separately from
 the original totals. No request URLs, payloads, error messages, stacks, or console
 text are retained. Diagnostic saturation preserves an incomplete-review marker.
+An authorization may declare at most eight `reference_error_identifiers` to
+check for exact undefined-identifier errors during captured execution. Only
+approved identifier matches are reported; raw error messages are discarded.
+This identifies an error in the isolated replay, not a live service failure.
+A false match means the exact error was not observed; it does not prove that
+the identifier is defined or that its code path was exercised. Application code
+can also throw a matching error, so compare the captured source path before
+attributing the cause.
 Per-step differences describe events observed during that step, not proven causal
 attribution. A broker-aborted request can also emit a request-failure event; do
 not add those counters as independent failures. Console errors remain a count
