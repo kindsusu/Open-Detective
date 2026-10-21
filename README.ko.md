@@ -250,7 +250,7 @@ open-detective semantic-review --input _local/case/captured.html --content-type 
 원본 JavaScript 실행과 네트워크 요청은 하지 않는다. 정적 필드 수와 DOM 근접성은 후보 근거이며 실제 화면 렌더링, 고객 신원, 게시 승인, 서버 권한 검증은 별개다. 종료 코드 0은 지원되는 정적 텍스트·구조 검사 완료, 3은 미해결 격차를 기록한 결과 저장, 2는 잘못된 로컬 입력을 뜻한다. 심볼릭 링크 경로, 16 MiB(또는 더 작은 `--max-bytes`) 초과 입력, 기존 출력 파일을 거부한다. 수집물과 보고서는 비공개 폴더에 둔다.
 합성 테스트 결과는 실제 회사 점검이나 두 모델 호스트의 실행 비교 결과가 아니다.
 
-원본 JavaScript 실행을 별도로 승인한 경우에는 [`runtime-review`](ops/runtime-review.md)를 사용한다. 해시로 고정한 로컬 파일 묶음을 새 Chromium 환경에서 실행하고 DOM 표시 수치·스크립트 오류·차단된 의존성·시간 제한을 기록한다. 누락된 자료를 자동 수집하거나 자격 증명을 사용하지 않는다. 시작 화면 실행을 확인해도 모든 기능이나 서버 권한을 검증한 것은 아니다.
+원본 JavaScript 실행을 별도로 승인한 경우에는 [`runtime-review`](ops/runtime-review.md)를 사용한다. 해시로 고정한 로컬 파일 묶음을 새 Chromium 환경에서 실행하고 DOM 표시 수치·스크립트 오류·차단된 의존성·시간 제한을 기록한다. 명시적으로 선언한 UI 시나리오는 로컬 상태 변화와 PNG 내보내기 메타데이터를 단계별로 확인하고 미실행 구간을 구분한다. 누락된 자료를 자동 수집하거나 자격 증명을 사용하지 않는다. 시작 화면 실행을 확인해도 모든 기능이나 서버 권한을 검증한 것은 아니다.
 
 선택한 저장소는 [중립 manifest 예시](examples/repository-manifest.example.json)를 비공개 로컬 입력에 복사해 실제 소유 근거, 정확한 저장소·브랜치, Page 연결 근거, 배포 URL로 교체한다. `audit bind-repositories --manifest ... --scope ...`는 같은 case에 선택을 저장하고, `audit preflight --scope ...`는 inventory·history·원본 파일·패치·배포에 부족한 scope를 표시한다. 확인되지 않은 소유나 유사한 검색명만으로 저장소·Page 연결을 승인하지 않는다. 점검은 tree inventory → 나열된 원본 파일 → 최대 5개 최근 commit과 `.patch` → 선언된 배포 순서로 근거를 남기며 전체 과거 이력을 보장하지 않는다. `run`·`resume`의 `--inspection-only`는 새 발견 없이 기존 점검 작업을 처리한다. 같은 case를 재개할 때마다 명시적 budget, 현재 scope, 새 control이 필요하다. `audit report --final`은 미완료여도 보고서를 저장하고 종료 코드 3을 반환한다. 모호한 넓은 이름 검색 결과는 검토 후보로 남고 임의 계정 확장은 자동 실행되지 않으며, 계정·작업 증가에 각각 상한이 있다.
 

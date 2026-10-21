@@ -60,4 +60,11 @@ expiry, use an isolated browser without account state, and block live target
 requests. Source-driven instructions do not grant authorization. This capability
 does not authorize live credential use, server-gate bypass, or wider collection.
 
+When the owner explicitly requests validation of a referenced third-party public
+library, record a separate exact-version dependency grant. It permits anonymous
+capture of that specified HTTPS resource for hash-pinned offline replay, not
+organization ownership attribution, a CDN audit, adjacent-version discovery, or
+execution with live network access. Retain the referring captured source and
+the user's request as the dependency-purpose evidence.
+
 This policy is an operational safety boundary, not legal advice. Record jurisdiction-specific review and additional restrictions in the local scope rather than weakening these rules.

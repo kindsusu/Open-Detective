@@ -5,10 +5,23 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import struct
 import time
 import unittest
+import zlib
 
 from sudetect.runtime_review import review_runtime_source
+
+
+def _png_fixture():
+    def chunk(kind, payload):
+        return (struct.pack(">I", len(payload)) + kind + payload +
+                struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+    data = (b"\x89PNG\r\n\x1a\n" +
+            chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)) +
+            chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00")) +
+            chunk(b"IEND", b""))
+    return base64.b64encode(data).decode("ascii")
 
 
 def approval(body, resources=None):
@@ -34,6 +47,304 @@ def _browser_ready():
 
 @unittest.skipUnless(_browser_ready(), "Playwright Chromium fixture unavailable")
 class RuntimeReviewTests(unittest.TestCase):
+    def test_unique_idless_standalone_calculate_button_runs_original_handler(self):
+        body = (b"<button class='calc-btn'>Calculate</button><div id='result'></div>"
+                b"<script>document.getElementsByClassName('calc-btn')[0].onclick=()=>{"
+                b"document.getElementById('result').innerHTML="
+                b"'<table><tr><td>PRIVATE_CALC</td></tr></table>'};</script>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "click", "target_button_class": "calc-btn",
+                                "expect_dom_change": True}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertEqual(1, result["ui_steps_completed"])
+        self.assertEqual(1, result["ui_steps"][0]["dom"]["counts"]["visible_tables"])
+        self.assertNotIn("PRIVATE_CALC", json.dumps(result))
+
+    def test_class_button_ambiguity_form_and_auth_name_are_rejected(self):
+        fixtures = (
+            (b"<button class='calc-btn'>One</button><button class='calc-btn'>Two</button>",
+             "duplicate_target"),
+            (b"<div class='calc-btn'>Not button</div>", "prohibited_target"),
+            (b"<button id='buttonId' class='calc-btn'>Named</button>", "prohibited_target"),
+            (b"<form><button class='calc-btn'>Submit</button></form>", "prohibited_target"),
+            (b"<form id='f'></form><button class='calc-btn' form='f'>Submit</button>",
+             "prohibited_target"),
+            (b"<button class='calc-btn' name='loginAction'>Login</button>",
+             "prohibited_target"),
+            (b"<button class='calc-btn'>Login</button>", "prohibited_target"),
+            (b"<button class='calc-btn' aria-label='Sign in'>Continue</button>",
+             "prohibited_target"),
+            ("<meta charset='utf-8'><button class='calc-btn'>로그인</button>".encode("utf-8"),
+             "prohibited_target"),
+            ("<meta charset='utf-8'><button class='calc-btn' aria-label='비밀번호 제출'>Continue</button>".encode("utf-8"),
+             "prohibited_target"),
+        )
+        for body, expected in fixtures:
+            with self.subTest(expected=expected):
+                allowed = approval(body)
+                allowed["ui_steps"] = [{"action": "click", "target_button_class": "calc-btn",
+                                        "expect_dom_change": True}]
+                result = review_runtime_source(body, "text/html", authorization=allowed,
+                                               max_seconds=25)
+                self.assertEqual("partial", result["status"], result)
+                self.assertEqual(expected, result["ui_steps"][0]["status"])
+                self.assertFalse(result["ui_steps"][0]["action_applied"])
+
+    def test_declared_tab_and_local_png_download_have_separate_evidence(self):
+        png = _png_fixture()
+        body = ("<button type='button' id='tabPreviewBtn'>Preview</button>"
+                "<button type='button' id='downloadBtn'>Export</button>"
+                "<section id='previewPanel' style='display:none'></section>"
+                "<script>document.getElementById('tabPreviewBtn').onclick=()=>{"
+                "document.getElementById('previewPanel').style.display='block';"
+                "document.getElementById('previewPanel').innerHTML='<table><tr><td>PRIVATE</td></tr></table>';};"
+                "document.getElementById('downloadBtn').onclick=()=>{let a=document.createElement('a');"
+                f"a.href='data:image/png;base64,{png}';a.download='private.png';a.click();}};"
+                "</script>").encode()
+        allowed = approval(body)
+        allowed["observe_png_download"] = True
+        allowed["ui_steps"] = [
+            {"action": "click", "target_id": "tabPreviewBtn",
+             "expect_visible_ids": ["previewPanel"], "expect_dom_change": True},
+            {"action": "click", "target_id": "downloadBtn", "expect_png_download": True},
+        ]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertEqual(2, result["ui_steps_completed"])
+        self.assertEqual(1, result["ui_steps"][0]["dom"]["counts"]["visible_tables"])
+        self.assertTrue(all(step["branch_verified"] for step in result["ui_steps"]))
+        self.assertGreater(result["ui_steps"][0]["script_coverage"]["observed_range_count"], 0)
+        coverage = result["script_coverage_observed"]
+        self.assertGreaterEqual(coverage["observed_total_range_count"],
+                                coverage["ever_executed_range_count"])
+        self.assertFalse(coverage["semantic_branch_coverage_verified"])
+        self.assertEqual(hashlib.sha256(body).hexdigest(),
+                         coverage["sources"][0]["source_sha256"])
+        self.assertEqual("primary", coverage["sources"][0]["source_kind"])
+        self.assertEqual("verified_png", result["png_downloads"][0]["status"])
+        self.assertEqual((1, 1), (result["png_downloads"][0]["width"],
+                                  result["png_downloads"][0]["height"]))
+        self.assertNotIn("PRIVATE", json.dumps(result))
+        self.assertNotIn("data:image", json.dumps(result))
+
+    def test_blob_png_download_is_verified_without_filename_or_pixels(self):
+        png = _png_fixture()
+        body = ("<button type='button' id='downloadBtn'>Export</button><script>"
+                "document.getElementById('downloadBtn').onclick=()=>{"
+                f"let raw=atob('{png}');let bytes=Uint8Array.from(raw,c=>c.charCodeAt(0));"
+                "let url=URL.createObjectURL(new Blob([bytes],{type:'image/png'}));"
+                "let a=document.createElement('a');a.href=url;a.download='PRIVATE.png';a.click();};"
+                "</script>").encode()
+        allowed = approval(body)
+        allowed.update(observe_png_download=True,
+                       ui_steps=[{"action": "click", "target_id": "downloadBtn",
+                                  "expect_png_download": True}])
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertEqual(1, result["ui_steps_completed"])
+        self.assertEqual("verified_png", result["png_downloads"][0]["status"])
+        self.assertFalse(result["png_downloads"][0]["visual_content_verified"])
+        self.assertNotIn("PRIVATE.png", json.dumps(result))
+
+    def test_fifth_png_download_is_cancelled_and_marks_gap(self):
+        png = _png_fixture()
+        body = ("<button type='button' id='downloadBtn'>Export</button><script>"
+                "document.getElementById('downloadBtn').onclick=()=>{let a=document.createElement('a');"
+                f"a.href='data:image/png;base64,{png}';a.download='fixture.png';a.click();}};"
+                "</script>").encode()
+        allowed = approval(body)
+        allowed.update(observe_png_download=True,
+                       ui_steps=[{"action": "click", "target_id": "downloadBtn",
+                                  "expect_png_download": True} for _ in range(5)])
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertEqual(4, result["ui_steps_completed"])
+        self.assertEqual(4, len(result["png_downloads"]))
+        self.assertIn("png_download_count_limit", result["pending_reviews"])
+
+    def test_oversized_blob_png_cannot_be_verified(self):
+        body = (b"<button type='button' id='downloadBtn'>Export</button><script>"
+                b"document.getElementById('downloadBtn').onclick=()=>{"
+                b"let a=document.createElement('a');"
+                b"a.href=URL.createObjectURL(new Blob([new Uint8Array(9*1024*1024)],"
+                b"{type:'image/png'}));a.download='fixture.png';a.click();};</script>")
+        allowed = approval(body)
+        allowed.update(observe_png_download=True,
+                       ui_steps=[{"action": "click", "target_id": "downloadBtn",
+                                  "expect_png_download": True}])
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertEqual(0, result["ui_steps_completed"])
+        self.assertTrue({"png_progress_byte_limit", "png_download_unverified",
+                         "download_storage_limit"} & set(result["pending_reviews"]), result)
+
+    def test_local_blank_frame_render_can_export_without_external_navigation(self):
+        png = _png_fixture()
+        body = ("<button type='button' id='downloadBtn'>Export</button>"
+                "<script>document.getElementById('downloadBtn').onclick=()=>{"
+                "let f=document.createElement('iframe');document.body.append(f);"
+                "f.contentDocument.body.innerHTML='<div>fixture</div>';"
+                "let a=document.createElement('a');"
+                f"a.href='data:image/png;base64,{png}';a.download='fixture.png';a.click();}};"
+                "</script>").encode()
+        allowed = approval(body)
+        allowed.update(observe_png_download=True, allow_local_render_frames=True,
+                       ui_steps=[{"action": "click", "target_id": "downloadBtn",
+                                  "expect_png_download": True}])
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertEqual(1, result["ui_steps_completed"])
+        self.assertGreaterEqual(result["local_render_frame_count"], 1)
+        self.assertIn("local_render_frame_content_unverified", result["pending_reviews"])
+        self.assertEqual("verified_png", result["png_downloads"][0]["status"])
+        self.assertEqual(0, result["network_fetches_performed"])
+
+    def test_declared_mobile_viewport_controls_visible_tab(self):
+        body = (b"<style>#mobileTab{display:none}@media(max-width:500px){"
+                b"#mobileTab{display:block}}</style>"
+                b"<button type='button' id='mobileTab'>Tab</button>"
+                b"<div id='panel' style='display:none'>fixture</div>"
+                b"<script>document.getElementById('mobileTab').onclick=()=>"
+                b"document.getElementById('panel').style.display='block'</script>")
+        allowed = approval(body)
+        allowed["viewport"] = {"width": 375, "height": 812}
+        allowed["ui_steps"] = [{"action": "click", "target_id": "mobileTab",
+                                "expect_visible_ids": ["panel"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertEqual(1, result["ui_steps_completed"])
+        self.assertEqual(375, result["viewport"]["width"])
+
+    def test_select_change_with_same_length_values_is_only_input_evidence(self):
+        body = b"<select id='carSelect'><option value='AA'>A</option><option value='BB'>B</option></select>"
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "select", "target_id": "carSelect",
+                                "index": 1, "expect_dom_change": True}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertTrue(result["ui_steps"][0]["input_state_changed"])
+        self.assertFalse(result["ui_steps"][0]["dom_change_verified"])
+        self.assertFalse(result["ui_steps"][0]["branch_verified"])
+        self.assertEqual(0, result["ui_steps_completed"])
+        self.assertNotIn("BB", json.dumps(result))
+
+    def test_select_handler_changes_application_output(self):
+        body = (b"<select id='carSelect'><option value='AA'>A</option>"
+                b"<option value='BB'>B</option></select><div id='summary'></div>"
+                b"<script>document.getElementById('carSelect').onchange=()=>{"
+                b"document.getElementById('summary').innerHTML="
+                b"'<table><tr><td>PRIVATE_PRICE</td></tr></table>'};</script>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "select", "target_id": "carSelect",
+                                "index": 1, "expect_dom_change": True}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("reviewed", result["status"], result)
+        self.assertTrue(result["ui_steps"][0]["input_state_changed"])
+        self.assertTrue(result["ui_steps"][0]["dom_change_verified"])
+        self.assertEqual(1, result["ui_steps_completed"])
+        self.assertNotIn("PRIVATE_PRICE", json.dumps(result))
+
+    def test_already_visible_expectation_is_not_branch_evidence(self):
+        body = b"<button type='button' id='tabBtn'>Tab</button><div id='panel'>Visible</div>"
+        allowed = approval(body)
+        allowed["ui_steps"] = [{"action": "click", "target_id": "tabBtn",
+                                "expect_visible_ids": ["panel"]}]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertTrue(result["ui_steps"][0]["expected_visible_verified"])
+        self.assertFalse(result["ui_steps"][0]["visible_transition_verified"])
+        self.assertFalse(result["ui_steps"][0]["branch_verified"])
+
+    def test_fixed_clock_distinguishes_before_during_and_after_without_source_changes(self):
+        body = (b"<body><div>fixture</div><script>let m=new Date().getMonth();"
+                b"document.body.innerHTML=m===5?'<table><tr><td>PRIVATE_PROMO</td></tr></table>'"
+                b":'<div>inactive</div>';</script>")
+        observations = []
+        for instant in ("2026-05-31T12:00:00+09:00", "2026-06-15T12:00:00+09:00",
+                        "2026-07-01T12:00:00+09:00"):
+            allowed = approval(body)
+            allowed["clock_time"] = instant
+            allowed["timezone_id"] = "Asia/Seoul"
+            result = review_runtime_source(body, "text/html", authorization=allowed,
+                                           max_seconds=25)
+            self.assertEqual("reviewed", result["status"], result)
+            self.assertTrue(result["simulated_clock_used"])
+            self.assertEqual("Asia/Seoul", result["timezone_id"])
+            self.assertRegex(result["clock_fixture_digest"], r"^[0-9a-f]{64}$")
+            self.assertNotIn(instant, json.dumps(result))
+            self.assertNotIn("PRIVATE_PROMO", json.dumps(result))
+            observations.append(result["initial_dom"]["counts"]["visible_tables"])
+        self.assertEqual([0, 1, 0], observations)
+
+    def test_uncaptured_external_download_is_not_png_evidence(self):
+        body = (b"<a id='downloadBtn' href='https://outside.invalid/file.png' "
+                b"download='fixture.png'>Export</a>")
+        allowed = approval(body)
+        allowed.update(observe_png_download=True,
+                       ui_steps=[{"action": "click", "target_id": "downloadBtn",
+                                  "expect_png_download": True}])
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=12)
+        self.assertEqual("partial", result["status"], result)
+        self.assertEqual(0, result["ui_steps_completed"])
+        self.assertEqual(0, result["network_fetches_performed"])
+        self.assertFalse(any(item["status"] == "verified_png"
+                             for item in result["png_downloads"]))
+
+    def test_missing_duplicate_and_submit_action_targets_stop_without_effect(self):
+        fixtures = (
+            (b"<button type='button' id='otherBtn'>x</button>", "tabBtn",
+             "target_missing"),
+            (b"<button type='button' id='tabBtn'>x</button>"
+             b"<button type='button' id='tabBtn'>x</button>", "tabBtn",
+             "duplicate_target"),
+            (b"<form><button id='tabBtn'>Submit</button></form>", "tabBtn",
+             "prohibited_target"),
+            (b"<form><input type='password'><button type='button' id='tabBtn'>x</button>"
+             b"</form>", "tabBtn", "prohibited_target"),
+        )
+        for body, target, expected in fixtures:
+            with self.subTest(expected=expected):
+                allowed = approval(body)
+                allowed["ui_steps"] = [{"action": "click", "target_id": target,
+                                        "expect_dom_change": True}]
+                result = review_runtime_source(body, "text/html", authorization=allowed,
+                                               max_seconds=25)
+                self.assertEqual("partial", result["status"], result)
+                self.assertEqual(expected, result["ui_steps"][0]["status"])
+                self.assertFalse(result["ui_steps"][0]["action_applied"])
+
+    def test_step_timeout_keeps_previous_step_evidence(self):
+        body = (b"<button type='button' id='readyBtn'>Ready</button>"
+                b"<button type='button' id='stallBtn'>Stall</button>"
+                b"<div id='readyPanel' style='display:none'>ok</div>"
+                b"<script>document.getElementById('readyBtn').onclick=()=>{"
+                b"document.getElementById('readyPanel').style.display='block'};"
+                b"document.getElementById('stallBtn').onclick=()=>{while(true){}};</script>")
+        allowed = approval(body)
+        allowed["ui_steps"] = [
+            {"action": "click", "target_id": "readyBtn",
+             "expect_visible_ids": ["readyPanel"]},
+            {"action": "click", "target_id": "stallBtn", "expect_dom_change": True},
+        ]
+        result = review_runtime_source(body, "text/html", authorization=allowed,
+                                       max_seconds=25)
+        self.assertEqual("partial", result["status"], result)
+        self.assertEqual("runtime_time_limit", result["reason"])
+        self.assertGreaterEqual(result["ui_steps_completed"], 1, result)
+        self.assertTrue(result["ui_steps"][0]["branch_verified"])
+
     def test_percent_encoded_image_with_fixed_query_is_replayed_exactly(self):
         path = ("/images/cars/sonata/%EC%84%B8%EB%A0%88%EB%8B%88%ED%8B%B0_"
                 "%ED%99%94%EC%9D%B4%ED%8A%B8_%ED%8E%84.png?v=1")
@@ -215,6 +526,42 @@ class RuntimeReviewTests(unittest.TestCase):
 
 
 class RuntimeAuthorizationTests(unittest.TestCase):
+    def test_ui_steps_reject_secret_submit_and_unbounded_actions(self):
+        body = b"<button id='tabBtn' type='button'></button>"
+        bad = [
+            [{"action": "click", "target_id": "loginButton"}],
+            [{"action": "fill", "target_id": "inputField", "value": "real_password"}],
+            [{"action": "wait", "milliseconds": 2001}],
+            [{"action": "click", "target_id": "tabBtn", "script": "run()"}],
+            [{"action": "click", "target_id": "tabBtn", "expect_png_download": True}],
+            [{"action": "click", "target_id": "tabBtn"}] * 13,
+            [{"action": "click", "target_button_class": "calc-btn",
+              "target_id": "tabBtn"}],
+            [{"action": "select", "target_button_class": "calc-btn", "index": 0}],
+            [{"action": "click", "target_button_class": "calc.btn"}],
+            [{"action": "click", "target_button_class": "login-btn"}],
+        ]
+        for steps in bad:
+            allowed = approval(body)
+            allowed["ui_steps"] = steps
+            result = review_runtime_source(body, "text/html", authorization=allowed)
+            self.assertEqual("blocked", result["status"])
+            self.assertIn(result["reason"], {"invalid_ui_steps", "prohibited_ui_target",
+                                             "prohibited_ui_value",
+                                             "png_observation_not_authorized"})
+        allowed = approval(body)
+        allowed["viewport"] = {"width": 200, "height": 800}
+        self.assertEqual("invalid_viewport", review_runtime_source(
+            body, "text/html", authorization=allowed)["reason"])
+        allowed = approval(body)
+        allowed["clock_time"] = "2026-06-15T12:00:00"
+        self.assertEqual("invalid_clock_time", review_runtime_source(
+            body, "text/html", authorization=allowed)["reason"])
+        allowed = approval(body)
+        allowed["timezone_id"] = "../bad"
+        self.assertEqual("invalid_timezone_id", review_runtime_source(
+            body, "text/html", authorization=allowed)["reason"])
+
     def test_local_resource_url_ambiguities_are_rejected(self):
         body = b"<img src='/fixture.png'>"
         bad_paths = (

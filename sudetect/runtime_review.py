@@ -15,13 +15,18 @@ import os
 import re
 import signal
 import subprocess
+import tempfile
 import time
 import unicodedata
 from urllib.parse import unquote_to_bytes, urlsplit
 
+from .runtime_interactions import inspect_png_download, validate_steps
+
 
 ORIGIN = "https://captured.invalid"
 ROOT_URL = ORIGIN + "/"
+MAX_PNG_DOWNLOADS = 4
+MAX_DOWNLOAD_STORAGE_BYTES = 32 * 1024 * 1024
 MAX_SOURCE_BYTES = 128 * 1024 * 1024
 MAX_RESOURCES = 32
 MAX_RESOURCE_BYTES = 64 * 1024 * 1024
@@ -32,6 +37,7 @@ _LOCAL_PATH = re.compile(r"/[A-Za-z0-9_./~%\-]+\Z")
 _LOCAL_QUERY = re.compile(r"[A-Za-z0-9_./~!$&'()*+,;=:@?%\-]+\Z")
 _PERCENT = re.compile(r"%[0-9A-Fa-f]{2}")
 _UNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+_TIMEZONE_ID = re.compile(r"[A-Za-z_+-]+(?:/[A-Za-z0-9_+.-]+)*\Z")
 _MEDIA_TYPE = re.compile(r"[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+(?:;[ A-Za-z0-9=.+_-]+)?\Z")
 _DOM_ID = re.compile(r"[A-Za-z][A-Za-z0-9_:.-]{0,99}\Z")
 _CSP = ("default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
@@ -158,6 +164,56 @@ _REVEAL_VISIBLE = """((ids) => {
   }
   return true;
 })(__SHOW_IDS__)"""
+_ACTION_TARGET = """((id) => {
+  const el = document.getElementById(id);
+  if (!el) return 'target_missing';
+  const nodes = document.getElementsByTagName('*');
+  if (nodes.length > 50000) return 'dom_limit';
+  let matches = 0;
+  for (const node of nodes) if (node.id === id) matches++;
+  if (matches !== 1) return 'duplicate_target';
+  const tag = el.tagName.toLowerCase();
+  const type = String(el.type || '').toLowerCase();
+  const name = String(el.name || '').toLowerCase();
+  if (/login|log-in|signin|sign-in|password|passwd|credential|auth|submit/i.test(name) ||
+      type === 'password' || type === 'submit' ||
+      (tag === 'button' && (type === 'submit' || !el.hasAttribute('type'))) ||
+      (tag === 'a' && /^javascript:/i.test(el.getAttribute('href') || '')))
+    return 'prohibited_target';
+  const form = el.closest('form');
+  if (form && form.querySelector('input[type=password]')) return 'prohibited_target';
+  return tag + ':' + type;
+})(__TARGET_ID__)"""
+_ACTION_BUTTON_CLASS = r"""((token) => {
+  const nodes = document.getElementsByClassName(token);
+  if (nodes.length !== 1) return nodes.length ? 'duplicate_target' : 'target_missing';
+  const el = nodes[0];
+  const name = String(el.name || '');
+  const aria = String(el.getAttribute('aria-label') || '');
+  const text = String(el.textContent || '');
+  const authWords = /(?:\b(?:log[\s-]?in|sign[\s-]?in|sign[\s-]?up|password|passcode|credential|auth(?:enticate|orize|entication)?|submit)\b|로그인|로그아웃|비밀번호|인증|제출|가입)/i;
+  if (el.tagName !== 'BUTTON' || el.id || el.form || el.closest('form') ||
+      el.hasAttribute('form') || el.hasAttribute('formaction') ||
+      name.length > 256 || aria.length > 256 || text.length > 256 ||
+      /login|log-in|signin|sign-in|password|passwd|credential|auth|submit/i.test(name) ||
+      authWords.test(aria) || authWords.test(text))
+    return 'prohibited_target';
+  return 'button:standalone';
+})(__BUTTON_CLASS__)"""
+_FORM_STATE = """(() => {
+  const fields = document.querySelectorAll('input,textarea,select');
+  if (fields.length > 10000) return null;
+  const rows = [];
+  let chars = 0;
+  for (const el of fields) {
+    const row = [String(el.value || ''), !!el.checked,
+                 Number(el.selectedIndex || 0)];
+    chars += row[0].length;
+    if (chars > 1048576) return null;
+    rows.push(row);
+  }
+  return JSON.stringify(rows);
+})()"""
 
 
 def _reveal_config(authorization: dict):
@@ -242,6 +298,9 @@ def _base_result(body: bytes, kind: str) -> dict:
             "client_reveal_visibility_verified": False,
             "client_reveal_action_digest": None,
             "client_reveal_failure": None, "script_parsed_count": 0,
+            "ui_steps": [], "png_downloads": [],
+            "ui_steps_requested": 0, "ui_steps_completed": 0,
+            "script_coverage_observed": None,
             "script_executed_count": 0, "script_error_count": 0,
             "console_error_count": 0, "captured_resource_requests": 0,
             "blocked_request_count": 0, "failed_request_count": 0,
@@ -249,6 +308,10 @@ def _base_result(body: bytes, kind: str) -> dict:
             "blocked_websocket_count": 0, "blocked_popup_count": 0,
             "blocked_download_count": 0, "blocked_frame_request_count": 0,
             "attached_frame_count": 0, "unexpected_navigation_count": 0,
+            "local_render_frame_count": 0,
+            "viewport": {"width": 1280, "height": 720},
+            "simulated_clock_used": False, "clock_fixture_digest": None,
+            "timezone_id": None,
             "observation_window_ms": 1000, "boundary": "browser_broker_only"}
 
 
@@ -346,8 +409,116 @@ def _snapshot(cdp, frame_id):
     return value, world["executionContextId"]
 
 
+def _isolated_value(cdp, world_id, expression):
+    response = cdp.send("Runtime.evaluate", {"expression": expression,
+                        "contextId": world_id, "returnByValue": True})
+    if "exceptionDetails" in response:
+        raise RuntimeError("isolated_dom_action_failed")
+    return response.get("result", {}).get("value")
+
+
+def _visible_ids(cdp, world_id, ids):
+    return _isolated_value(cdp, world_id, _REVEAL_VISIBLE.replace(
+        "__SHOW_IDS__", json.dumps(ids, ensure_ascii=True))) is True
+
+
+def _dom_fingerprint(page, cdp, world_id):
+    markup = page.content().encode("utf-8")
+    if len(markup) > 8 * 1024 * 1024:
+        return None
+    state = _isolated_value(cdp, world_id, _FORM_STATE)
+    if not isinstance(state, str) or len(state) > 2 * 1024 * 1024:
+        return None
+    class _WithoutFormControls(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=False)
+            self.parts = []
+            self.skip = 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in {"select", "textarea"}:
+                self.skip += 1
+            elif not self.skip and tag != "input":
+                self.parts.append(self.get_starttag_text())
+
+        def handle_startendtag(self, tag, attrs):
+            if not self.skip and tag not in {"input", "select", "textarea"}:
+                self.parts.append(self.get_starttag_text())
+
+        def handle_endtag(self, tag):
+            if tag in {"select", "textarea"} and self.skip:
+                self.skip -= 1
+            elif not self.skip and tag != "input":
+                self.parts.append("</" + tag + ">")
+
+        def handle_data(self, data):
+            if not self.skip:
+                self.parts.append(data)
+
+        def handle_entityref(self, name):
+            if not self.skip:
+                self.parts.append("&" + name + ";")
+
+        def handle_charref(self, name):
+            if not self.skip:
+                self.parts.append("&#" + name + ";")
+
+    scrubbed = _WithoutFormControls()
+    scrubbed.feed(markup.decode("utf-8", "replace"))
+    return {"app": hashlib.sha256("".join(scrubbed.parts).encode("utf-8")).digest(),
+            "input": hashlib.sha256(state.encode("utf-8")).digest()}
+
+
+def _execute_ui_step(page, cdp, frame_id, world_id, row):
+    action = row["action"]
+    status = "completed"
+    if action == "wait":
+        page.wait_for_timeout(row["milliseconds"])
+    else:
+        target_class = row.get("target_button_class")
+        if target_class is not None:
+            target = _isolated_value(cdp, world_id, _ACTION_BUTTON_CLASS.replace(
+                "__BUTTON_CLASS__", json.dumps(target_class, ensure_ascii=True)))
+        else:
+            target_id = row["target_id"]
+            target = _isolated_value(cdp, world_id, _ACTION_TARGET.replace(
+                "__TARGET_ID__", json.dumps(target_id, ensure_ascii=True)))
+        if target in {"target_missing", "duplicate_target", "dom_limit", "prohibited_target"}:
+            return target, None, False
+        if not isinstance(target, str) or ":" not in target:
+            return "target_inspection_failed", None, False
+        tag, field_type = target.split(":", 1)
+        if ((action == "select" and tag != "select")
+                or (action == "check" and field_type not in {"checkbox", "radio"})
+                or (action == "fill" and (tag not in {"input", "textarea"}
+                    or field_type not in {"", "text", "search"}))):
+            return "incompatible_target", None, False
+        locator = (page.locator("button." + target_class) if target_class is not None
+                   else page.locator('[id="' + target_id + '"]'))
+        if action == "click":
+            locator.click(timeout=2000)
+        elif action == "select":
+            locator.select_option(index=row["index"], timeout=2000)
+        elif action == "check":
+            if row["checked"]:
+                locator.check(timeout=2000)
+            else:
+                locator.uncheck(timeout=2000)
+        elif action == "fill":
+            locator.fill(row["value"], timeout=2000)
+        page.wait_for_timeout(200)
+    snapshot, world_id = _snapshot(cdp, frame_id)
+    expected_visible = _visible_ids(cdp, world_id, row["expect_visible_ids"])
+    if not expected_visible:
+        status = "expected_target_not_visible"
+    return status, snapshot, expected_visible
+
+
 def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal_config,
-                   reveal_explicit, max_seconds):
+                   reveal_explicit, ui_steps, observe_png_download,
+                   allow_local_render_frames, viewport, clock_time,
+                   timezone_id, download_dir, max_seconds,
+                   progress=None):
     from playwright.sync_api import sync_playwright
 
     result = _base_result(body, kind)
@@ -364,6 +535,13 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                   attached_frame_count=0, unexpected_navigation_count=0,
                   observation_window_ms=1000, boundary="browser_broker_only")
     start = time.monotonic()
+    result["ui_steps_requested"] = len(ui_steps)
+    result["viewport"] = viewport.copy()
+    result["timezone_id"] = timezone_id
+    if clock_time is not None:
+        result["clock_fixture_digest"] = hashlib.sha256(
+            (result["source_sha256"] + "\n" + clock_time.isoformat() + "\n"
+             + (timezone_id or "")).encode()).hexdigest()
     if kind == "html":
         parser = _StaticHTML()
         parser.feed(body.decode("utf-8", "replace"))
@@ -388,26 +566,41 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
         fulfilled[ORIGIN + "/__main__.js"] = (body, content_type)
     script_urls = {ROOT_URL} | {url for url, (_data, mime) in fulfilled.items()
                                 if "javascript" in mime.casefold()}
+    script_sources = {url: (hashlib.sha256(fulfilled[url][0]).hexdigest(),
+                            "primary" if url == ROOT_URL or url == ORIGIN + "/__main__.js"
+                            else "captured_external" if not url.startswith(ORIGIN + "/")
+                            else "captured_local") for url in script_urls}
     if external_origins:
         # Captured response headers were not supplied: original CORS/CSP
         # semantics remain unverified even if offline script execution works.
         result["pending_reviews"].append("external_response_headers_unverified")
     source_list = " ".join(sorted(external_origins))
     csp = _CSP.replace("'self'", "'self' " + source_list) if source_list else _CSP
+    if allow_local_render_frames:
+        csp = csp.replace("frame-src 'none'", "frame-src 'self' about:")
     root_served = False
     browser = context = None
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
                 headless=True, chromium_sandbox=True,
+                downloads_path=download_dir,
                 timeout=min(15000, int(max_seconds * 1000)),
                 proxy={"server": "http://127.0.0.1:9", "bypass": "<-loopback>"},
                 args=["--disable-background-networking", "--disable-quic",
                       "--disable-extensions", "--disable-sync", "--disable-default-apps",
                       "--host-resolver-rules=MAP * ~NOTFOUND",
                       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
-            context = browser.new_context(service_workers="block", accept_downloads=False,
-                                          permissions=[], storage_state={"cookies": [], "origins": []})
+            try:
+                context = browser.new_context(service_workers="block",
+                                              accept_downloads=observe_png_download,
+                                              viewport=viewport, timezone_id=timezone_id,
+                                              permissions=[], storage_state={"cookies": [], "origins": []})
+            except Exception:
+                if timezone_id is not None:
+                    result["pending_reviews"].append("timezone_context_unavailable")
+                    return result
+                raise
             if not hasattr(context, "route_web_socket"):
                 result["pending_reviews"].append("websocket_interception_unavailable")
                 return result
@@ -420,6 +613,34 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                 ws.on_message(lambda _message: None)
             context.route_web_socket("**/*", websocket_sink)
             page = context.new_page()
+            if clock_time is not None:
+                try:
+                    page.clock.set_fixed_time(clock_time)
+                    result["simulated_clock_used"] = True
+                except Exception:
+                    result["pending_reviews"].append("clock_fixture_unavailable")
+                    return result
+            page.set_default_timeout(2000)
+            downloads = []
+            browser_downloads = None
+            if observe_png_download:
+                try:
+                    browser_downloads = browser.new_browser_cdp_session()
+                    browser_downloads.send("Browser.setDownloadBehavior", {
+                        "behavior": "allow", "downloadPath": download_dir,
+                        "eventsEnabled": True})
+                    def on_progress(event):
+                        if max(event.get("receivedBytes", 0), event.get("totalBytes", 0)) > 8 * 1024 * 1024:
+                            result["pending_reviews"].append("png_progress_byte_limit")
+                            try:
+                                browser_downloads.send("Browser.cancelDownload", {
+                                    "guid": event["guid"]})
+                            except Exception:
+                                pass
+                    browser_downloads.on("Browser.downloadProgress", on_progress)
+                except Exception:
+                    result["pending_reviews"].append("png_progress_guard_unavailable")
+                    return result
             page.on("pageerror", lambda _error: result.__setitem__(
                 "script_error_count", result["script_error_count"] + 1))
             page.on("requestfailed", lambda _request: result.__setitem__(
@@ -430,13 +651,36 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
             context.on("page", lambda popup: (result.__setitem__(
                 "blocked_popup_count", result["blocked_popup_count"] + 1), popup.close())
                        if popup != page else None)
-            page.on("download", lambda download: result.__setitem__(
-                "blocked_download_count", result["blocked_download_count"] + 1))
-            page.on("frameattached", lambda frame: result.__setitem__(
-                "attached_frame_count", result["attached_frame_count"] + 1))
-            page.on("framenavigated", lambda frame: result.__setitem__(
-                "unexpected_navigation_count", result["unexpected_navigation_count"]
-                + (frame == page.main_frame and frame.url != ROOT_URL)))
+            def on_download(download):
+                downloads.append(download)
+                if len(downloads) > MAX_PNG_DOWNLOADS:
+                    result["blocked_download_count"] += 1
+                    result["pending_reviews"].append("png_download_count_limit")
+                    try:
+                        download.cancel()
+                    except Exception:
+                        pass
+                elif not observe_png_download:
+                    result["blocked_download_count"] += 1
+                elif not (download.url.startswith("blob:https://captured.invalid/")
+                          or download.url.startswith("data:image/png;base64,")):
+                    result["blocked_download_count"] += 1
+                    try:
+                        download.cancel()
+                    except Exception:
+                        pass
+            page.on("download", on_download)
+            def frame_attached(frame):
+                result["attached_frame_count"] += 1
+                if allow_local_render_frames:
+                    result["local_render_frame_count"] += 1
+            page.on("frameattached", frame_attached)
+            def frame_navigated(frame):
+                if frame == page.main_frame:
+                    result["unexpected_navigation_count"] += frame.url != ROOT_URL
+                elif frame.url not in {"about:blank", "about:srcdoc"}:
+                    result["pending_reviews"].append("frame_navigation_not_local")
+            page.on("framenavigated", frame_navigated)
             cdp = context.new_cdp_session(page)
             cdp.send("Page.enable")
             cdp.send("Runtime.enable")
@@ -448,6 +692,75 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                 if url in script_urls:
                     result["script_parsed_count"] += 1
             cdp.on("Debugger.scriptParsed", script_parsed)
+            executed_scripts = set()
+            observed_functions = set()
+            executed_functions = set()
+            observed_ranges = set()
+            executed_ranges = set()
+            script_id_sources = {}
+            def collect_coverage():
+                coverage = cdp.send("Profiler.takePreciseCoverage")["result"]
+                functions = ranges = 0
+                for script in coverage:
+                    url = script.get("url")
+                    if url not in script_urls:
+                        continue
+                    script_id = script.get("scriptId", "")
+                    script_id_sources[script_id] = url
+                    found = False
+                    for function_index, function in enumerate(script.get("functions", [])):
+                        function_key = (script_id, function_index)
+                        observed_functions.add(function_key)
+                        active = 0
+                        for span in function.get("ranges", []):
+                            range_key = (script_id, function_index,
+                                         span.get("startOffset"), span.get("endOffset"))
+                            observed_ranges.add(range_key)
+                            if span.get("count", 0) > 0:
+                                executed_ranges.add(range_key)
+                                active += 1
+                        if active:
+                            executed_functions.add(function_key)
+                            functions += 1
+                            ranges += active
+                            found = True
+                    if found:
+                        executed_scripts.add(script_id)
+                    if len(observed_ranges) > 250000:
+                        raise RuntimeError("script_coverage_limit")
+                result["script_executed_count"] = len(executed_scripts)
+                source_summaries = []
+                for url in sorted(script_urls):
+                    digest, source_kind = script_sources[url]
+                    ids = {script_id for script_id, location in script_id_sources.items()
+                           if location == url}
+                    source_summaries.append({"source_sha256": digest,
+                                             "source_kind": source_kind,
+                                             "parsed_script_count": len(ids),
+                                             "executed_script_count": len(ids & executed_scripts),
+                                             "observed_function_count": sum(
+                                                 item[0] in ids for item in observed_functions),
+                                             "ever_executed_function_count": sum(
+                                                 item[0] in ids for item in executed_functions),
+                                             "observed_range_count": sum(
+                                                 item[0] in ids for item in observed_ranges),
+                                             "ever_executed_range_count": sum(
+                                                 item[0] in ids for item in executed_ranges)})
+                summary = {"executed_script_count": len(executed_scripts),
+                        "observed_function_count": functions,
+                        "observed_range_count": ranges,
+                        "observed_total_function_count": len(observed_functions),
+                        "ever_executed_function_count": len(executed_functions),
+                        "unexecuted_observed_function_count": (
+                            len(observed_functions) - len(executed_functions)),
+                        "observed_total_range_count": len(observed_ranges),
+                        "ever_executed_range_count": len(executed_ranges),
+                        "unexecuted_observed_range_count": (
+                            len(observed_ranges) - len(executed_ranges)),
+                        "sources": source_summaries,
+                        "semantic_branch_coverage_verified": False}
+                result["script_coverage_observed"] = summary
+                return summary
             def handle(route):
                 nonlocal root_served
                 request = route.request
@@ -514,17 +827,115 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
                         if not visible:
                             result["client_reveal_failure"] = "target_not_visible"
                             result["pending_reviews"].append("client_reveal_target_not_visible")
+                collect_coverage()
+                if progress:
+                    progress(result)
+                for index, row in enumerate(ui_steps):
+                    if time.monotonic() + 2.0 >= start + max_seconds:
+                        result["pending_reviews"].append("ui_step_time_limit")
+                        break
+                    before = {name: result[name] for name in (
+                        "script_error_count", "console_error_count",
+                        "blocked_request_count", "failed_request_count")}
+                    first_download = len(downloads)
+                    visible_before = (_visible_ids(cdp, world_id, row["expect_visible_ids"])
+                                      if row["expect_visible_ids"] else None)
+                    before_dom = None
+                    if row["expect_dom_change"]:
+                        before_dom = _dom_fingerprint(page, cdp, world_id)
+                        if before_dom is None:
+                            result["pending_reviews"].append("ui_dom_comparison_limit")
+                            break
+                    step = {"index": index, "action": row["action"],
+                            "action_applied": False, "branch_verified": False,
+                            "status": "action_failed", "dom": None,
+                            "expected_visible_verified": None,
+                            "visible_transition_verified": None,
+                            "dom_change_verified": None,
+                            "input_state_changed": None,
+                            "png_download_verified": None,
+                            "download_count": 0, "verified_png_count": 0,
+                            "script_coverage": None, "error_delta": 0,
+                            "blocked_request_delta": 0}
+                    try:
+                        action_status, step_dom, expected_visible = _execute_ui_step(
+                            page, cdp, frame_id, world_id, row)
+                        if row["expect_png_download"] and len(downloads) == first_download:
+                            wait_deadline = min(time.monotonic() + 5,
+                                                start + max_seconds - 1)
+                            while len(downloads) == first_download and time.monotonic() < wait_deadline:
+                                page.wait_for_timeout(100)
+                        step["action_applied"] = action_status in {
+                            "completed", "expected_target_not_visible"}
+                        step["status"] = action_status
+                        step["dom"] = step_dom
+                        if row["expect_visible_ids"]:
+                            step["expected_visible_verified"] = expected_visible
+                            step["visible_transition_verified"] = bool(
+                                not visible_before and expected_visible)
+                        if row["expect_dom_change"] and step["action_applied"]:
+                            after_dom = _dom_fingerprint(page, cdp, world_id)
+                            if after_dom is not None:
+                                step["dom_change_verified"] = (
+                                    after_dom["app"] != before_dom["app"])
+                                step["input_state_changed"] = (
+                                    after_dom["input"] != before_dom["input"])
+                        if observe_png_download:
+                            first_metadata = len(result["png_downloads"])
+                            for download in downloads[first_download:MAX_PNG_DOWNLOADS]:
+                                metadata = inspect_png_download(download, download_dir)
+                                result["png_downloads"].append(metadata)
+                                if metadata["status"] != "verified_png":
+                                    result["pending_reviews"].append("png_download_unverified")
+                            new_downloads = result["png_downloads"][first_metadata:]
+                            step["download_count"] = len(downloads) - first_download
+                            step["verified_png_count"] = sum(
+                                item["status"] == "verified_png" for item in new_downloads)
+                        if row["expect_png_download"]:
+                            step["png_download_verified"] = step["verified_png_count"] > 0
+                        asserted = bool(row["expect_visible_ids"] or row["expect_dom_change"]
+                                        or row["expect_png_download"])
+                        step["branch_verified"] = bool(step["action_applied"] and asserted
+                            and step["expected_visible_verified"] is not False
+                            and step["dom_change_verified"] is not False
+                            and step["png_download_verified"] is not False
+                            and (not row["expect_dom_change"]
+                                 or step["dom_change_verified"] is True)
+                            and any(value is True for value in (
+                                step["visible_transition_verified"],
+                                step["dom_change_verified"],
+                                step["png_download_verified"])))
+                        if not step["branch_verified"]:
+                            result["pending_reviews"].append("ui_branch_unverified")
+                    except Exception:
+                        step["status"] = "action_or_snapshot_failed"
+                        result["pending_reviews"].append("ui_action_or_snapshot_failed")
+                    try:
+                        step["script_coverage"] = collect_coverage()
+                    except Exception:
+                        result["pending_reviews"].append("script_coverage_unavailable")
+                    step["error_delta"] = sum(result[name] - before[name] for name in (
+                        "script_error_count", "console_error_count", "failed_request_count"))
+                    step["blocked_request_delta"] = (
+                        result["blocked_request_count"] - before["blocked_request_count"])
+                    if step["error_delta"] or step["blocked_request_delta"]:
+                        step["branch_verified"] = False
+                        result["pending_reviews"].append("ui_branch_unverified")
+                    result["ui_steps"].append(step)
+                    if step["branch_verified"]:
+                        result["ui_steps_completed"] += 1
+                    if progress:
+                        progress(result)
+                    if not step["action_applied"]:
+                        result["pending_reviews"].append("ui_action_not_applied")
+                        break
+                if len(result["ui_steps"]) < len(ui_steps):
+                    result["pending_reviews"].append("ui_steps_incomplete")
             except Exception:
                 result["pending_reviews"].append("runtime_navigation_or_snapshot_failed")
             finally:
                 try:
-                    coverage = cdp.send("Profiler.takePreciseCoverage")["result"]
-                    result["script_executed_count"] = sum(
-                        1 for script in coverage
-                        if script.get("url") in script_urls
-                        and any(span.get("count", 0) > 0
-                                for function in script.get("functions", [])
-                                for span in function.get("ranges", [])))
+                    collect_coverage()
                 except Exception:
                     result["pending_reviews"].append("script_coverage_unavailable")
                 context.close()
@@ -552,7 +963,10 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
     if result["blocked_popup_count"]: result["pending_reviews"].append("popup_blocked")
     if result["blocked_download_count"]: result["pending_reviews"].append("download_blocked")
     if result["blocked_frame_request_count"]: result["pending_reviews"].append("frame_or_navigation_blocked")
-    if result["attached_frame_count"]: result["pending_reviews"].append("frame_attached")
+    if result["attached_frame_count"] and not allow_local_render_frames:
+        result["pending_reviews"].append("frame_attached")
+    if result["local_render_frame_count"]:
+        result["pending_reviews"].append("local_render_frame_content_unverified")
     if result["unexpected_navigation_count"]: result["pending_reviews"].append("navigation_changed_document")
     for snapshot in (result["initial_dom"], result["after_client_reveal"]):
         if snapshot and (snapshot["dom_node_limit"] or snapshot["visible_text_truncated"]):
@@ -569,18 +983,25 @@ def _review_worker(body, content_type, kind, resources, reveal_client_ui, reveal
 
 
 def _entry(writer, body, content_type, kind, resources, reveal_client_ui, reveal_config,
-           reveal_explicit, max_seconds):
+           reveal_explicit, ui_steps, observe_png_download,
+           allow_local_render_frames, viewport, clock_time, timezone_id,
+           download_dir, max_seconds):
     if os.name != "nt":
         os.setsid()
     try:
-        writer.send(_review_worker(body, content_type, kind, resources,
-                                   reveal_client_ui, reveal_config, reveal_explicit,
-                                   max_seconds))
+        final = _review_worker(body, content_type, kind, resources,
+                               reveal_client_ui, reveal_config, reveal_explicit,
+                               ui_steps, observe_png_download,
+                               allow_local_render_frames, viewport, clock_time,
+                               timezone_id, download_dir,
+                               max_seconds,
+                               progress=lambda current: writer.send(("progress", current)))
+        writer.send(("final", final))
     except Exception:
         result = _base_result(body, kind)
         result.update(status="partial", reason="runtime_worker_failure",
                       pending_reviews=["runtime_worker_failure"])
-        writer.send(result)
+        writer.send(("final", result))
     finally:
         writer.close()
         # Keep the worker as the descendant-tree root until the parent has
@@ -626,26 +1047,96 @@ def review_runtime_source(body: bytes, content_type: str, *, authorization: dict
         result["reason"] = reveal_error
         result["pending_reviews"] = [reveal_error]
         return result
+    steps_error, steps_config = validate_steps(authorization)
+    if steps_error:
+        result["reason"] = steps_error
+        result["pending_reviews"] = [steps_error]
+        return result
+    ui_steps, observe_png_download = steps_config
+    allow_local_render_frames = authorization.get("allow_local_render_frames", False)
+    if not isinstance(allow_local_render_frames, bool):
+        result["reason"] = "invalid_local_frame_option"
+        result["pending_reviews"] = ["invalid_local_frame_option"]
+        return result
+    viewport = authorization.get("viewport", {"width": 1280, "height": 720})
+    if (not isinstance(viewport, dict) or set(viewport) != {"width", "height"}
+            or any(isinstance(value, bool) or not isinstance(value, int)
+                   for value in viewport.values())
+            or not 320 <= viewport["width"] <= 1920
+            or not 240 <= viewport["height"] <= 2160):
+        result["reason"] = "invalid_viewport"
+        result["pending_reviews"] = ["invalid_viewport"]
+        return result
+    raw_clock = authorization.get("clock_time")
+    clock_time = None
+    if raw_clock is not None:
+        if not isinstance(raw_clock, str) or len(raw_clock) > 40:
+            result["reason"] = "invalid_clock_time"
+            result["pending_reviews"] = ["invalid_clock_time"]
+            return result
+        try:
+            clock_time = datetime.fromisoformat(raw_clock.replace("Z", "+00:00"))
+            if (clock_time.tzinfo is None or clock_time.utcoffset() is None
+                    or not 1900 <= clock_time.year <= 2100):
+                raise ValueError("invalid clock")
+        except (TypeError, ValueError, OverflowError):
+            result["reason"] = "invalid_clock_time"
+            result["pending_reviews"] = ["invalid_clock_time"]
+            return result
+    timezone_id = authorization.get("timezone_id")
+    if (timezone_id is not None and (not isinstance(timezone_id, str)
+            or not 1 <= len(timezone_id) <= 64
+            or not _TIMEZONE_ID.fullmatch(timezone_id))):
+        result["reason"] = "invalid_timezone_id"
+        result["pending_reviews"] = ["invalid_timezone_id"]
+        return result
     context = mp.get_context("spawn")
     reader, writer = context.Pipe(duplex=False)
+    download_temp = tempfile.TemporaryDirectory(prefix="sudetect-runtime-")
     process = context.Process(target=_entry, args=(writer, body, content_type, kind,
                               normalized, reveal_client_ui, reveal_config,
-                              "client_ui_reveal" in authorization, max_seconds))
+                              "client_ui_reveal" in authorization, ui_steps,
+                              observe_png_download, allow_local_render_frames,
+                              viewport.copy(), clock_time, timezone_id,
+                              download_temp.name, max_seconds))
     deadline = time.monotonic() + max_seconds
-    process.start()
-    writer.close()
     try:
-        if reader.poll(max(0.0, deadline - time.monotonic())):
+        process.start()
+        writer.close()
+        latest = result
+        while time.monotonic() < deadline:
             try:
-                return reader.recv()
+                stored_bytes = sum(entry.stat(follow_symlinks=False).st_size
+                    for entry in os.scandir(download_temp.name)
+                    if entry.is_file(follow_symlinks=False))
+            except OSError:
+                stored_bytes = MAX_DOWNLOAD_STORAGE_BYTES + 1
+            if stored_bytes > MAX_DOWNLOAD_STORAGE_BYTES:
+                latest.update(status="partial", reason="download_storage_limit",
+                              runtime_observation_complete=False,
+                              pending_reviews=sorted(set(latest["pending_reviews"])
+                                                     | {"download_storage_limit"}))
+                return latest
+            if not reader.poll(min(0.1, max(0.0, deadline - time.monotonic()))):
+                continue
+            try:
+                kind, value = reader.recv()
             except EOFError:
-                pass
-        result.update(status="partial", reason="runtime_time_limit",
-                      pending_reviews=["runtime_time_limit"])
-        return result
+                break
+            latest = value
+            if kind == "final":
+                return value
+        latest.update(status="partial", reason="runtime_time_limit",
+                      runtime_observation_complete=False,
+                      pending_reviews=sorted(set(latest["pending_reviews"])
+                                             | {"runtime_time_limit", "ui_steps_incomplete"}))
+        return latest
     finally:
         reader.close()
-        if process.is_alive():
-            _kill_tree(process)
-        else:
-            process.join(timeout=2)
+        writer.close()
+        if process.pid is not None:
+            if process.is_alive():
+                _kill_tree(process)
+            else:
+                process.join(timeout=2)
+        download_temp.cleanup()

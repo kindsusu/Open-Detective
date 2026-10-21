@@ -274,7 +274,9 @@ For a separately authorized execution of captured original JavaScript, use
 [`runtime-review`](ops/runtime-review.md). It runs a hash-pinned local bundle in
 a fresh Chromium context and reports rendered DOM counts, script failures,
 blocked dependencies, and execution limits. It does not fetch missing resources
-or use credentials. A completed startup observation is not full application
+or use credentials. Explicitly declared UI scenarios can check local state
+changes and generated PNG export metadata, with per-step evidence and unresolved
+execution ranges. A completed startup observation is not full application
 coverage or a server-authorization test.
 These synthetic-tested features do not imply a completed live audit or actual
 Codex-versus-Claude host comparison. See [gate review](ops/gate-review.md).
