@@ -548,7 +548,8 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
              fetch: Fetch | None = None, max_accounts: int = 10,
              max_results: int = 1000, max_pages: int = 10, page_size: int = 100,
              channel_health: Mapping[str, Any] | None = None,
-             validate_fetch_health: bool = False, locator_store: Any = None) -> dict[str, Any]:
+             validate_fetch_health: bool = False, locator_store: Any = None,
+             search_account_context: Iterable[str] | None = None) -> dict[str, Any]:
     """Discover public GitHub metadata from bounded, operator-supplied clues."""
     observed_at = _utc_now()
     report: dict[str, Any] = {
@@ -583,6 +584,8 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
         if any(_valid_account(account) is None for account in account_inputs):
             raise DiscoveryError("INPUT_INVALID")
         parsed_known = []
+        context_accounts = {value.casefold() for value in (search_account_context or ())
+                            if isinstance(value, str) and _valid_account(value)}
         for value in known_inputs:
             parsed = _known_pages_url(value)
             if parsed is None:
@@ -630,6 +633,10 @@ def discover(scope_id: str, *, seeds: Iterable[str] = (), accounts: Iterable[str
             errors.append("MALFORMED_RESPONSE")
             return False
         key = valid.casefold()
+        if search_account_context is not None and priority >= 2 and key not in context_accounts:
+            deferred.append({"kind":"account_expansion","value":valid,
+                             "reason":"operator_review_required"})
+            return False
         if key not in expansion_priority:
             if len(expansion_accounts) >= max_accounts:
                 worst = max(expansion_accounts, key=lambda value: (expansion_priority[value.casefold()], expansion_accounts.index(value)))

@@ -19,6 +19,15 @@ _SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 _BLOB_SHA = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}\Z")
 _TREE_PATH = re.compile(r"/repos/([^/]+)/([^/]+)/git/trees/([^/]+)\Z")
 _MAX_TREE_BYTES = 8 * 1024 * 1024
+_HIGH_PRIORITY_EXTENSIONS = frozenset({
+    "json", "jsonl", "ndjson", "csv", "tsv", "sql", "db", "sqlite", "parquet",
+    "js", "mjs", "jsx", "ts", "tsx", "html", "htm", "vue", "py", "css",
+    "pdf", "xlsx", "xls", "docx", "doc", "txt", "md", "pptx", "ppt",
+})
+_MEDIA_EXTENSIONS = frozenset({
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "tif", "tiff",
+    "avif", "mp3", "mp4", "wav", "ogg", "webm", "mov", "woff", "woff2", "ttf",
+})
 
 
 def _branch_valid(value: object) -> bool:
@@ -110,6 +119,7 @@ def analyze_tree(body: bytes, tree_url: str, max_files: int = 1000) -> tuple[dic
     report["provider_truncated"] = payload.get("truncated") is True
     seen: set[str] = set()
     exact_urls: list[str] = []
+    eligible: list[tuple[int, str, str | None, str, int | None, str]] = []
     for entry in payload["tree"]:
         report["tree_entries"] += 1
         if not isinstance(entry, Mapping):
@@ -133,15 +143,21 @@ def analyze_tree(body: bytes, tree_url: str, max_files: int = 1000) -> tuple[dic
         seen.add(encoded_path)
         if kind == "other":
             report["unsupported_extensions"] += 1
-        if len(exact_urls) >= max_files:
-            report["file_limit_reached"] = True
-            continue
+        # GitHub tree order is path order. Large media folders must not use the
+        # entire cap before a later data or source file can be considered.
+        path = entry["path"]
+        suffix = path.rsplit("/", 1)[-1].rsplit(".", 1)[-1].casefold() if "." in path.rsplit("/", 1)[-1] else ""
+        priority = (0 if suffix in _HIGH_PRIORITY_EXTENSIONS or kind != "other"
+                    else 2 if suffix in _MEDIA_EXTENSIONS else 1)
+        eligible.append((priority, encoded_path, extension, kind, size, blob_sha.lower()))
+    report["file_limit_reached"] = len(eligible) > max_files
+    for _, encoded_path, extension, kind, size, blob_sha in sorted(eligible, key=lambda row: row[0])[:max_files]:
         exact_urls.append(
             f"https://raw.githubusercontent.com/{quote(owner, safe='')}/{quote(repo, safe='')}/"
             f"{quote(revision, safe='')}/{encoded_path}")
         report["files"].append({"file_index": len(exact_urls) - 1,
             "candidate_kind": kind, "extension": extension,
-            "byte_size": size, "git_object_sha": blob_sha.lower()})
+            "byte_size": size, "git_object_sha": blob_sha})
     report["files_emitted"] = len(exact_urls)
     if report["provider_truncated"]:
         report["error_code"] = "TREE_TRUNCATED"

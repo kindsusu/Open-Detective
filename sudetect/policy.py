@@ -65,6 +65,7 @@ _DANGEROUS_COMPACT_KEYS = frozenset(
     re.sub(r"[^a-z0-9]", "", item) for item in _DANGEROUS_COMPACT_KEYS
 )
 _CONTROL_OR_SPACE = re.compile(r"[\x00-\x20\x7f]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _PERCENT = re.compile(r"%(?![0-9A-Fa-f]{2})")
 
 
@@ -75,7 +76,7 @@ def _integer(value: Any, name: str, minimum: int, maximum: int) -> int:
 
 
 def _decode_path(raw_path: str) -> str:
-    if _PERCENT.search(raw_path):
+    if _PERCENT.search(raw_path) or _CONTROL_OR_SPACE.search(raw_path):
         raise PolicyError("invalid path encoding")
     current = raw_path or "/"
     for _ in range(4):
@@ -89,7 +90,7 @@ def _decode_path(raw_path: str) -> str:
     else:
         raise PolicyError("excessive path encoding")
     current = unicodedata.normalize("NFC", current)
-    if "%" in current or "\\" in current or _CONTROL_OR_SPACE.search(current) or "//" in current:
+    if "%" in current or "\\" in current or _CONTROL.search(current) or "//" in current:
         raise PolicyError("unsafe path")
     if not current.startswith("/"):
         raise PolicyError("invalid path")

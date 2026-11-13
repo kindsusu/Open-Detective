@@ -37,7 +37,9 @@ def check(skill_root=None, reference=None, require_browser=False):
                 "sudetect/asset_trace.py", "ops/asset-profile.md", "ops/asset-trace.md",
                 "sudetect/github_code_search.py", "ops/github-code-search.md",
                 "sudetect/prior_records.py", "sudetect/github_history.py", "sudetect/dom_replay.py",
-                "ops/github-history.md", "ops/dom-replay.md")
+                "ops/github-history.md", "ops/dom-replay.md", "sudetect/audit.py",
+                "sudetect/scheduler.py", "sudetect/repository_workflow.py",
+                "sudetect/repository_history.py", "ops/audit-workflow.md")
     missing = [name for name in required if not (root / name).is_file()]
     if missing:
         failures.append("RUNTIME_FILES_MISSING")

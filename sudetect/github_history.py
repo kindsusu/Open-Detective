@@ -10,7 +10,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import stat
 import time
 import urllib.parse
@@ -28,6 +27,17 @@ MAX_INPUT = 1_048_576
 MAX_BYTES = 8 * 1024 * 1024
 MAX_REQUESTS = 20
 MAX_PATCH_BYTES = 512 * 1024
+MAX_PATCH_BYTES_HARD = 128 * 1024 * 1024
+
+
+def patch_requires_material_hold(signal_codes):
+    """Labels/UI hints alone do not prove personal data or a usable secret."""
+    non_material = {"CONFIDENTIAL_MARKER_CANDIDATE", "HIDDEN_DOM_PRESENT",
+                    "LOGIN_FORM_INDICATOR", "RUNTIME_ENDPOINT_UNRESOLVED",
+                    "RUNTIME_ENDPOINT_CANDIDATE", "KR_BUSINESS_NUMBER_CANDIDATE",
+                    "STRUCTURED_DATA_PARSE_INCOMPLETE", "JSON_PARSE_INCOMPLETE",
+                    "HTML_PARSE_INCOMPLETE"}
+    return not signal_codes or bool(set(signal_codes) - non_material)
 MAX_DURATION = 60
 _SHA = re.compile(r"[0-9a-f]{40}")
 _URL = re.compile(r"https?://[^\s<>\"']{1,2048}")
@@ -98,25 +108,79 @@ def _manifest(value):
 
 
 def _path(value):
-    if not isinstance(value, str) or not value or len(value) > 4096 or "\x00" in value:
+    if (not isinstance(value, str) or not value or len(value) > 4096
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)):
         return None
-    value = value.replace("\\", "/")
     if value.startswith("/") or any(part in ("", ".", "..") for part in value.split("/")):
         return None
     return value
+
+
+def _git_path_token(value):
+    """Decode one Git C-quoted path without shell expansion or lossy escaping."""
+    if not isinstance(value, str) or not value:
+        return None
+    if not value.startswith('"'):
+        return value if '"' not in value else None
+    if not value.endswith('"'):
+        return None
+    raw = bytearray()
+    escapes = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11,
+               "f": 12, "r": 13, '"': 34, "\\": 92}
+    inner = value[1:-1]
+    index = 0
+    while index < len(inner):
+        char = inner[index]
+        if char == '"':
+            return None
+        if char != "\\":
+            raw.extend(char.encode("utf-8"))
+            index += 1
+            continue
+        index += 1
+        if index >= len(inner):
+            return None
+        char = inner[index]
+        if char in escapes:
+            raw.append(escapes[char])
+            index += 1
+        elif index + 3 <= len(inner) and re.fullmatch(r"[0-7]{3}", inner[index:index + 3]):
+            decoded = int(inner[index:index + 3], 8)
+            if decoded > 255:
+                return None
+            raw.append(decoded)
+            index += 3
+        else:
+            return None
+    try:
+        return raw.decode("utf-8", "strict")
+    except UnicodeError:
+        return None
+
+
+def _diff_paths(value):
+    tokens = re.findall(r'"(?:\\.|[^"\\])*"|[^\s"]+', value)
+    if len(tokens) == 2 and " ".join(tokens) == value:
+        before, after = (_git_path_token(token) for token in tokens)
+    elif value.startswith("a/") and '"' not in value and " b/" in value:
+        # Match the final Git delimiter, then require ---/+++ path agreement.
+        divider = value.rfind(" b/")
+        before, after = value[:divider], value[divider + 1:]
+    else:
+        return None
+    if not before or not after or not before.startswith("a/") or not after.startswith("b/"):
+        return None
+    before, after = _path(before[2:]), _path(after[2:])
+    return (before, after) if before and after else None
 
 
 def _header_path(value, prefix):
     value = value.strip()
     if value == "/dev/null":
         return None
-    if value.startswith('"') and "\\" in value:
-        return False  # Git C-quoted escapes cannot be decoded by shlex reliably.
-    try:
-        tokens = shlex.split(value)
-    except ValueError:
+    candidate = _git_path_token(value)
+    if candidate is None:
         return False
-    candidate = tokens[0] if value.startswith('"') and len(tokens) == 1 else value
     if not candidate.startswith(prefix):
         return False
     return _path(candidate[len(prefix):]) or False
@@ -137,7 +201,102 @@ def _category_hint(path):
     return "other"
 
 
-def _parse_patch(body, repository, sha, locator_store, scope_id):
+def _patch_url_parts(url):
+    """Accept only an exact public GitHub commit patch locator."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        match = re.fullmatch(r"/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/commit/([0-9a-fA-F]{40})\.patch", parts.path)
+        if (parts.scheme != "https" or parts.netloc != "github.com" or parts.query or
+                parts.fragment or not match or any(part in {".", ".."} for part in match.groups()[:2])):
+            return None
+        return match.group(1) + "/" + match.group(2), match.group(3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _review_changed_lines(changed_lines, *, continue_sensitive_review=False):
+    """Inspect bounded text chunks across a complete diff, including late lines.
+
+    An overlong line leaves a structure gap after its full text is scanned.
+    Truncated projection or incomplete classifier text remains an analysis gap.
+    The projection is only analysis text; image pixels stay unreviewed.
+    """
+    changed = "\n".join(changed_lines).encode("utf-8")
+    media_skipped = False
+    limit_reached = False
+    structure_incomplete = False
+    if re.search(br"data:image/", changed, re.I):
+        from .media_projection import project_inline_images
+        projection = project_inline_images((changed[index:index + 65_536]
+            for index in range(0, len(changed), 65_536)),
+            max_wire_bytes=len(changed), max_projected_bytes=32 * 1024 * 1024)
+        if projection.skipped_images:
+            changed = projection.projected
+            media_skipped = True
+        limit_reached = projection.wire_truncated or projection.projected_truncated
+    text = changed.decode("utf-8", "strict")
+    chunks, current, current_bytes = [], [], 0
+    limit = MAX_ANALYSIS_BYTES - 4096
+    for line in text.splitlines():
+        row_bytes = len(line.encode("utf-8")) + 1
+        if row_bytes > limit:
+            structure_incomplete = True
+            if current:
+                chunks.append("\n".join(current))
+                current, current_bytes = [], 0
+            # Every position of an oversized source line is scanned. Fragments
+            # retain an explicit structure gap even when lexical signals pass.
+            marker = line[:1] if line.startswith(("+", "-")) else ""
+            segment = line[1:] if marker else line
+            for offset in range(0, len(segment), 55_000):
+                chunks.append(marker + segment[max(0, offset - 4096):offset + 55_000])
+            continue
+        if current and current_bytes + row_bytes > limit:
+            chunks.append("\n".join(current))
+            current, current_bytes = [], 0
+        current.append(line)
+        current_bytes += row_bytes
+    if current:
+        chunks.append("\n".join(current))
+    signals = set()
+    sensitive = False
+    for chunk in chunks:
+        if not chunk:
+            continue
+        text_bytes = chunk.encode("utf-8")
+        source = "// patch snippet\n" + "\n".join(
+            line[1:] if line.startswith(("+", "-")) else line for line in chunk.splitlines())
+        reports = (analyze(text_bytes, "text/plain").report,
+                   analyze(source.encode("utf-8"), "application/javascript").report)
+        for report in reports:
+            signals.update(row["code"] for row in report["signals"])
+            sensitive |= report["content"] == "SENSITIVE_CANDIDATE"
+            limit_reached |= not bool(report["text_analysis_complete"])
+            structure_incomplete |= not bool(report["structure_analysis_complete"])
+        if sensitive and patch_requires_material_hold(signals) and not continue_sensitive_review:
+            break
+    return signals, sensitive, limit_reached, structure_incomplete, media_skipped
+
+
+def _header_only_patch(text, sha):
+    """Recognize a commit mail envelope, never infer that its diff is empty."""
+    lines = text.splitlines()
+    if not lines or not lines[0].startswith(f"From {sha} "):
+        return False
+    header_end = next((index for index, line in enumerate(lines[1:32], 1) if not line), None)
+    if header_end is None:
+        return False
+    headers = lines[1:header_end]
+    if not all(any(line.startswith(name + ": ") and line[len(name) + 2:].strip()
+                   for line in headers) for name in ("From", "Date", "Subject")):
+        return False
+    if any("<html" in line.casefold() for line in lines[header_end + 1:]):
+        return False
+    return not any(line.startswith(("diff --git ", "@@ ", "--- a/", "+++ b/"))
+                   for line in lines[header_end + 1:])
+
+
+def _parse_patch(body, repository, sha, locator_store, scope_id, *, continue_sensitive_review=False):
     try:
         text = body.decode("utf-8", "strict")
     except UnicodeError:
@@ -146,31 +305,89 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
         return None, "patch_provenance_invalid"
     files, changed_lines = [], []
     old_path = new_path = False
+    diff_old = diff_new = None
+    current_recorded = False
+    status_hint = None
     old_remaining = new_remaining = 0
-    saw_hunk = saw_binary = saw_diff = False
+    saw_hunk = saw_binary = saw_diff = saw_file_marker = False
+    file_hunk = file_marker = file_binary = missing_hunk = False
+
+    def record_file():
+        nonlocal current_recorded
+        if current_recorded:
+            return
+        before = diff_old if old_path is False else old_path
+        after = diff_new if new_path is False else new_path
+        if before is False or after is False or (before is None and after is None):
+            raise ValueError("patch_provenance_invalid")
+        if (before is not None and before != diff_old) or (after is not None and after != diff_new):
+            raise ValueError("patch_provenance_invalid")
+        path = after or before
+        status = ("added" if before is None or status_hint == "added" else
+                  "removed" if after is None or status_hint == "removed" else
+                  "renamed" if before != after else "modified")
+        digest = hashlib.sha256(path.encode()).hexdigest()
+        if status == "removed":
+            location = f"https://github.com/{repository}/commit/{sha}#diff-{digest}"
+        else:
+            location = f"https://github.com/{repository}/blob/{sha}/{urllib.parse.quote(path, safe='/')}"
+        files.append({"file_locator_ref": locator_store.put(scope_id, location),
+                      "status": status, "category_hint": _category_hint(path),
+                      "current_repository_state": "not_measured"})
+        current_recorded = True
+
+    def finish_file():
+        nonlocal missing_hunk
+        record_file()
+        if file_marker and not file_hunk and not file_binary:
+            missing_hunk = True
+
     for line in text.splitlines():
         in_hunk = old_remaining > 0 or new_remaining > 0
         if not in_hunk and line.startswith("diff --git "):
+            if saw_diff:
+                try:
+                    finish_file()
+                except ValueError:
+                    return None, "patch_provenance_invalid"
+            pair = _diff_paths(line[len("diff --git "):])
+            if pair is None:
+                return None, "patch_provenance_invalid"
+            diff_old, diff_new = pair
             saw_diff = True
             old_path = new_path = False
+            current_recorded = False
+            status_hint = None
+            file_hunk = file_marker = file_binary = False
+        elif not in_hunk and line.startswith("new file mode "):
+            status_hint = "added"
+        elif not in_hunk and line.startswith("deleted file mode "):
+            status_hint = "removed"
+        elif not in_hunk and line.startswith("rename from "):
+            old_path = _path(_git_path_token(line[len("rename from "):])) or False
+            if old_path is False:
+                return None, "patch_provenance_invalid"
+        elif not in_hunk and line.startswith("rename to "):
+            new_path = _path(_git_path_token(line[len("rename to "):])) or False
+            if new_path is False:
+                return None, "patch_provenance_invalid"
         elif not in_hunk and (line.startswith("GIT binary patch") or line.startswith("Binary files ")):
             saw_binary = True
+            file_binary = True
         elif not in_hunk and line.startswith("--- "):
+            saw_file_marker = True
+            file_marker = True
             old_path = _header_path(line[4:], "a/")
         elif not in_hunk and line.startswith("+++ "):
+            saw_file_marker = True
+            file_marker = True
             new_path = _header_path(line[4:], "b/")
             if old_path is False or new_path is False or (old_path is None and new_path is None):
                 return None, "patch_provenance_invalid"
-            path = new_path or old_path
-            status = "added" if old_path is None else "removed" if new_path is None else "renamed" if old_path != new_path else "modified"
-            digest = hashlib.sha256(path.encode()).hexdigest()
-            if status == "removed":
-                location = f"https://github.com/{repository}/commit/{sha}#diff-{digest}"
-            else:
-                location = f"https://github.com/{repository}/blob/{sha}/{urllib.parse.quote(path, safe='/')}"
-            files.append({"file_locator_ref": locator_store.put(scope_id, location), "path_sha256": digest,
-                          "status": status, "category_hint": _category_hint(path),
-                          "current_repository_state": "not_measured"})
+            try:
+                record_file()
+            except ValueError:
+                return None, "patch_provenance_invalid"
         elif not in_hunk and line.startswith("@@"):
             match = _HUNK.match(line)
             if not match or not saw_diff or old_path is False or new_path is False:
@@ -178,6 +395,7 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
             old_remaining = int(match.group(1) or 1)
             new_remaining = int(match.group(2) or 1)
             saw_hunk = True
+            file_hunk = True
         elif in_hunk and line[:1] in {"+", "-"}:
             changed_lines.append(line)
             if line.startswith("+"):
@@ -196,32 +414,94 @@ def _parse_patch(body, repository, sha, locator_store, scope_id):
     if old_remaining or new_remaining:
         return None, "patch_provenance_invalid"
     if not saw_diff:
+        if _header_only_patch(text, sha):
+            return {"changed_files": [], "content_review": "header_only_requires_commit_detail"}, "header_only_patch_requires_commit_detail"
         return None, "patch_provenance_invalid"
+    try:
+        finish_file()
+    except ValueError:
+        return None, "patch_provenance_invalid"
+    if missing_hunk:
+        return {"changed_files": files, "content_review": "not_inspected"}, "patch_has_no_text_hunks"
     if not saw_hunk:
-        reason = "binary_patch_not_inspected" if saw_binary else "patch_has_no_text_hunks"
-        return {"changed_files": files, "content_review": "not_inspected"}, reason
-    changed = "\n".join(changed_lines).encode()
-    classification = analyze(changed, "text/plain").report
-    js_classification = analyze("\n".join(line[1:] for line in changed_lines).encode(),
-                                "application/javascript").report
-    signals = sorted({row["code"] for report in (classification, js_classification)
-                      for row in report["signals"]})
-    if any(report["content"] == "SENSITIVE_CANDIDATE" for report in (classification, js_classification)):
+        if saw_binary:
+            return {"changed_files": files, "content_review": "not_inspected"}, "binary_patch_not_inspected"
+        if saw_file_marker:
+            return {"changed_files": files, "content_review": "not_inspected"}, "patch_has_no_text_hunks"
+        return {"changed_files": files, "content_review": "metadata_only"}, None
+    signal_set, sensitive, limit_reached, structure_incomplete, media_skipped = _review_changed_lines(
+        changed_lines, continue_sensitive_review=continue_sensitive_review)
+    signals = sorted(signal_set)
+    if sensitive and patch_requires_material_hold(signals) and not continue_sensitive_review:
         return {"changed_files": files, "content_review": "stopped_sensitive_candidate",
                 "signal_codes": signals}, None
     if saw_binary:
         return {"changed_files": files, "content_review": "not_inspected"}, "binary_patch_not_inspected"
-    if len(changed) > MAX_ANALYSIS_BYTES or not all(report["analysis_complete"] for report in (classification, js_classification)):
+    if limit_reached:
         return {"changed_files": files, "content_review": "stopped_analysis_limit",
                 "signal_codes": signals}, "patch_analysis_limit_reached"
+    if structure_incomplete:
+        return {"changed_files": files, "content_review": "text_reviewed_structure_pending",
+                "signal_codes": signals,
+                "pending_reviews": ["inline_image_ocr_unexamined"] if media_skipped else []}, "patch_structure_parse_incomplete"
+    if media_skipped:
+        return {"changed_files": files, "content_review": "text_reviewed_media_pending",
+                "signal_codes": signals}, "inline_image_ocr_unexamined"
     introduced, removed = set(), set()
     for line in changed_lines:
         target = introduced if line.startswith("+") else removed
         for match in _URL.findall(line[1:]):
             target.add(locator_store.put(scope_id, match.rstrip(".,);]")))
     return {"changed_files": files, "content_review": "value_free_signals_only",
+            "signal_codes": signals, "sensitivity_candidate": sensitive,
             "literal_url_changes": {"introduced_locator_refs": sorted(introduced),
                                     "removed_locator_refs": sorted(removed)}}, None
+
+
+def analyze_repository_patch(body, url, locator_store, scope_id, *, max_bytes=MAX_PATCH_BYTES,
+                             continue_sensitive_review=False):
+    """Analyze captured patch bytes without fetching discovered references."""
+    if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_PATCH_BYTES_HARD:
+        raise ValueError("invalid_patch_byte_limit")
+    if type(continue_sensitive_review) is not bool:
+        raise ValueError("invalid_sensitive_review_option")
+    profile = {"document_type": "repository_patch", "content": "NOT_INSPECTED",
+               "analysis_complete": False, "pending_reviews": [],
+               "limitations": ["observed_commit_only", "history_lineage_not_exhaustive",
+                               "literal_urls_not_requested", "current_repository_state_not_measured"]}
+    parsed = _patch_url_parts(url)
+    if parsed is None:
+        profile["pending_reviews"].append("patch_url_invalid")
+        return profile
+    if not isinstance(body, bytes) or len(body) > max_bytes:
+        profile["pending_reviews"].append("patch_byte_limit_reached")
+        return profile
+    repository, sha = parsed
+    summary, gap = _parse_patch(body, repository, sha, locator_store, scope_id,
+                                continue_sensitive_review=continue_sensitive_review)
+    if summary:
+        profile.update(summary)
+        if continue_sensitive_review:
+            profile["authorized_sensitive_review"] = True
+        if continue_sensitive_review and summary.get("signal_codes"):
+            profile["sensitivity_candidate"] = bool(summary.get("sensitivity_candidate") or
+                any(code.endswith("_CANDIDATE") and code != "RUNTIME_ENDPOINT_CANDIDATE"
+                    for code in summary["signal_codes"]))
+        if summary.get("content_review") in {"value_free_signals_only", "metadata_only",
+                                              "text_reviewed_structure_pending",
+                                              "text_reviewed_media_pending"}:
+            profile["text_analysis_complete"] = True
+        if profile.get("sensitivity_candidate"):
+            profile["content"] = "SENSITIVE_CANDIDATE"
+        if summary.get("content_review") == "stopped_sensitive_candidate":
+            profile["content"] = "SENSITIVE_CANDIDATE"
+            profile["hold_repository_patch_lineage"] = True
+            profile["pending_reviews"].append("sensitive_candidate_stop")
+    if gap:
+        profile["pending_reviews"].append(gap)
+    elif summary and summary.get("content_review") in {"value_free_signals_only", "metadata_only"}:
+        profile["analysis_complete"] = True
+    return profile
 
 
 def _scope_authorizes_patch(scope, url, owner_ref):

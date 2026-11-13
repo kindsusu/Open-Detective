@@ -17,6 +17,8 @@ from .identifiers import (generate_identifiers, generate_search_queries,
 _NS = uuid.UUID("a63cb58e-29d3-450c-8a71-1e4ad86dbe38")
 CHANNELS = ("github", "web", "certificate_transparency", "documents")
 GENERATION_VERSION = 2
+MAX_DISCOVERED_ACCOUNT_JOBS = 20
+MAX_SEARCH_ACCOUNT_EXPANSIONS = 4
 
 def _now(): return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 def _id(prefix, *parts): return prefix + "_" + uuid.uuid5(_NS, "\x1f".join(map(str, parts))).hex
@@ -146,7 +148,9 @@ def _status(plan):
 
 def _promote(jobs: list[dict[str,Any]], kind: str, budget: int) -> None:
     if not isinstance(budget,int) or isinstance(budget,bool) or not 0 <= budget <= 10: raise ValueError("invalid resume budget")
-    for job in [j for j in jobs if j.get("kind")==kind and j.get("state")=="deferred" and j.get("channel")=="github"][:budget]:
+    for job in [j for j in jobs if j.get("kind")==kind and j.get("state")=="deferred"
+                and j.get("channel")=="github"
+                and j.get("deferred_reason")!="operator_review_required"][:budget]:
         job["state"]="planned"; job.pop("deferred_reason",None)
 
 def _apply_coverage(job: dict[str,Any], rows: list[Mapping[str,Any]], observed_at: str,
@@ -195,11 +199,25 @@ def _is_unobserved_expansion_limit(row: Mapping[str,Any]) -> bool:
 def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -> None:
     coverage=result.get("coverage",{})
     observed_at=str(result.get("observed_at") or _now())
+    def discovered_job(account: str, rationale: str) -> dict[str,Any] | None:
+        existing=next((job for job in plan["jobs"] if job.get("channel")=="github"
+                       and job.get("kind")=="account_candidate"
+                       and str(job.get("value","")).casefold()==account.casefold()),None)
+        if existing is not None:
+            return existing
+        count=sum(job.get("channel")=="github" and job.get("kind")=="account_candidate"
+                  and str(job.get("generation_rationale","")).startswith("github-search-")
+                  for job in plan["jobs"])
+        if count>=MAX_DISCOVERED_ACCOUNT_JOBS:
+            plan["discovered_account_job_limit_reached"]=True
+            return None
+        return _dynamic_account_job(plan,account,rationale)
     for row in result.get("accounts",[]):
         if not isinstance(row,Mapping) or not isinstance(row.get("login"),str):
             continue
         account=row["login"]
-        job=_dynamic_account_job(plan,account,"github-search-discovered-account")
+        job=discovered_job(account,"github-search-discovered-account")
+        if job is None: continue
         key=next((value for value in coverage if value.casefold()==f"list_public_repositories:{account}".casefold()),None)
         if key is not None:
             marker=coverage[key]
@@ -219,15 +237,28 @@ def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -
     for row in result.get("deferred",[]):
         if (isinstance(row,Mapping) and row.get("kind")=="account_expansion"
                 and isinstance(row.get("value"),str)):
-            _dynamic_account_job(plan,row["value"],"github-search-deferred-account")
+            job=discovered_job(row["value"],"github-search-deferred-account")
+            if job is not None and job.get("state") in {"planned","deferred"}:
+                reason=row.get("reason")
+                if reason=="operator_review_required":
+                    job["state"]="deferred"
+                    job["deferred_reason"]="operator_review_required"
+                elif reason=="not_scheduled_due_to_cap" and job.get("state")=="deferred":
+                    job["deferred_reason"]="account_expansion_cap_reached"
 
 
 def _record_connected_domains(plan: dict[str,Any], result: Mapping[str,Any]) -> None:
     """Queue observed homepage domains as separate, unapproved CT handoffs."""
+    eligible_owners={str(job.get("value","")).casefold() for job in plan["jobs"]
+                     if job.get("channel")=="github" and job.get("kind")=="account_candidate"
+                     and job.get("generation_rationale")!="github-search-deferred-account"
+                     and job.get("deferred_reason")!="operator_review_required"}
     known={str(job.get("value","")).casefold() for job in plan["jobs"]
            if job.get("kind")=="domain_seed"}
     for candidate in result.get("candidates",[]):
         if not isinstance(candidate,Mapping):
+            continue
+        if str(candidate.get("slug","")).split("/",1)[0].casefold() not in eligible_owners:
             continue
         homepage=candidate.get("homepage")
         if not isinstance(homepage,str):
@@ -310,7 +341,8 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
                 job["state"]="planned"; job["retry_of_error"]=job.get("error_code")
                 job.pop("next_eligible_at",None)
     eligible=[j for j in jobs if j.get("channel")=="github" and
-              (j.get("state")=="planned" or (resume_all_deferred and j.get("state")=="deferred"))]
+              (j.get("state")=="planned" or (resume_all_deferred and j.get("state")=="deferred"
+                 and j.get("deferred_reason")!="operator_review_required"))]
     if (fetch is None or live_fetch) and eligible:
         # Validate the conservative union up front.  Every selected job is
         # checked again immediately before its broker call as controls age.
@@ -324,8 +356,7 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
                               now=datetime.now(timezone.utc)) for job in eligible)
             if not available:
                 raise ValueError(errors[0])
-    # Exact URLs and supplied/generated identity candidates are cheap and strong.
-    # Run them before broad searches so a paginated search cannot starve them.
+    # Exact URLs and supplied/generated identity candidates run before broad searches.
     def priority(job: Mapping[str,Any]) -> int:
         if job.get("kind")=="known_url": return 0
         if job.get("kind")=="search_query" and not str(job.get("generation_rationale","")).startswith("broad:"): return 1
@@ -334,7 +365,7 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         return 99
     known=sorted((j for j in eligible if priority(j)==0),key=priority)
     queries=round_robin_narrow_queries(j for j in eligible if priority(j)==1)
-    accounts=[j for j in eligible if priority(j)==2 and j.get("generation_rationale")!="github-search-discovered-account"]
+    accounts=[j for j in eligible if priority(j)==2 and not str(j.get("generation_rationale","")).startswith("github-search-")]
     interleaved=[]
     for index in range(max(len(queries),len(accounts))):
         if index<len(queries): interleaved.append(queries[index])
@@ -376,8 +407,17 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         if job["kind"]=="search_query": kwargs["seeds"]=[job["value"]]
         elif job["kind"]=="account_candidate": kwargs["accounts"]=[job["value"]]
         else: kwargs["known_urls"]=[job["value"]]
+        account_context=[str(candidate.get("value")) for candidate in jobs
+                         if candidate.get("channel")=="github" and candidate.get("kind")=="account_candidate"
+                         and candidate.get("generation_rationale") in
+                         {"stem:operator-supplied","stem:english-compound-joined","stem:english"}]
+        ambiguous_search=(job["kind"]=="search_query" and
+                          (str(job.get("generation_rationale","")).startswith(("broad:","short-name:"))
+                           or len(str(job.get("value","")).split())>1))
         result=github_discover(out["scope_id"],max_requests=min(per_job_request_budget,remaining),fetch=fetch,
-                               max_accounts=10,channel_health=channel_health,
+                               max_accounts=MAX_SEARCH_ACCOUNT_EXPANSIONS if job["kind"]=="search_query" else 10,
+                               search_account_context=account_context if ambiguous_search else None,
+                               channel_health=channel_health,
                                locator_store=locator_store,page_size=job.get("page_size",100),
                                **({"validate_fetch_health":True} if live_fetch else {}),**kwargs)
         used=int(result.get("coverage",{}).get("totals",{}).get("requests",0))
@@ -408,7 +448,9 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
         _record_connected_domains(out,result)
         if resume_all_deferred:
             additions=[candidate for candidate in jobs if candidate.get("channel")=="github"
-                       and candidate.get("state") in {"planned","deferred"} and candidate.get("work_id") not in queued]
+                       and candidate.get("state") in {"planned","deferred"}
+                       and candidate.get("deferred_reason")!="operator_review_required"
+                       and candidate.get("work_id") not in queued]
             additions.sort(key=priority)
             eligible.extend(additions); queued.update(candidate["work_id"] for candidate in additions)
         for candidate in result.get("candidates",[]):

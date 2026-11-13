@@ -1,5 +1,9 @@
 # Bounded GitHub history review
 
+Explicit owner-authorized continuation of held patches is available through
+[patch-followup](patch-followup.md). It uses a separate exact-target manifest;
+the default stop behavior described below remains unchanged.
+
 `github-history` reviews one explicitly named public repository and a fixed UTC commit window. It is not global discovery, proof of ownership, a deployment check, or a reconstruction of the repository's current state.
 
 Create a private local manifest from [`examples/github-history.example.json`](../examples/github-history.example.json). `scope_id` is the locator-store boundary. `owner_ref` is the ownership-evidence record that must match the executable patch target. Manifest expiry limits reuse of the request; it does not replace executable `Scope` authorization.

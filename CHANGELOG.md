@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
+
+- Added bounded, value-free runtime failure categories and per-step diagnostic differences to distinguish blocked resources from script failures without retaining URLs or error text.
+
+- Added bounded, value-free target-state observations and explicit hidden-state expectations for captured UI prerequisites and closing transitions.
+
+- Added declared offline UI scenarios with per-step expectations, execution-range evidence, bounded local PNG export inspection, and preservation of partial progress on timeout. Explicitly approved, versioned third-party dependencies remain separately scoped and hash-pinned.
+- Added separately authorized, hash-pinned offline application runtime review, with local captured dependencies, encoded resource paths, bounded execution, redacted DOM evidence, and explicit startup/error/dependency coverage.
+- Added the offline `semantic-review` command for bounded inspection of an already captured local file. It saves value-free static coverage and candidate counts to a new private JSON file without fetching content or executing original JavaScript.
+- Added bounded data-only JavaScript literal parsing and explicit structural gap reasons. Unsupported expressions, non-finite JSON numbers, and unsupported semantic formats cannot report complete coverage. Documented hash-linked visual review separately from lexical and runtime checks.
+- Added explicit owner-authorized `patch-followup` for exact case-bound commits, with separate authenticated metadata and anonymous content observations, before/after file evidence, value-free candidate validation, and append-only resumable results. Default sensitive-candidate stops remain unchanged.
+- Continued approved patch and inline-image review beyond the first candidate, with bounded OCR continuation and base64 projection. Complete source parsing distinguishes real structure gaps from artificial chunk boundaries; processing coverage remains separate from semantic and visual verification.
+
+- Reuse a committed direct-child file review for a still-uncaptured duplicate only within the same active review interval and settings. Preserve original observation identity, incomplete dimensions, and the explicit result reference without inventing another HTTP observation.
+- Retry transient HTTP failures with persisted origin cooldowns and validated provider delays instead of analyzing error pages. When an observed commit patch is unavailable, inspect scoped commit-file metadata and exact current/parent file revisions without claiming that missing patch hunks were reviewed.
+- Inspect SVG source statically without executing scripts or loading linked resources; retain separate visual-review gaps.
+- Added explicit extended repository file/patch budgets, bounded transient capture caching, full-text patch chunk inspection, Git C-quoted path support, and committed follow-up patch coverage. Large HTML reviews preserve original-byte evidence while retaining genuine structure/runtime gaps.
+- Added optional local raster/inline-image OCR, including installed Windows Korean/English language packs and value-free results. OCR, language coverage, visual interpretation and metadata review are separate dimensions; unsupported or incomplete work remains visible.
+- Added operator-bound repository manifests, scope preflight, staged tree/raw-file/recent-history/`.patch`/deployment inspection, and `--inspection-only` audit runs. `audit report --final` saves incomplete gaps and exits 3 until completion requirements are met. Ambiguous broad-name hits remain review candidates under separate account and job fanout caps.
 - Added offline `prior-records` reconciliation for explicitly supplied operator-declared trusted prior-review manifests. Historical asset references retain provenance without automatically reopening findings or inheriting authorization; current requests still require ownership review and executable scope.
 - Refined offline Latin identifier variants for supplied compact and multiword industry tails while retaining operator spelling and bounded search-plan scheduling.
 - Added explicit bounded public `github-history` discovery and separately scoped patch-content inspection. Historical references remain candidates; extracted locations are private and never followed automatically.

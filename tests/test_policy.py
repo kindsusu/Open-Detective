@@ -80,6 +80,20 @@ class ScopeTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(PolicyError):
                 scope.authorize(url)
 
+    def test_encoded_path_space_is_canonical_but_raw_space_and_controls_are_rejected(self):
+        scope = Scope.from_dict(policy())
+        spaced = "https://app.example/allowed/price%20list.pdf"
+        self.assertEqual(spaced, scope.authorize(spaced))
+        for url in (
+            "https://app.example/allowed/price list.pdf",
+            "https://app.example/allowed/price%09list.pdf",
+            "https://app.example/allowed/price%0Alist.pdf",
+            "https://app.example/allowed/%2e%2e/secret%20list.pdf",
+            "https://app.example/allowed/price%20list.pdf?token=x",
+        ):
+            with self.subTest(url=url), self.assertRaises(PolicyError):
+                scope.authorize(url)
+
     def test_expiry_requires_future_utc(self):
         with self.assertRaises(PolicyError):
             Scope.from_dict(policy(expires_at="2099-01-01T00:00:00+09:00"))

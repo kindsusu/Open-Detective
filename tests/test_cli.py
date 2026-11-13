@@ -9,6 +9,14 @@ from sudetect.__main__ import main
 
 
 class CommandTests(unittest.TestCase):
+    def test_patch_followup_dispatches_explicit_authorization_inputs(self):
+        from unittest.mock import patch
+        args = ['--case', 'private-case', '--scope', 'scope.json',
+                '--manifest', 'approval.json', '--output', 'review.json']
+        with patch('sudetect.patch_followup.main', return_value=0) as command:
+            self.assertEqual(main(['patch-followup', *args]), 0)
+        command.assert_called_once_with(args)
+
     def test_github_discovery_command_dispatches_without_network(self):
         from unittest.mock import patch
         with patch('sudetect.github_discovery.main', return_value=0) as command:

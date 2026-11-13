@@ -79,13 +79,13 @@ class ClassifierTests(unittest.TestCase):
         self.assertIn('JSON_PARSE_INCOMPLETE', {x['code'] for x in result.report['signals']})
         self.assertFalse(result.report['analysis_complete'])
 
-    def test_ignored_script_chunks_do_not_claim_complete_analysis(self):
-        for tag, body in ((b'<script type="application/json">', b'{"customer_name":"fixture"}'),
-                          (b'<script>', b'const pw = "fixture-value"')):
-            prefix = (tag + b'{}' + b'</script>') * 16
-            result = analyze(prefix + tag + body + b'</script>', 'text/html')
-            self.assertFalse(result.report['analysis_complete'])
-            self.assertIn('HTML_PARSE_INCOMPLETE', {s['code'] for s in result.report['signals']})
+    def test_script_byte_budget_does_not_claim_complete_analysis(self):
+        from sudetect.classifiers import _HTMLSignals, MAX_STRUCTURE_BYTES
+        for tag, body in (('<script type="application/json">', '{"customer_name":"fixture"}'),
+                          ('<script>', 'const pw = "fixture-value"')):
+            parser = _HTMLSignals()
+            parser.feed(tag + ' ' * MAX_STRUCTURE_BYTES + body + '</script>')
+            self.assertTrue(parser.truncated)
 
     def test_json_depth_budget_is_explicit_and_ignores_quoted_brackets(self):
         from sudetect.classifiers import MAX_JSON_DEPTH

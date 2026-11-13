@@ -83,7 +83,7 @@ class RuntimeGapTests(unittest.TestCase):
             self.assertEqual(1, len(calls))
             run_case(case, {'max_requests': 1}, scope=policy(), fetcher=fetched)
             self.assertEqual(2, len(calls))
-            self.assertEqual(1, sum(j['dedupe_key'].startswith('engine-review:2:') for j in case.queue.status()['jobs']))
+            self.assertEqual(1, sum(j['dedupe_key'].startswith('engine-review:3:') for j in case.queue.status()['jobs']))
             run_case(case, {'max_requests': 1}, scope=policy(), fetcher=fetched)
             self.assertEqual(2, len(calls))
 
@@ -94,7 +94,10 @@ class RuntimeGapTests(unittest.TestCase):
         report, refs = analyze_history(json.dumps([{'sha': 'a' * 40, 'commit': {'author': {'name': 'do-not-report'}}}]).encode(), url)
         self.assertEqual(1, report['commits_examined'])
         self.assertIn('history_window_not_exhaustive', report['pending_reviews'])
-        self.assertEqual([('repository_snapshot', 'https://api.github.com/repos/orion-team/portal/git/trees/' + 'a' * 40 + '?recursive=1')], refs)
+        self.assertEqual([
+            ('repository_snapshot', 'https://api.github.com/repos/orion-team/portal/git/trees/' + 'a' * 40 + '?recursive=1'),
+            ('repository_patch', 'https://github.com/orion-team/portal/commit/' + 'a' * 40 + '.patch'),
+        ], refs)
         self.assertNotIn('do-not-report', json.dumps(report))
         bad, refs = analyze_history(b'[{"sha":"../evil"}]', url)
         self.assertFalse(bad['analysis_complete'])

@@ -22,6 +22,32 @@ class SchedulerTest(unittest.TestCase):
         self.ledger.close()
         self.tmp.cleanup()
 
+    def test_existing_blocked_job_resumes_only_when_requested(self):
+        job = self.queue.enqueue("content_review", "loc:one", scope_id="scope",
+                                 state="blocked_input", dedupe_key="upgrade:one")
+        same = self.queue.enqueue("content_review", "loc:one", scope_id="scope",
+                                  state="ready", dedupe_key="upgrade:one", resume_existing=False)
+        self.assertEqual(job, same)
+        self.assertEqual("blocked_input", next(item for item in self.queue.status()["jobs"]
+                                               if item["job_id"] == job)["state"])
+        same = self.queue.enqueue("content_review", "loc:one", scope_id="scope",
+                                  state="ready", dedupe_key="upgrade:one")
+        self.assertEqual(job, same)
+        self.assertEqual("ready", next(item for item in self.queue.status()["jobs"]
+                                       if item["job_id"] == job)["state"])
+        with self.assertRaises(LedgerError):
+            self.queue.enqueue("capture", "loc:two", scope_id="scope", resume_existing="false")
+
+    def test_explicit_repository_review_limits_are_bounded_and_recorded(self):
+        run = self.queue.start_run({"max_repository_files": 10000, "max_patch_bytes": 33554432})
+        limits = self.queue.get_run(run)["budget"]
+        self.assertEqual(limits["max_repository_files"], 10000)
+        self.assertEqual(limits["max_patch_bytes"], 33554432)
+        for invalid in ({"max_repository_files": 10001}, {"max_patch_bytes": 134217729},
+                        {"max_patch_bytes": True}, {"max_repository_files": 0}):
+            with self.assertRaises(LedgerError):
+                self.queue.start_run(invalid)
+
     def test_t05_reclaim_fences_stale_worker_and_preserves_checkpoint(self):
         job = self.queue.enqueue("capture", "loc:one", scope_id="scope", checkpoint={"stage": "captured"})
         run = self.queue.start_run({"max_requests": 2})
