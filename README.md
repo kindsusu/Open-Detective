@@ -103,7 +103,7 @@ python -m playwright install chromium
 
 The primary command is `open-detective`. The existing `su-detect` and `python -m sudetect` entry points remain supported and invoke the same CLI.
 
-The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `semantic-review`, `forensics`, `locators`, `ledger`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
+The root CLI provides `probe`, `browser`, `trace-assets`, `inventory`, `discover`, `github-discover`, `search-plan`, `channels-doctor`, `channel-discover`, `discovery-eval`, `asset-graph`, `asset-profile`, `asset-locations`, `prior-records`, `github-history`, `dom-replay`, `semantic-review`, `forensics`, `locators`, `ledger`, `analyze`, `audit`, `gate-review`, and `doctor`. Anonymous measurement commands require `--scope`; owner inventory and passive imports require explicit `--scope-id`. There is no implicit measurement scope or automatic header replay.
 
 Use [the operating workflow](docs/WORKFLOW.md) for the gated sequence and the relevant `ops/` guide before an optional or networked command.
 

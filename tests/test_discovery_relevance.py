@@ -14,25 +14,25 @@ class DiscoveryRelevanceTests(unittest.TestCase):
             path = urllib.parse.urlsplit(url).path
             calls.append(path)
             if path == "/search/repositories":
-                return 200, {"items": [repo("unrelated-shop", "harmony-theme")],
+                return 200, {"items": [repo("unrelated-shop", "melody-theme")],
                              "total_count": 1}, {}
             if path == "/search/users":
                 return 200, {"items": [{"login": "unrelated-shop"}],
                              "total_count": 1}, {}
             self.fail(url)
 
-        result = discover("relevance", seeds=["harmony"], fetch=fetch,
-                          search_account_context=["harmony-rent"])
+        result = discover("relevance", seeds=["melody"], fetch=fetch,
+                          search_account_context=["melody-rent"])
         self.assertEqual(["/search/repositories", "/search/users"], calls)
-        self.assertEqual(["unrelated-shop/harmony-theme"],
+        self.assertEqual(["unrelated-shop/melody-theme"],
                          [item["slug"] for item in result["candidates"]])
         self.assertEqual([], result["accounts"])
         self.assertTrue(any(item["reason"] == "operator_review_required"
                             for item in result["deferred"]))
 
     def test_plan_caps_review_jobs_and_does_not_auto_resume_them(self):
-        plan = create_plan(scope_id="harmony-review", company_en="Harmony Rent",
-                           aliases=["HarmonyRent"], query_budget=1, account_budget=1)
+        plan = create_plan(scope_id="melody-review", company_en="Melody Rent",
+                           aliases=["MelodyRent"], query_budget=1, account_budget=1)
         for job in plan["jobs"]:
             if job["channel"] == "github" and job["kind"] == "account_candidate":
                 job["state"] = "not_applicable"
@@ -43,7 +43,7 @@ class DiscoveryRelevanceTests(unittest.TestCase):
             path = urllib.parse.urlsplit(url).path
             calls.append(path)
             if path == "/search/repositories":
-                return 200, {"items": [repo(f"thirdparty-{i}", "harmony")
+                return 200, {"items": [repo(f"thirdparty-{i}", "melody")
                                        for i in range(80)], "total_count": 80}, {}
             if path == "/search/users":
                 return 200, {"items": [], "total_count": 0}, {}
