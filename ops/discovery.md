@@ -84,6 +84,16 @@ An initial exact account/repository 404 is `not_found_observed`, a completed bou
 
 Protocol references: [GitHub pagination](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api), [GitHub REST troubleshooting](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
 
+## Operator exclusions
+
+After human review, record accounts that only share a name with the organization so later runs skip them:
+
+```bash
+open-detective search-plan exclude --plan _local/plan.json --account unrelated-account --reason "different company, name collision"
+```
+
+Exclusions are durable plan state with a reason and time. Pending, deferred, or failed account jobs for an excluded login become `not_applicable` (`operator_excluded`); attempted history is kept. Later runs drop candidates owned by an excluded account and never expand it. An exclusion is an operator relevance decision, not evidence that the account is harmless.
+
 ## Resuming discovery with explicit budgets
 
 A normal `search-plan run` processes planned work under a total request budget (default 20) and a per-job cap (default 6). Exact supplied URLs run first. Full identity, industry-context, and function-context query families alternate while preserving order inside each family; short or broad terms and search-discovered account expansion remain later. Eligible queries alternate one-for-one with identity-account candidates. Exact Latin identity spellings (official English name and aliases, joined or hyphenated only at existing word boundaries) and their numeric siblings (`1`, `2`) are planned under a separate fixed cap of 16 instead of competing for the small generic account budget, so a numbered account such as `<name>-<industry>1` is not left deferred. Older plans promote matching unattempted budget-deferred jobs once; attempted work is never rewritten. This is a bounded heuristic, so a full spelling can be delayed; it does not establish exhaustive or optimal recall. A query that reaches its cap remains incomplete. Increase `--per-job-request-budget` for a deliberate deeper retry, up to 30.
