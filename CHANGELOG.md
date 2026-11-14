@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Planned exact identity account spellings and their numeric siblings under a separate cap of 16, so numbered identity accounts are no longer left deferred by the generic account budget. Plan generation version 3 promotes matching unattempted deferred jobs in older plans.
+
 - Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
 
 - Added bounded, value-free runtime failure categories and per-step diagnostic differences to distinguish blocked resources from script failures without retaining URLs or error text.
