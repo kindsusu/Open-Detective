@@ -79,7 +79,7 @@ open-detective search-plan exclude --plan _local/plan.json --account unrelated-a
 
 ## 명시적 예산으로 검색 재개
 
-일반 `search-plan run`은 planned 작업을 총 요청 예산(기본 20회)과 작업별 한도(기본 6회) 안에서 실행한다. 알려진 URL을 우선한다. 전체 identity, industry 문맥, function 문맥 query family를 번갈아 조회하되 각 family 안에서는 순서를 보존하며, 짧거나 넓은 단어와 검색에서 나온 계정 확장은 뒤에 둔다. eligible query와 identity account 후보는 1:1로 번갈아 처리한다. 이는 제한된 heuristic이므로 전체 표기가 지연될 수 있으며 exhaustive 또는 최적 recall을 뜻하지 않는다. 한도에 닿은 쿼리는 미완료로 남긴다. 의도적으로 더 깊이 재조회할 때는 `--per-job-request-budget`을 최대 30까지 늘린다.
+일반 `search-plan run`은 planned 작업을 총 요청 예산(기본 20회)과 작업별 한도(기본 6회) 안에서 실행한다. 알려진 URL을 우선한다. 전체 identity, industry 문맥, function 문맥 query family를 번갈아 조회하되 각 family 안에서는 순서를 보존하며, 짧거나 넓은 단어와 검색에서 나온 계정 확장은 뒤에 둔다. eligible query와 identity account 후보는 1:1로 번갈아 처리한다. 정식 영문명·별칭의 정확한 라틴 표기(기존 단어 경계에서만 붙이거나 하이픈 연결)와 그 숫자 형제(`1`, `2`)는 작은 일반 계정 예산과 경쟁하지 않고 별도 고정 한도 16개 안에서 planned로 만든다. 그래서 `<이름>-<업종>1` 같은 번호 붙은 계정이 deferred로 남지 않는다. 이전 계획은 시도하지 않은 예산 초과 deferred 작업 중 해당 항목만 한 번 승격하며, 이미 시도한 작업은 바꾸지 않는다. 이는 제한된 heuristic이므로 전체 표기가 지연될 수 있으며 exhaustive 또는 최적 recall을 뜻하지 않는다. 한도에 닿은 쿼리는 미완료로 남긴다. 의도적으로 더 깊이 재조회할 때는 `--per-job-request-budget`을 최대 30까지 늘린다.
 
 ```bash
 open-detective search-plan run-until-budget --plan _local/plan.json --locator-store _local/locators.sqlite --request-budget 60 --per-job-request-budget 6 --max-batches 30 --channel-health _local/channel-health.json

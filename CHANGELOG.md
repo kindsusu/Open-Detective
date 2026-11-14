@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Added `search-plan exclude` to record operator-reviewed unrelated accounts in the plan. Later runs skip their pending jobs, drop candidates they own, and never expand them; attempted history is kept.
+- Planned exact identity account spellings and their numeric siblings under a separate cap of 16, so numbered identity accounts are no longer left deferred by the generic account budget. Plan generation version 3 promotes matching unattempted deferred jobs in older plans.
 
 - Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
 
