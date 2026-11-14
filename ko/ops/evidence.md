@@ -10,7 +10,7 @@ probe의 `target_id`는 기본적으로 무작위 `opaque:` 식별자다. 수행
 
 URL userinfo, path segment, query, fragment, header, cookie, redirect, console output, DOM text, filename, screenshot, HAR, trace를 정화한다. `<email>`, `<token>`, `<record-id>` 같은 placeholder로 구조를 보존한다. 안정적인 비밀 비교에는 접근통제된 keyed HMAC을 쓴다. entropy가 낮은 비밀의 plain hash는 값을 노출할 수 있다.
 
-개인정보는 명단 대신 유형과 제한된 대략 건수를 기록한다. 비밀은 provider/type, 안전한 경우에만 masked prefix/suffix, location class, `live_validity=unknown`을 기록한다. audit process에서 로그인, data API 호출, secret 회전을 하지 않는다. 소유자 측 validity/rotation 증거는 별도 event다.
+개인정보는 명단 대신 유형과 제한된 대략 건수를 기록한다. 값 후보(전화·이메일·주민번호·차량번호·사업자번호)는 소유자가 해당 기록을 찾을 수 있도록 부분 마스킹한 예시를 최대 3개까지 함께 남긴다: 전화 `010-****-5678`, 차량번호 `12가34**`, 사업자번호 `109-86-316**`, 주민번호 `900101-1******`, 이메일 `fi*****@example.test`. 전체 값은 저장하지 않는다. 비밀은 provider/type, 안전한 경우에만 masked prefix/suffix, location class, `live_validity=unknown`을 기록한다. audit process에서 로그인, data API 호출, secret 회전을 하지 않는다. 소유자 측 validity/rotation 증거는 별도 event다.
 
 `0`과 `false`는 typed value로 남긴다. null, absent, empty string, redacted, truncated, not inspected를 구분한다. 모든 집계에 source, selection boundary, 조기 중단 여부를 적는다.
 

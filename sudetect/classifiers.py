@@ -1,4 +1,6 @@
-"""Bounded, deterministic content signals. Raw values never enter the report.
+"""Bounded, deterministic content signals. Full raw values never enter the report;
+value candidates carry at most a few partially masked examples so an owner can
+locate them without reconstructing the original value.
 
 Heuristics raise candidates, never prove legal sensitivity or credential validity.
 Only explicitly supplied synthetic test markers may be confirmed automatically.
@@ -196,6 +198,46 @@ def _is_example(value: object) -> bool:
     return bool(re.fullmatch(r"\s*(?:example|sample|placeholder|dummy|test|예시|샘플|입력|미정|[-_]+|\{\{.*\}\}|\$\{.*\})\s*", value, re.I))
 
 
+MAX_MASKED_EXAMPLES = 3
+
+
+def mask_value(kind: str, value: str) -> str:
+    """Partially mask a matched value so an owner can locate it without reconstructing it.
+
+    Phone: middle group hidden. Plate/business number: last two digits hidden.
+    Resident number: everything after the gender digit hidden. Email: local part
+    beyond two characters hidden. Unknown kinds are fully masked.
+    """
+    text = re.sub(r"\s+", " ", str(value).strip())
+    if kind == "phone":
+        digits = re.sub(r"\D", "", text)
+        return digits[:3] + "-" + "*" * (len(digits) - 7) + "-" + digits[-4:]
+    if kind in {"plate", "business"}:
+        positions = [i for i, ch in enumerate(text) if ch.isdigit()][-2:]
+        chars = list(text)
+        for i in positions:
+            chars[i] = "*"
+        return "".join(chars)
+    if kind == "resident":
+        digits = re.sub(r"\D", "", text)
+        return digits[:6] + "-" + digits[6] + "*" * 6
+    if kind == "email":
+        local, _, domain = text.partition("@")
+        return local[:2] + "*" * max(1, len(local) - 2) + "@" + domain
+    return "*" * len(text)
+
+
+def masked_examples(kind: str, values) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        masked = mask_value(kind, value)
+        if masked not in out:
+            out.append(masked)
+        if len(out) >= MAX_MASKED_EXAMPLES:
+            break
+    return out
+
+
 def analyze(body: bytes, content_type="", base_url="", *, synthetic_markers=(),
             max_bytes: int = MAX_ANALYSIS_BYTES, capture_complete: bool = True) -> Analysis:
     from .asset_profile import profile_content
@@ -280,17 +322,20 @@ def analyze(body: bytes, content_type="", base_url="", *, synthetic_markers=(),
                 strings.append(item)
             if len(queue) > 2048: queue = queue[:2048]; truncated = True
         value_text = (" " if "json" in ctype else value_text + " ") + " ".join(strings)
-    for code, pattern in (("EMAIL_VALUE_CANDIDATE", EMAIL), ("KR_PHONE_VALUE_CANDIDATE", PHONE),
-                          ("KR_RESIDENT_VALUE_CANDIDATE", RESIDENT), ("KR_VEHICLE_PLATE_CANDIDATE", PLATE)):
+    for code, kind, pattern in (("EMAIL_VALUE_CANDIDATE", "email", EMAIL), ("KR_PHONE_VALUE_CANDIDATE", "phone", PHONE),
+                                ("KR_RESIDENT_VALUE_CANDIDATE", "resident", RESIDENT),
+                                ("KR_VEHICLE_PLATE_CANDIDATE", "plate", PLATE)):
         matches = list(pattern.finditer(value_text))
         if matches:
             signal(code, confidence="heuristic", occurrences=len(matches),
-                   unique_values=len({m.group() for m in matches}), records=None, assets=None)
+                   unique_values=len({m.group() for m in matches}), records=None, assets=None,
+                   masked_examples=masked_examples(kind, (m.group() for m in matches)))
     business = [m for m in BUSINESS_NUMBER.finditer(value_text) if _valid_business_number(m.group())]
     if business:
         signal("KR_BUSINESS_NUMBER_CANDIDATE", confidence="format_validated", occurrences=len(business),
                unique_values=len({m.group() for m in business}), records=None, assets=None,
-               personal_information="not_inferred")
+               personal_information="not_inferred",
+               masked_examples=masked_examples("business", (m.group() for m in business)))
     for region, content in (("visible_body", visible_text), ("hidden_body", hidden_text)):
         if CONFIDENTIAL.search(content):
             signal("CONFIDENTIAL_MARKER_CANDIDATE", location=region, target_region=region,

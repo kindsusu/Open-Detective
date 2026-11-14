@@ -16,9 +16,14 @@ from .identifiers import (generate_identifiers, generate_search_queries,
 
 _NS = uuid.UUID("a63cb58e-29d3-450c-8a71-1e4ad86dbe38")
 CHANNELS = ("github", "web", "certificate_transparency", "documents")
-GENERATION_VERSION = 2
+GENERATION_VERSION = 3
 MAX_DISCOVERED_ACCOUNT_JOBS = 20
 MAX_SEARCH_ACCOUNT_EXPANSIONS = 4
+# Exact identity spellings and their numeric siblings are cheap (one listing
+# request each) and historically held real exposures that a small generic
+# account budget left deferred. They get their own fixed cap.
+IDENTITY_ACCOUNT_LIMIT = 16
+IDENTITY_NUMERIC_SUFFIXES = ("1", "2")
 
 def _now(): return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 def _id(prefix, *parts): return prefix + "_" + uuid.uuid5(_NS, "\x1f".join(map(str, parts))).hex
@@ -27,6 +32,38 @@ def _write(path, value):
     temporary=target.with_suffix(target.suffix+".tmp")
     temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2,sort_keys=True)+"\n",encoding="utf-8")
     temporary.replace(target)
+
+
+def _identity_core(company_en: str, aliases: Iterable[str]) -> list[tuple[str,str]]:
+    """Exact Latin identity spellings, then numeric siblings, bounded and ordered.
+
+    Separators are only placed at existing word boundaries; no characters are
+    guessed. Each value must pass the GitHub namespace validator.
+    """
+    forms: list[str] = []
+    for name in [company_en, *aliases]:
+        words = re.findall(r"[a-z0-9]+", str(name).casefold())
+        if not words or len("".join(words)) < 3:
+            continue
+        variants = [words[0]]
+        for word in words[1:]:
+            variants = [v + sep + word for v in variants for sep in ("", "-")]
+        for value in variants:
+            if value not in forms:
+                forms.append(value)
+        if len(forms) >= IDENTITY_ACCOUNT_LIMIT:
+            break
+    rows = [(value, "identity-core:form") for value in forms]
+    rows += [(value + suffix, "identity-core:numeric:" + suffix)
+             for suffix in IDENTITY_NUMERIC_SUFFIXES for value in forms]
+    seen: set[str] = set(); out: list[tuple[str,str]] = []
+    for value, why in rows:
+        if value in seen or not validate_target_candidate("github", value):
+            continue
+        seen.add(value); out.append((value, why))
+        if len(out) >= IDENTITY_ACCOUNT_LIMIT:
+            break
+    return out
 
 def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliases: Iterable[str]=(),
                 industry: Iterable[str]=(), functions: Iterable[str]=(), known_urls: Iterable[str]=(),
@@ -54,7 +91,13 @@ def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliase
     for index,row in enumerate(queries):
         job("github","search_query",row["query"],row["rationale"],"planned" if index<query_budget else "deferred",2,
             None if index<query_budget else "query_budget_exceeded")
-    for index,row in enumerate(identifiers):
+    core=_identity_core(company_en,aliases)
+    core_values={value for value,_ in core}
+    by_value={str(row["identifier"]):row["rationale"] for row in identifiers}
+    for value,why in core:
+        job("github","account_candidate",value,by_value.get(value,why),"planned",1)
+    rest=[row for row in identifiers if str(row["identifier"]) not in core_values]
+    for index,row in enumerate(rest):
         job("github","account_candidate",row["identifier"],row["rationale"],"planned" if index<account_budget else "deferred",1,
             None if index<account_budget else "account_budget_exceeded")
     for value in known_urls: job("github","known_url",value,"operator-known-url","planned",2)
@@ -108,9 +151,20 @@ def reconcile_generated_jobs(plan: Mapping[str,Any]) -> dict[str,Any]:
         out["generation_migration_gap"]="identity_plan_id_mismatch"
         return out
     existing={job.get("work_id") for job in out.get("jobs",[])}
-    added=0
+    added=0; promoted=0
+    core_ids={job["work_id"] for job in candidate["jobs"]
+              if job.get("kind")=="account_candidate" and job.get("state")=="planned"}
+    for job in out.get("jobs",[]):
+        if (job.get("work_id") in core_ids and job.get("state")=="deferred"
+                and job.get("deferred_reason")=="account_budget_exceeded" and not job.get("attempts")):
+            job["state"]="planned"; job.pop("deferred_reason",None); promoted+=1
     for job in candidate["jobs"]:
-        if "proper-prefix" not in job.get("generation_rationale", "") or job["work_id"] in existing:
+        if job["work_id"] in existing:
+            continue
+        if job["work_id"] in core_ids:
+            out.setdefault("jobs",[]).append(job); existing.add(job["work_id"]); added+=1
+            continue
+        if "proper-prefix" not in job.get("generation_rationale", ""):
             continue
         # New search/account work is visible for resume-all-deferred or an
         # explicit resume budget. External channels remain import-required.
@@ -122,6 +176,7 @@ def reconcile_generated_jobs(plan: Mapping[str,Any]) -> dict[str,Any]:
         added+=1
     out["generation_version"]=GENERATION_VERSION
     out["generation_migration_added"]=added
+    out["generation_migration_promoted"]=promoted
     out.pop("generation_migration_gap",None)
     out["status"]=_status(out)
     out["updated_at"]=_now()
@@ -249,11 +304,68 @@ def brand_namespace_review(plan: Mapping[str,Any]) -> dict[str,Any]:
             "unobserved_identity_candidates":unobserved,
             "limitations":["identity_candidates_only","existence_is_not_ownership",
                            "unobserved_candidates_are_coverage_gaps"]}
+_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
+
+
+def exclude_accounts(plan: Mapping[str,Any], logins: Iterable[str], reason: str) -> dict[str,Any]:
+    """Record operator-reviewed unrelated GitHub accounts for every later run.
+
+    Exclusion is durable plan state, not a deletion: attempted jobs keep their
+    history, while pending work for the account becomes not_applicable.
+    """
+    if not isinstance(reason,str) or not reason.strip() or len(reason)>200:
+        raise ValueError("exclusion reason required")
+    out=json.loads(json.dumps(plan))
+    current={str(row.get("login","")).casefold():row for row in out.get("excluded_accounts",[])
+             if isinstance(row,Mapping)}
+    for login in logins:
+        if not isinstance(login,str) or not _LOGIN.fullmatch(login):
+            raise ValueError("invalid account login")
+        current.setdefault(login.casefold(),{"login":login,"reason":reason.strip(),"recorded_at":_now()})
+    out["excluded_accounts"]=sorted(current.values(),key=lambda row:row["login"].casefold())
+    _apply_exclusions(out)
+    out["status"]=_status(out); out["updated_at"]=_now()
+    return out
+
+
+def _excluded(plan: Mapping[str,Any]) -> set[str]:
+    return {str(row.get("login","")).casefold() for row in plan.get("excluded_accounts",[])
+            if isinstance(row,Mapping)}
+
+
+def _apply_exclusions(plan: dict[str,Any]) -> int:
+    excluded=_excluded(plan); changed=0
+    for job in plan.get("jobs",[]):
+        if (job.get("channel")=="github" and job.get("kind")=="account_candidate"
+                and str(job.get("value","")).casefold() in excluded
+                and job.get("state") in {"planned","deferred","failed"}):
+            job["state"]="not_applicable"; job["not_applicable_reason"]="operator_excluded"
+            job.pop("deferred_reason",None); changed+=1
+    return changed
+
+
+def _filter_excluded_result(plan: Mapping[str,Any], result: dict[str,Any]) -> None:
+    excluded=_excluded(plan)
+    if not excluded:
+        return
+    def owner(slug): return str(slug).split("/",1)[0].casefold()
+    kept=[c for c in result.get("candidates",[]) if owner(c.get("slug","")) not in excluded]
+    dropped=len(result.get("candidates",[]))-len(kept)
+    result["candidates"]=kept
+    result["accounts"]=[a for a in result.get("accounts",[])
+                        if not (isinstance(a,Mapping) and str(a.get("login","")).casefold() in excluded)]
+    result["deferred"]=[d for d in result.get("deferred",[])
+                        if not (isinstance(d,Mapping) and str(d.get("value","")).casefold() in excluded)]
+    if dropped:
+        result["excluded_candidates"]=dropped
 
 def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -> None:
     coverage=result.get("coverage",{})
     observed_at=str(result.get("observed_at") or _now())
+    excluded=_excluded(plan)
     def discovered_job(account: str, rationale: str) -> dict[str,Any] | None:
+        if account.casefold() in excluded:
+            return None
         existing=next((job for job in plan["jobs"] if job.get("channel")=="github"
                        and job.get("kind")=="account_candidate"
                        and str(job.get("value","")).casefold()==account.casefold()),None)
@@ -380,6 +492,7 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
     jobs=out.get("jobs",[])
     if persist and prior_generation != out.get("generation_version",1):
         persist(out)
+    _apply_exclusions(out)
     _promote(jobs,"search_query",resume_query_budget); _promote(jobs,"account_candidate",resume_account_budget)
     if retry_failed:
         for job in jobs:
@@ -474,6 +587,7 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
                                channel_health=channel_health,
                                locator_store=locator_store,page_size=job.get("page_size",100),
                                **({"validate_fetch_health":True} if live_fetch else {}),**kwargs)
+        _filter_excluded_result(out,result)
         used=int(result.get("coverage",{}).get("totals",{}).get("requests",0))
         requests_used+=min(remaining,max(0,used)); batches+=1
         if job["kind"]=="search_query": keys=("search_users:1","search_repositories:1")
@@ -666,6 +780,8 @@ def main(argv=None):
     own=sub.add_parser("own"); own.add_argument("--plan",required=True)
     own.add_argument("--account",action="append",required=True); own.add_argument("--evidence",required=True)
     ns=sub.add_parser("namespaces"); ns.add_argument("--plan",required=True)
+    exc=sub.add_parser("exclude"); exc.add_argument("--plan",required=True)
+    exc.add_argument("--account",action="append",required=True); exc.add_argument("--reason",required=True)
     args=p.parse_args(argv)
     try:
         if args.command=="plan":
@@ -708,6 +824,7 @@ def main(argv=None):
             elif args.command=="own": plan=declare_owned_accounts(plan,args.account,args.evidence); _write(path,plan)
             elif args.command=="namespaces":
                 print(json.dumps(brand_namespace_review(plan),ensure_ascii=False,sort_keys=True)); return 0
+            elif args.command=="exclude": plan=exclude_accounts(plan,args.account,args.reason); _write(path,plan)
             elif args.command=="import": plan=import_results(plan,json.loads(Path(args.input).read_text(encoding="utf-8"))); _write(path,plan)
         print(json.dumps(plan_status(plan),ensure_ascii=False,sort_keys=True)); return 0
     except (OSError,ValueError,KeyError,json.JSONDecodeError):
