@@ -67,6 +67,16 @@ GitHub는 다음 페이지 Link에 계정명 대신 숫자 사용자 ID를 넣�
 프로토콜 대조: [GitHub 페이지 처리](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api), [GitHub REST 문제 해결](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
 
 
+## 브랜드 네임스페이스 검토
+
+계획에 이미 있는 이름 기반 계정 조회 결과로 브랜드에서 파생된 GitHub 계정·조직 중 실제 존재하는 것을 볼 수 있다. 회사 소유 계정을 근거와 함께 등록한 뒤 나머지를 오프라인으로 확인한다:
+
+```bash
+open-detective search-plan own --plan _local/plan.json --account official-org --evidence "asset-register:ID"
+open-detective search-plan namespaces --plan _local/plan.json
+```
+
+`namespaces`는 요청을 보내지 않는다. 존재하는 이름 기반 계정은 `owned`·`excluded`·`review_required`(`BRAND_NAMESPACE_CANDIDATE`) 중 하나로 표시된다. 존재하지만 소유 등록되지 않은 계정은 개인 계정, 이름 선점, 무관한 제3자일 수 있으며, 존재 자체가 소유나 사칭의 증거는 아니다. 아직 조회하지 않은 이름 후보는 커버리지 공백으로 센다.
 ## 운영자 제외 목록
 
 사람이 검토해 이름만 겹치는 무관 계정으로 판단한 경우, 이후 실행에서 건너뛰도록 기록한다:
