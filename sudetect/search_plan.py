@@ -16,9 +16,14 @@ from .identifiers import (generate_identifiers, generate_search_queries,
 
 _NS = uuid.UUID("a63cb58e-29d3-450c-8a71-1e4ad86dbe38")
 CHANNELS = ("github", "web", "certificate_transparency", "documents")
-GENERATION_VERSION = 2
+GENERATION_VERSION = 3
 MAX_DISCOVERED_ACCOUNT_JOBS = 20
 MAX_SEARCH_ACCOUNT_EXPANSIONS = 4
+# Exact identity spellings and their numeric siblings are cheap (one listing
+# request each) and historically held real exposures that a small generic
+# account budget left deferred. They get their own fixed cap.
+IDENTITY_ACCOUNT_LIMIT = 16
+IDENTITY_NUMERIC_SUFFIXES = ("1", "2")
 
 def _now(): return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 def _id(prefix, *parts): return prefix + "_" + uuid.uuid5(_NS, "\x1f".join(map(str, parts))).hex
@@ -27,6 +32,38 @@ def _write(path, value):
     temporary=target.with_suffix(target.suffix+".tmp")
     temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2,sort_keys=True)+"\n",encoding="utf-8")
     temporary.replace(target)
+
+
+def _identity_core(company_en: str, aliases: Iterable[str]) -> list[tuple[str,str]]:
+    """Exact Latin identity spellings, then numeric siblings, bounded and ordered.
+
+    Separators are only placed at existing word boundaries; no characters are
+    guessed. Each value must pass the GitHub namespace validator.
+    """
+    forms: list[str] = []
+    for name in [company_en, *aliases]:
+        words = re.findall(r"[a-z0-9]+", str(name).casefold())
+        if not words or len("".join(words)) < 3:
+            continue
+        variants = [words[0]]
+        for word in words[1:]:
+            variants = [v + sep + word for v in variants for sep in ("", "-")]
+        for value in variants:
+            if value not in forms:
+                forms.append(value)
+        if len(forms) >= IDENTITY_ACCOUNT_LIMIT:
+            break
+    rows = [(value, "identity-core:form") for value in forms]
+    rows += [(value + suffix, "identity-core:numeric:" + suffix)
+             for suffix in IDENTITY_NUMERIC_SUFFIXES for value in forms]
+    seen: set[str] = set(); out: list[tuple[str,str]] = []
+    for value, why in rows:
+        if value in seen or not validate_target_candidate("github", value):
+            continue
+        seen.add(value); out.append((value, why))
+        if len(out) >= IDENTITY_ACCOUNT_LIMIT:
+            break
+    return out
 
 def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliases: Iterable[str]=(),
                 industry: Iterable[str]=(), functions: Iterable[str]=(), known_urls: Iterable[str]=(),
@@ -54,7 +91,13 @@ def create_plan(*, scope_id: str, company_ko: str="", company_en: str="", aliase
     for index,row in enumerate(queries):
         job("github","search_query",row["query"],row["rationale"],"planned" if index<query_budget else "deferred",2,
             None if index<query_budget else "query_budget_exceeded")
-    for index,row in enumerate(identifiers):
+    core=_identity_core(company_en,aliases)
+    core_values={value for value,_ in core}
+    by_value={str(row["identifier"]):row["rationale"] for row in identifiers}
+    for value,why in core:
+        job("github","account_candidate",value,by_value.get(value,why),"planned",1)
+    rest=[row for row in identifiers if str(row["identifier"]) not in core_values]
+    for index,row in enumerate(rest):
         job("github","account_candidate",row["identifier"],row["rationale"],"planned" if index<account_budget else "deferred",1,
             None if index<account_budget else "account_budget_exceeded")
     for value in known_urls: job("github","known_url",value,"operator-known-url","planned",2)
@@ -108,9 +151,20 @@ def reconcile_generated_jobs(plan: Mapping[str,Any]) -> dict[str,Any]:
         out["generation_migration_gap"]="identity_plan_id_mismatch"
         return out
     existing={job.get("work_id") for job in out.get("jobs",[])}
-    added=0
+    added=0; promoted=0
+    core_ids={job["work_id"] for job in candidate["jobs"]
+              if job.get("kind")=="account_candidate" and job.get("state")=="planned"}
+    for job in out.get("jobs",[]):
+        if (job.get("work_id") in core_ids and job.get("state")=="deferred"
+                and job.get("deferred_reason")=="account_budget_exceeded" and not job.get("attempts")):
+            job["state"]="planned"; job.pop("deferred_reason",None); promoted+=1
     for job in candidate["jobs"]:
-        if "proper-prefix" not in job.get("generation_rationale", "") or job["work_id"] in existing:
+        if job["work_id"] in existing:
+            continue
+        if job["work_id"] in core_ids:
+            out.setdefault("jobs",[]).append(job); existing.add(job["work_id"]); added+=1
+            continue
+        if "proper-prefix" not in job.get("generation_rationale", ""):
             continue
         # New search/account work is visible for resume-all-deferred or an
         # explicit resume budget. External channels remain import-required.
@@ -122,6 +176,7 @@ def reconcile_generated_jobs(plan: Mapping[str,Any]) -> dict[str,Any]:
         added+=1
     out["generation_version"]=GENERATION_VERSION
     out["generation_migration_added"]=added
+    out["generation_migration_promoted"]=promoted
     out.pop("generation_migration_gap",None)
     out["status"]=_status(out)
     out["updated_at"]=_now()

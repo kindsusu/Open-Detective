@@ -86,7 +86,8 @@ class DiscoveryImprovements(unittest.TestCase):
                 return 429,{}, {"Retry-After":"120"}
             return 200,[],{}
         out=run_plan(plan,fetch=fetch,request_budget=4,max_batches=4)
-        self.assertEqual(2,len(calls))
+        # One rate-limited search; independent identity listings still run.
+        self.assertEqual(1,sum(x.startswith("/search/") for x in calls))
         self.assertTrue(any(x.startswith("/users/") for x in calls))
         failed=next(j for j in out["jobs"] if j["kind"]=="search_query" and j["state"]=="failed")
         self.assertGreater(datetime.fromisoformat(failed["next_eligible_at"].replace("Z","+00:00")), datetime.now(timezone.utc))
@@ -106,8 +107,10 @@ class DiscoveryImprovements(unittest.TestCase):
                         "totals":{"requests":1}}}
         with patch("sudetect.search_plan._validate_channel_health",side_effect=health), \
              patch("sudetect.search_plan.github_discover",side_effect=result):
-            out=run_plan(plan,channel_health={"controls":[]},request_budget=3)
-        self.assertEqual(1,len(observed))
+            out=run_plan(plan,channel_health={"controls":[]},request_budget=20)
+        # Only core account listings run while search health is stale.
+        self.assertGreaterEqual(len(observed),1)
+        self.assertTrue(all(call["accounts"] and not call["seeds"] for call in observed))
         self.assertEqual("channel_health_failed",out["last_execution"]["stop_reason"])
 
     def test_metered_live_fetch_checks_health_at_request_boundary(self):

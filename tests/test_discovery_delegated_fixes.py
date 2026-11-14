@@ -6,7 +6,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from sudetect.github_discovery import discover
 from sudetect.identifiers import generate_identifiers, generate_search_queries
-from sudetect.search_plan import create_plan, plan_status, reconcile_generated_jobs, run_plan
+from sudetect.search_plan import (GENERATION_VERSION, create_plan, plan_status,
+                                  reconcile_generated_jobs, run_plan)
 from tests.test_github_discovery import repo
 
 
@@ -26,7 +27,7 @@ class DiscoveryDelegatedFixes(unittest.TestCase):
         old["runs"] = [{"run_id": "historical", "status": "COMPLETE"}]
         original_ids = {job["work_id"] for job in old["jobs"]}
         migrated = reconcile_generated_jobs(old)
-        self.assertEqual(2, migrated["generation_version"])
+        self.assertEqual(GENERATION_VERSION, migrated["generation_version"])
         self.assertGreater(migrated["generation_migration_added"], 0)
         self.assertEqual(original_ids, original_ids & {job["work_id"] for job in migrated["jobs"]})
         retained = next(job for job in migrated["jobs"] if job["work_id"] == completed["work_id"])
@@ -50,8 +51,8 @@ class DiscoveryDelegatedFixes(unittest.TestCase):
         snapshots = []
         out = run_plan(old, fetch=lambda *_: self.fail("unexpected network"),
                        persist=lambda value: snapshots.append(value.copy()))
-        self.assertEqual(2, snapshots[0]["generation_version"])
-        self.assertEqual(2, out["generation_version"])
+        self.assertEqual(GENERATION_VERSION, snapshots[0]["generation_version"])
+        self.assertEqual(GENERATION_VERSION, out["generation_version"])
         self.assertGreater(out["generation_migration_added"], 0)
 
     def test_unreconstructable_old_identity_stays_partial(self):

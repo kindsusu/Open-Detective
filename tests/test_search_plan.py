@@ -101,7 +101,8 @@ class SearchPlanTests(unittest.TestCase):
                 return 200,{"items":[],"total_count":0,"incomplete_results":False},{}
             if parsed.path.startswith("/users/"): return 200,[],{}
             self.fail(url)
-        result=run_plan(plan,fetch=fetch,request_budget=10,max_batches=4)
+        # Queries alternate one-for-one with planned identity accounts.
+        result=run_plan(plan,fetch=fetch,request_budget=10,max_batches=6)
         query_turns=[]
         for value in observed_queries:
             seed=value.split(" in:",1)[0]
@@ -259,6 +260,8 @@ class SearchPlanTests(unittest.TestCase):
         plan=create_plan(scope_id="retry-history",company_en="Starlight",query_budget=1,account_budget=1)
         account=next(j for j in plan["jobs"] if j["channel"]=="github" and j["kind"]=="account_candidate" and j["state"]=="planned")
         for job in plan["jobs"]:
+            if job["kind"]=="account_candidate" and job is not account and job["state"]=="planned":
+                job["state"]="not_applicable"; job["not_applicable_reason"]="fixture"
             if job["channel"]=="github" and job["kind"]=="search_query" and job["state"]=="planned":
                 job["state"]="completed"; job.update(result_count=0,pages=2,end_condition="page_exhausted",
                     observed_at="2026-01-01T00:00:00Z",source_ref="fixture")
