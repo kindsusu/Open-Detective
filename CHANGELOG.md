@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Value candidates (phone, email, resident number, vehicle plate, business number) now include up to three partially masked examples (tail or middle hidden) so owners can locate affected records; full values are still never stored.
+
 - Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
 
 - Added bounded, value-free runtime failure categories and per-step diagnostic differences to distinguish blocked resources from script failures without retaining URLs or error text.

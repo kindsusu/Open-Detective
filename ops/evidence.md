@@ -10,7 +10,7 @@ For a local locator handoff, the opaque store reference itself is the measuremen
 
 Sanitize URL userinfo, path segments, query, fragment, headers, cookies, redirects, console output, DOM text, filenames, screenshots, HAR, and traces. Preserve structure with placeholders such as `<email>`, `<token>`, or `<record-id>`. A stable secret comparison uses an access-controlled keyed HMAC; a plain hash of a low-entropy secret can leak it.
 
-For personal data record type and bounded approximate count, not a roster. For secrets record provider/type, masked prefix/suffix only when safe, location class, and `live_validity=unknown`. Never log in, call a data API, or rotate a secret from the audit process. Owner-side validity/rotation evidence is a separate event.
+For personal data record type and bounded approximate count, not a roster. Value candidates (phone, email, resident number, vehicle plate, business number) carry at most three partially masked examples so the owner can locate the record: phone `010-****-5678`, plate `12가34**`, business number `109-86-316**`, resident number `900101-1******`, email `fi*****@example.test`. Full values are never stored. For secrets record provider/type, masked prefix/suffix only when safe, location class, and `live_validity=unknown`. Never log in, call a data API, or rotate a secret from the audit process. Owner-side validity/rotation evidence is a separate event.
 
 `0` and `false` remain typed values. Null, absent, empty string, redacted, truncated, and not inspected are distinct. Every aggregate records source, selection boundary, and whether sampling stopped early.
 
