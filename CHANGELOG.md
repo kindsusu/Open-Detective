@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Value candidates (phone, email, resident number, vehicle plate, business number) now include up to three partially masked examples (tail or middle hidden) so owners can locate affected records; full values are still never stored.
+- Planned exact identity account spellings and their numeric siblings under a separate cap of 16, so numbered identity accounts are no longer left deferred by the generic account budget. Plan generation version 3 promotes matching unattempted deferred jobs in older plans.
 
 - Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
 
