@@ -66,6 +66,18 @@ GitHub는 다음 페이지 Link에 계정명 대신 숫자 사용자 ID를 넣�
 
 프로토콜 대조: [GitHub 페이지 처리](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api), [GitHub REST 문제 해결](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
 
+
+## 브랜드 네임스페이스 검토
+
+계획에 이미 있는 이름 기반 계정 조회 결과로 브랜드에서 파생된 GitHub 계정·조직 중 실제 존재하는 것을 볼 수 있다. 회사 소유 계정을 근거와 함께 등록한 뒤 나머지를 오프라인으로 확인한다:
+
+```bash
+open-detective search-plan own --plan _local/plan.json --account official-org --evidence "asset-register:ID"
+open-detective search-plan namespaces --plan _local/plan.json
+```
+
+`namespaces`는 요청을 보내지 않는다. 존재하는 이름 기반 계정은 `owned`·`excluded`·`review_required`(`BRAND_NAMESPACE_CANDIDATE`) 중 하나로 표시된다. 존재하지만 소유 등록되지 않은 계정은 개인 계정, 이름 선점, 무관한 제3자일 수 있으며, 존재 자체가 소유나 사칭의 증거는 아니다. 아직 조회하지 않은 이름 후보는 커버리지 공백으로 센다.
+
 ## 명시적 예산으로 검색 재개
 
 일반 `search-plan run`은 planned 작업을 총 요청 예산(기본 20회)과 작업별 한도(기본 6회) 안에서 실행한다. 알려진 URL을 우선한다. 전체 identity, industry 문맥, function 문맥 query family를 번갈아 조회하되 각 family 안에서는 순서를 보존하며, 짧거나 넓은 단어와 검색에서 나온 계정 확장은 뒤에 둔다. eligible query와 identity account 후보는 1:1로 번갈아 처리한다. 이는 제한된 heuristic이므로 전체 표기가 지연될 수 있으며 exhaustive 또는 최적 recall을 뜻하지 않는다. 한도에 닿은 쿼리는 미완료로 남긴다. 의도적으로 더 깊이 재조회할 때는 `--per-job-request-budget`을 최대 30까지 늘린다.

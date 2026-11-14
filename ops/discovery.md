@@ -84,6 +84,17 @@ An initial exact account/repository 404 is `not_found_observed`, a completed bou
 
 Protocol references: [GitHub pagination](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api), [GitHub REST troubleshooting](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
 
+## Brand namespace review
+
+Identity account listings already in a plan show which brand-derived GitHub namespaces exist. Declare organization-owned namespaces with an evidence reference, then list the rest offline:
+
+```bash
+open-detective search-plan own --plan _local/plan.json --account official-org --evidence "asset-register:ID"
+open-detective search-plan namespaces --plan _local/plan.json
+```
+
+`namespaces` makes no request. Each existing identity namespace is `owned`, `excluded`, or `review_required` (`BRAND_NAMESPACE_CANDIDATE`). A namespace that exists but is not declared owned may be a personal account, name squatting, or an unrelated party; existence is not ownership or impersonation. Identity candidates not yet listed are counted as coverage gaps.
+
 ## Resuming discovery with explicit budgets
 
 A normal `search-plan run` processes planned work under a total request budget (default 20) and a per-job cap (default 6). Exact supplied URLs run first. Full identity, industry-context, and function-context query families alternate while preserving order inside each family; short or broad terms and search-discovered account expansion remain later. Eligible queries alternate one-for-one with identity-account candidates. This is a bounded heuristic, so a full spelling can be delayed; it does not establish exhaustive or optimal recall. A query that reaches its cap remains incomplete. Increase `--per-job-request-budget` for a deliberate deeper retry, up to 30.

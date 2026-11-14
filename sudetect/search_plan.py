@@ -196,6 +196,60 @@ def _is_unobserved_expansion_limit(row: Mapping[str,Any]) -> bool:
             and all(type(row.get(field)) is int and row.get(field) == 0
                     for field in ("requests", "pages", "items")))
 
+
+_NAMESPACE_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
+
+
+def declare_owned_accounts(plan: Mapping[str,Any], logins: Iterable[str], evidence: str) -> dict[str,Any]:
+    """Record operator-declared organization-owned GitHub namespaces with an evidence reference."""
+    if not isinstance(evidence,str) or not evidence.strip() or len(evidence)>200:
+        raise ValueError("ownership evidence required")
+    out=json.loads(json.dumps(plan))
+    current={str(row.get("login","")).casefold():row for row in out.get("owned_accounts",[])
+             if isinstance(row,Mapping)}
+    for login in logins:
+        if not isinstance(login,str) or not _NAMESPACE_LOGIN.fullmatch(login):
+            raise ValueError("invalid account login")
+        current.setdefault(login.casefold(),{"login":login,"evidence":evidence.strip(),"recorded_at":_now()})
+    out["owned_accounts"]=sorted(current.values(),key=lambda row:row["login"].casefold())
+    out["updated_at"]=_now()
+    return out
+
+
+def brand_namespace_review(plan: Mapping[str,Any]) -> dict[str,Any]:
+    """List identity-derived GitHub namespaces observed to exist and who accounts for them.
+
+    Offline: uses only completed account listings already in the plan. An
+    existing namespace that is neither declared owned nor excluded needs
+    ownership review; it is a candidate, never proof of impersonation.
+    """
+    owned={str(r.get("login","")).casefold() for r in plan.get("owned_accounts",[]) if isinstance(r,Mapping)}
+    excluded={str(r.get("login","")).casefold() for r in plan.get("excluded_accounts",[]) if isinstance(r,Mapping)}
+    rows=[]; unobserved=0
+    for job in plan.get("jobs",[]):
+        if job.get("channel")!="github" or job.get("kind")!="account_candidate":
+            continue
+        if str(job.get("generation_rationale","")).startswith("github-search-"):
+            continue
+        if job.get("state")!="completed":
+            if job.get("state") in {"planned","deferred","failed"}: unobserved+=1
+            continue
+        if job.get("end_condition")=="not_found_observed":
+            continue
+        login=str(job.get("value",""))
+        key=login.casefold()
+        status="owned" if key in owned else "excluded" if key in excluded else "review_required"
+        rows.append({"login":login,"public_repositories":job.get("result_count"),
+                     "observed_at":job.get("observed_at"),"status":status,
+                     "signal":"BRAND_NAMESPACE_CANDIDATE" if status=="review_required" else None})
+    rows.sort(key=lambda row:(row["status"]!="review_required",row["login"].casefold()))
+    return {"kind":"brand_namespace_review","plan_id":plan.get("plan_id"),
+            "existing_namespaces":rows,
+            "review_required":sum(row["status"]=="review_required" for row in rows),
+            "unobserved_identity_candidates":unobserved,
+            "limitations":["identity_candidates_only","existence_is_not_ownership",
+                           "unobserved_candidates_are_coverage_gaps"]}
+
 def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -> None:
     coverage=result.get("coverage",{})
     observed_at=str(result.get("observed_at") or _now())
@@ -609,6 +663,9 @@ def main(argv=None):
             cmd.add_argument("--max-batches",type=int,default=100)
             cmd.add_argument("--per-job-request-budget",type=int,default=6)
     imp=sub.add_parser("import"); imp.add_argument("--plan",required=True); imp.add_argument("--input",required=True)
+    own=sub.add_parser("own"); own.add_argument("--plan",required=True)
+    own.add_argument("--account",action="append",required=True); own.add_argument("--evidence",required=True)
+    ns=sub.add_parser("namespaces"); ns.add_argument("--plan",required=True)
     args=p.parse_args(argv)
     try:
         if args.command=="plan":
@@ -648,6 +705,9 @@ def main(argv=None):
                     with LocatorStore(args.locator_store) as store: plan=run_plan(plan,locator_store=store,**options)
                 else: plan=run_plan(plan,**options)
                 _write(path,plan)
+            elif args.command=="own": plan=declare_owned_accounts(plan,args.account,args.evidence); _write(path,plan)
+            elif args.command=="namespaces":
+                print(json.dumps(brand_namespace_review(plan),ensure_ascii=False,sort_keys=True)); return 0
             elif args.command=="import": plan=import_results(plan,json.loads(Path(args.input).read_text(encoding="utf-8"))); _write(path,plan)
         print(json.dumps(plan_status(plan),ensure_ascii=False,sort_keys=True)); return 0
     except (OSError,ValueError,KeyError,json.JSONDecodeError):

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `search-plan own` and offline `search-plan namespaces` to list existing brand-derived GitHub namespaces as owned, excluded, or review_required, without new requests.
+
 - Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
 
 - Added bounded, value-free runtime failure categories and per-step diagnostic differences to distinguish blocked resources from script failures without retaining URLs or error text.
