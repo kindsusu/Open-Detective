@@ -196,10 +196,69 @@ def _is_unobserved_expansion_limit(row: Mapping[str,Any]) -> bool:
             and all(type(row.get(field)) is int and row.get(field) == 0
                     for field in ("requests", "pages", "items")))
 
+
+_LOGIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
+
+
+def exclude_accounts(plan: Mapping[str,Any], logins: Iterable[str], reason: str) -> dict[str,Any]:
+    """Record operator-reviewed unrelated GitHub accounts for every later run.
+
+    Exclusion is durable plan state, not a deletion: attempted jobs keep their
+    history, while pending work for the account becomes not_applicable.
+    """
+    if not isinstance(reason,str) or not reason.strip() or len(reason)>200:
+        raise ValueError("exclusion reason required")
+    out=json.loads(json.dumps(plan))
+    current={str(row.get("login","")).casefold():row for row in out.get("excluded_accounts",[])
+             if isinstance(row,Mapping)}
+    for login in logins:
+        if not isinstance(login,str) or not _LOGIN.fullmatch(login):
+            raise ValueError("invalid account login")
+        current.setdefault(login.casefold(),{"login":login,"reason":reason.strip(),"recorded_at":_now()})
+    out["excluded_accounts"]=sorted(current.values(),key=lambda row:row["login"].casefold())
+    _apply_exclusions(out)
+    out["status"]=_status(out); out["updated_at"]=_now()
+    return out
+
+
+def _excluded(plan: Mapping[str,Any]) -> set[str]:
+    return {str(row.get("login","")).casefold() for row in plan.get("excluded_accounts",[])
+            if isinstance(row,Mapping)}
+
+
+def _apply_exclusions(plan: dict[str,Any]) -> int:
+    excluded=_excluded(plan); changed=0
+    for job in plan.get("jobs",[]):
+        if (job.get("channel")=="github" and job.get("kind")=="account_candidate"
+                and str(job.get("value","")).casefold() in excluded
+                and job.get("state") in {"planned","deferred","failed"}):
+            job["state"]="not_applicable"; job["not_applicable_reason"]="operator_excluded"
+            job.pop("deferred_reason",None); changed+=1
+    return changed
+
+
+def _filter_excluded_result(plan: Mapping[str,Any], result: dict[str,Any]) -> None:
+    excluded=_excluded(plan)
+    if not excluded:
+        return
+    def owner(slug): return str(slug).split("/",1)[0].casefold()
+    kept=[c for c in result.get("candidates",[]) if owner(c.get("slug","")) not in excluded]
+    dropped=len(result.get("candidates",[]))-len(kept)
+    result["candidates"]=kept
+    result["accounts"]=[a for a in result.get("accounts",[])
+                        if not (isinstance(a,Mapping) and str(a.get("login","")).casefold() in excluded)]
+    result["deferred"]=[d for d in result.get("deferred",[])
+                        if not (isinstance(d,Mapping) and str(d.get("value","")).casefold() in excluded)]
+    if dropped:
+        result["excluded_candidates"]=dropped
+
 def _record_discovered_accounts(plan: dict[str,Any], result: Mapping[str,Any]) -> None:
     coverage=result.get("coverage",{})
     observed_at=str(result.get("observed_at") or _now())
+    excluded=_excluded(plan)
     def discovered_job(account: str, rationale: str) -> dict[str,Any] | None:
+        if account.casefold() in excluded:
+            return None
         existing=next((job for job in plan["jobs"] if job.get("channel")=="github"
                        and job.get("kind")=="account_candidate"
                        and str(job.get("value","")).casefold()==account.casefold()),None)
@@ -326,6 +385,7 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
     jobs=out.get("jobs",[])
     if persist and prior_generation != out.get("generation_version",1):
         persist(out)
+    _apply_exclusions(out)
     _promote(jobs,"search_query",resume_query_budget); _promote(jobs,"account_candidate",resume_account_budget)
     if retry_failed:
         for job in jobs:
@@ -420,6 +480,7 @@ def run_plan(plan: Mapping[str,Any], *, fetch=None, locator_store=None,
                                channel_health=channel_health,
                                locator_store=locator_store,page_size=job.get("page_size",100),
                                **({"validate_fetch_health":True} if live_fetch else {}),**kwargs)
+        _filter_excluded_result(out,result)
         used=int(result.get("coverage",{}).get("totals",{}).get("requests",0))
         requests_used+=min(remaining,max(0,used)); batches+=1
         if job["kind"]=="search_query": keys=("search_users:1","search_repositories:1")
@@ -609,6 +670,8 @@ def main(argv=None):
             cmd.add_argument("--max-batches",type=int,default=100)
             cmd.add_argument("--per-job-request-budget",type=int,default=6)
     imp=sub.add_parser("import"); imp.add_argument("--plan",required=True); imp.add_argument("--input",required=True)
+    exc=sub.add_parser("exclude"); exc.add_argument("--plan",required=True)
+    exc.add_argument("--account",action="append",required=True); exc.add_argument("--reason",required=True)
     args=p.parse_args(argv)
     try:
         if args.command=="plan":
@@ -648,6 +711,7 @@ def main(argv=None):
                     with LocatorStore(args.locator_store) as store: plan=run_plan(plan,locator_store=store,**options)
                 else: plan=run_plan(plan,**options)
                 _write(path,plan)
+            elif args.command=="exclude": plan=exclude_accounts(plan,args.account,args.reason); _write(path,plan)
             elif args.command=="import": plan=import_results(plan,json.loads(Path(args.input).read_text(encoding="utf-8"))); _write(path,plan)
         print(json.dumps(plan_status(plan),ensure_ascii=False,sort_keys=True)); return 0
     except (OSError,ValueError,KeyError,json.JSONDecodeError):

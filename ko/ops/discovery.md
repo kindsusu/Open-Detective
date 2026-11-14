@@ -66,6 +66,17 @@ GitHub는 다음 페이지 Link에 계정명 대신 숫자 사용자 ID를 넣�
 
 프로토콜 대조: [GitHub 페이지 처리](https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api), [GitHub REST 문제 해결](https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api).
 
+
+## 운영자 제외 목록
+
+사람이 검토해 이름만 겹치는 무관 계정으로 판단한 경우, 이후 실행에서 건너뛰도록 기록한다:
+
+```bash
+open-detective search-plan exclude --plan _local/plan.json --account unrelated-account --reason "다른 회사, 이름 충돌"
+```
+
+제외 목록은 사유·시각과 함께 계획에 영구 저장된다. 제외된 계정의 대기·이연·실패 작업은 `not_applicable`(`operator_excluded`)이 되며, 이미 시도한 기록은 남긴다. 이후 실행은 제외 계정 소유 후보를 버리고 그 계정을 확장하지 않는다. 제외는 운영자의 관련성 판단이지 그 계정이 안전하다는 증거가 아니다.
+
 ## 명시적 예산으로 검색 재개
 
 일반 `search-plan run`은 planned 작업을 총 요청 예산(기본 20회)과 작업별 한도(기본 6회) 안에서 실행한다. 알려진 URL을 우선한다. 전체 identity, industry 문맥, function 문맥 query family를 번갈아 조회하되 각 family 안에서는 순서를 보존하며, 짧거나 넓은 단어와 검색에서 나온 계정 확장은 뒤에 둔다. eligible query와 identity account 후보는 1:1로 번갈아 처리한다. 이는 제한된 heuristic이므로 전체 표기가 지연될 수 있으며 exhaustive 또는 최적 recall을 뜻하지 않는다. 한도에 닿은 쿼리는 미완료로 남긴다. 의도적으로 더 깊이 재조회할 때는 `--per-job-request-budget`을 최대 30까지 늘린다.

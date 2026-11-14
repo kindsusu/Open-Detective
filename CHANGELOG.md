@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added `search-plan exclude` to record operator-reviewed unrelated accounts in the plan. Later runs skip their pending jobs, drop candidates they own, and never expand them; attempted history is kept.
+
 - Added explicit, bounded undefined-identifier checks for captured runtime errors without retaining exception messages.
 
 - Added bounded, value-free runtime failure categories and per-step diagnostic differences to distinguish blocked resources from script failures without retaining URLs or error text.
